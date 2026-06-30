@@ -13,6 +13,8 @@ def _set_deploy_defaults(monkeypatch: pytest.MonkeyPatch, env_name: str) -> None
     monkeypatch.setenv("TENANT_SECRET_KEY", "b" * 40)
     monkeypatch.setenv("DATABASE_URL", "postgresql://leadflow:pass@db:5432/leadflow")
     monkeypatch.setenv("REDIS_URL", "redis://redis:6379/0")
+    monkeypatch.setenv("INBOUND_TOKEN_KEY", "c" * 40)
+    monkeypatch.setenv("OUTREACH_SIGNING_KEY", "d" * 40)
 
 
 class TestProductionSecretValidation:
@@ -63,6 +65,34 @@ class TestProductionSecretValidation:
             resolve_config()
         assert secret not in str(exc_info.value)
 
+    def test_rejects_missing_inbound_token_key(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        _set_deploy_defaults(monkeypatch, "production")
+        monkeypatch.delenv("INBOUND_TOKEN_KEY", raising=False)
+
+        with pytest.raises(RuntimeError, match="INBOUND_TOKEN_KEY is required"):
+            resolve_config("production")
+
+    def test_rejects_weak_inbound_token_key(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        _set_deploy_defaults(monkeypatch, "production")
+        monkeypatch.setenv("INBOUND_TOKEN_KEY", "short")
+
+        with pytest.raises(RuntimeError, match="INBOUND_TOKEN_KEY is weak"):
+            resolve_config("production")
+
+    def test_rejects_missing_outreach_signing_key(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        _set_deploy_defaults(monkeypatch, "production")
+        monkeypatch.delenv("OUTREACH_SIGNING_KEY", raising=False)
+
+        with pytest.raises(RuntimeError, match="OUTREACH_SIGNING_KEY is required"):
+            resolve_config("production")
+
+    def test_rejects_weak_outreach_signing_key(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        _set_deploy_defaults(monkeypatch, "production")
+        monkeypatch.setenv("OUTREACH_SIGNING_KEY", "short")
+
+        with pytest.raises(RuntimeError, match="OUTREACH_SIGNING_KEY is weak"):
+            resolve_config("production")
+
 
 class TestStagingConfigValidation:
     """Staging config follows production-like safety checks."""
@@ -112,4 +142,38 @@ class TestStagingConfigValidation:
         monkeypatch.setenv("DATABASE_URL", "sqlite:///leadflow-v2-dev.db")
 
         with pytest.raises(RuntimeError, match="PostgreSQL"):
+            resolve_config("staging")
+
+    def test_staging_rejects_missing_inbound_token_key(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        _set_deploy_defaults(monkeypatch, "staging")
+        monkeypatch.delenv("INBOUND_TOKEN_KEY", raising=False)
+
+        with pytest.raises(RuntimeError, match="INBOUND_TOKEN_KEY is required"):
+            resolve_config("staging")
+
+    def test_staging_rejects_weak_inbound_token_key(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        _set_deploy_defaults(monkeypatch, "staging")
+        monkeypatch.setenv("INBOUND_TOKEN_KEY", "short")
+
+        with pytest.raises(RuntimeError, match="INBOUND_TOKEN_KEY is weak"):
+            resolve_config("staging")
+
+    def test_staging_rejects_missing_outreach_signing_key(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        _set_deploy_defaults(monkeypatch, "staging")
+        monkeypatch.delenv("OUTREACH_SIGNING_KEY", raising=False)
+
+        with pytest.raises(RuntimeError, match="OUTREACH_SIGNING_KEY is required"):
+            resolve_config("staging")
+
+    def test_staging_rejects_weak_outreach_signing_key(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        _set_deploy_defaults(monkeypatch, "staging")
+        monkeypatch.setenv("OUTREACH_SIGNING_KEY", "short")
+
+        with pytest.raises(RuntimeError, match="OUTREACH_SIGNING_KEY is weak"):
             resolve_config("staging")

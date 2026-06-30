@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import hashlib
 import json
-import os
 import secrets
 from datetime import UTC, datetime, timedelta
 from typing import Any
@@ -35,8 +34,10 @@ def _session(app: Flask) -> Session:
     return s
 
 
-def _derive_key() -> Fernet:
-    raw = os.environ.get("INBOUND_TOKEN_KEY", "dev-inbound-key-32-chars-min!!")
+def _derive_key(app: Flask) -> Fernet:
+    raw = str(app.config.get("INBOUND_TOKEN_KEY", ""))
+    if not raw:
+        raise InboundError("INBOUND_TOKEN_KEY is not configured")
     digest = hashlib.sha256(raw.encode()).digest()
     import base64
 
@@ -57,7 +58,7 @@ def _as_utc(value: datetime) -> datetime:
 def generate_token(app: Flask, *, tenant_id: str) -> tuple[InboundToken, str]:
     plaintext = secrets.token_urlsafe(48)
     digest = hashlib.sha256(plaintext.encode()).hexdigest()
-    cipher = _derive_key().encrypt(plaintext.encode()).decode()
+    cipher = _derive_key(app).encrypt(plaintext.encode()).decode()
     with _session(app) as session:
         # Deactivate old tokens
         for old in session.scalars(

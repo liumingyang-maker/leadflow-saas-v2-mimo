@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import hmac
+from base64 import urlsafe_b64decode, urlsafe_b64encode
 from datetime import UTC, datetime
 
 from flask import Flask
@@ -198,17 +199,50 @@ def track_open(app: Flask, *, tracking_id: str) -> None:
             )
 
 
-TRACKING_SIGNING_KEY = "tracking-sign-key-v1"
+def _signing_key(app: Flask) -> str:
+    key = str(app.config.get("OUTREACH_SIGNING_KEY", ""))
+    if not key:
+        raise OutreachError("OUTREACH_SIGNING_KEY is not configured")
+    return key
 
 
-def sign_redirect(tracking_id: str, target_url: str, expires_at: int) -> str:
+def sign_redirect(app: Flask, tracking_id: str, target_url: str, expires_at: int) -> str:
     msg = f"{tracking_id}:{target_url}:{expires_at}"
-    return hmac.new(TRACKING_SIGNING_KEY.encode(), msg.encode(), hashlib.sha256).hexdigest()[:16]
+    return hmac.new(_signing_key(app).encode(), msg.encode(), hashlib.sha256).hexdigest()[:16]
 
 
-def verify_redirect(tracking_id: str, target_url: str, expires_at: int, sig: str) -> bool:
-    expected = sign_redirect(tracking_id, target_url, expires_at)
+def verify_redirect(
+    app: Flask, tracking_id: str, target_url: str, expires_at: int, sig: str
+) -> bool:
+    expected = sign_redirect(app, tracking_id, target_url, expires_at)
     return hmac.compare_digest(expected, sig)
+
+
+def sign_unsubscribe_token(app: Flask, tracking_id: str, email: str) -> str:
+    normal = email.strip().lower()
+    sig = _unsubscribe_signature(app, tracking_id=tracking_id, email=normal)
+    return urlsafe_b64encode(f"{tracking_id}:{normal}:{sig}".encode()).decode()
+
+
+def verify_unsubscribe_token(app: Flask, token: str) -> tuple[str, str] | None:
+    try:
+        decoded = urlsafe_b64decode(token.encode()).decode()
+        parts = decoded.split(":", 2)
+        if len(parts) != 3:
+            return None
+        tracking_id, email, sig = parts
+        normal = email.strip().lower()
+        expected = _unsubscribe_signature(app, tracking_id=tracking_id, email=normal)
+        if not hmac.compare_digest(sig, expected):
+            return None
+        return tracking_id, normal
+    except Exception:
+        return None
+
+
+def _unsubscribe_signature(app: Flask, *, tracking_id: str, email: str) -> str:
+    msg = f"{tracking_id}:{email}"
+    return hmac.new(_signing_key(app).encode(), msg.encode(), hashlib.sha256).hexdigest()[:16]
 
 
 def _is_safe_url(url: str) -> bool:

@@ -9,6 +9,8 @@ APP_ENV=production
 FLASK_ENV=production
 SECRET_KEY=<32-plus-character-random-value>
 TENANT_SECRET_KEY=<32-plus-character-random-value>
+INBOUND_TOKEN_KEY=<32-plus-character-random-value>
+OUTREACH_SIGNING_KEY=<32-plus-character-random-value>
 DATABASE_URL=<database-url>
 REDIS_URL=<redis-url>
 WTF_CSRF_ENABLED=True
@@ -40,7 +42,8 @@ GOOGLE_MAPS_API_KEY=<secret-manager-reference>
 
 - Rotate `SECRET_KEY` during a maintenance window because it affects session signing.
 - Rotate `TENANT_SECRET_KEY` with a planned tenant secret migration/rotation procedure.
-- Regenerate inbound tokens after encryption-key changes when required.
+- Rotate `INBOUND_TOKEN_KEY` only with a planned inbound token rotation. Regenerate inbound tokens after encryption-key changes when required.
+- Rotate `OUTREACH_SIGNING_KEY` with a planned email-link transition because existing tracking and unsubscribe links depend on it.
 - Restart web and worker processes after secret changes.
 
 ## Local Development Defaults

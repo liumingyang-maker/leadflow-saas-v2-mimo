@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import hashlib
-import hmac
 import json
 from base64 import urlsafe_b64encode
 from datetime import UTC, datetime
@@ -16,11 +15,19 @@ from werkzeug.security import generate_password_hash
 def _app(monkeypatch, *, csrf: bool = False):
     monkeypatch.setenv("SECRET_KEY", "test-secret-key-that-is-long-enough")
     monkeypatch.setenv("TENANT_SECRET_KEY", "test-tenant-secret-key-that-is-long-enough")
+    monkeypatch.setenv("INBOUND_TOKEN_KEY", "test-inbound-token-key-that-is-long-enough")
+    monkeypatch.setenv("OUTREACH_SIGNING_KEY", "test-outreach-signing-key-that-is-long-enough")
     import app.config as cfg
     from app import create_app
     from app.extensions import Base, get_engine, reset_engine_for_tests
 
     monkeypatch.setattr(cfg.TestingConfig, "WTF_CSRF_ENABLED", csrf)
+    monkeypatch.setattr(
+        cfg.TestingConfig, "INBOUND_TOKEN_KEY", "test-inbound-token-key-that-is-long-enough"
+    )
+    monkeypatch.setattr(
+        cfg.TestingConfig, "OUTREACH_SIGNING_KEY", "test-outreach-signing-key-that-is-long-enough"
+    )
     reset_engine_for_tests()
     flask_app = create_app("testing")
     engine = get_engine(flask_app)
@@ -68,11 +75,33 @@ def _lead(engine, tenant_id: str, email: str = "buyer@example.com") -> str:
         return lead.id
 
 
-def _unsubscribe_token(tracking_id: str, email: str) -> str:
-    sig = hmac.new(b"unsub-key-v1", f"{tracking_id}:{email}".encode(), hashlib.sha256).hexdigest()[
-        :16
-    ]
-    return urlsafe_b64encode(f"{tracking_id}:{email}:{sig}".encode()).decode()
+def _unsubscribe_token(app, tracking_id: str, email: str) -> str:
+    from app.modules.outreach.service import sign_unsubscribe_token
+
+    return sign_unsubscribe_token(app, tracking_id, email)
+
+
+def test_tracking_redirect_signature_uses_configured_key(monkeypatch):
+    app, _engine = _app(monkeypatch)
+
+    from app.modules.outreach.service import sign_redirect, verify_redirect
+
+    sig = sign_redirect(app, "track-1", "https://example.com/pricing", 1234567890)
+
+    assert verify_redirect(app, "track-1", "https://example.com/pricing", 1234567890, sig)
+    assert not verify_redirect(app, "track-1", "https://example.com/pricing", 1234567890, "bad")
+    assert not verify_redirect(app, "track-1", "https://example.com/other", 1234567890, sig)
+
+
+def test_unsubscribe_signature_uses_configured_key(monkeypatch):
+    app, _engine = _app(monkeypatch)
+
+    from app.modules.outreach.service import sign_unsubscribe_token, verify_unsubscribe_token
+
+    token = sign_unsubscribe_token(app, "track-1", "Buyer@Example.com")
+
+    assert verify_unsubscribe_token(app, token) == ("track-1", "buyer@example.com")
+    assert verify_unsubscribe_token(app, token[:-2] + "xx") is None
 
 
 def test_outreach_page_send_tracking_and_unsubscribe(monkeypatch):
@@ -105,7 +134,7 @@ def test_outreach_page_send_tracking_and_unsubscribe(monkeypatch):
     assert tracking is not None
     assert activity is not None
 
-    token = _unsubscribe_token(tracking.tracking_id, "buyer@example.com")
+    token = _unsubscribe_token(app, tracking.tracking_id, "buyer@example.com")
     confirm = client.get(f"/unsubscribe/{token}")
     assert confirm.status_code == 200
     assert b"buyer@example.com" in confirm.data
@@ -132,8 +161,34 @@ def test_tampered_unsubscribe_token_rejected(monkeypatch):
     with Session(engine) as session:
         tracking = session.scalar(select(EmailTracking).where(EmailTracking.tenant_id == tenant_id))
     assert tracking is not None
-    token = _unsubscribe_token(tracking.tracking_id, "other@example.com")[:-2] + "xx"
+    token = _unsubscribe_token(app, tracking.tracking_id, "other@example.com")[:-2] + "xx"
     assert client.get(f"/unsubscribe/{token}").status_code == 400
+
+
+def test_inbound_token_ciphertext_uses_configured_key_and_rotates(monkeypatch):
+    app, engine = _app(monkeypatch)
+    _client, tenant_id = _login_client(app, engine)
+
+    from cryptography.fernet import Fernet
+
+    from app.modules.inbound.models import InboundToken
+    from app.modules.inbound.service import generate_token, lookup_token
+
+    first_record, first_plaintext = generate_token(app, tenant_id=tenant_id)
+    second_record, second_plaintext = generate_token(app, tenant_id=tenant_id)
+    key = urlsafe_b64encode(hashlib.sha256(app.config["INBOUND_TOKEN_KEY"].encode()).digest())
+    fernet = Fernet(key)
+
+    assert fernet.decrypt(first_record.token_ciphertext.encode()).decode() == first_plaintext
+    assert fernet.decrypt(second_record.token_ciphertext.encode()).decode() == second_plaintext
+    assert lookup_token(app, plaintext=first_plaintext) is None
+    assert lookup_token(app, plaintext=second_plaintext) is not None
+
+    with Session(engine) as session:
+        first = session.get(InboundToken, first_record.id)
+        second = session.get(InboundToken, second_record.id)
+    assert first is not None and first.is_active is False
+    assert second is not None and second.is_active is True
 
 
 def test_inbound_api_origin_idempotency_and_lead_creation(monkeypatch):

@@ -29,6 +29,12 @@ class BaseConfig:
 
 class DevelopmentConfig(BaseConfig):
     DEBUG: ClassVar[bool] = True
+    INBOUND_TOKEN_KEY: ClassVar[str] = os.environ.get(
+        "INBOUND_TOKEN_KEY", "development-inbound-token-key-not-for-production"
+    )
+    OUTREACH_SIGNING_KEY: ClassVar[str] = os.environ.get(
+        "OUTREACH_SIGNING_KEY", "development-outreach-signing-key-not-for-production"
+    )
 
 
 class TestingConfig(BaseConfig):
@@ -37,6 +43,12 @@ class TestingConfig(BaseConfig):
     SQLALCHEMY_DATABASE_URI: ClassVar[str] = "sqlite:///:memory:"
     SECRET_KEY: ClassVar[str] = os.environ.get(
         "SECRET_KEY", "testing-secret-key-not-for-production"
+    )
+    INBOUND_TOKEN_KEY: ClassVar[str] = os.environ.get(
+        "INBOUND_TOKEN_KEY", "testing-inbound-token-key-not-for-production"
+    )
+    OUTREACH_SIGNING_KEY: ClassVar[str] = os.environ.get(
+        "OUTREACH_SIGNING_KEY", "testing-outreach-signing-key-not-for-production"
     )
 
 
@@ -67,6 +79,10 @@ WEAK_SECRET_KEYS = {
     "change-me",
     "dev-only-change-me",
     "testing-secret-key-not-for-production",
+    "development-inbound-token-key-not-for-production",
+    "testing-inbound-token-key-not-for-production",
+    "development-outreach-signing-key-not-for-production",
+    "testing-outreach-signing-key-not-for-production",
 }
 
 
@@ -93,14 +109,26 @@ def _validate_deploy_config(config_class: type[BaseConfig], env_name: str) -> No
     if not redis_url:
         raise RuntimeError(f"REDIS_URL is required for {env_name} configuration")
 
+    inbound_token_key = os.environ.get("INBOUND_TOKEN_KEY", "")
+    if not inbound_token_key:
+        raise RuntimeError(f"INBOUND_TOKEN_KEY is required for {env_name} configuration")
+    if inbound_token_key.strip().lower() in WEAK_SECRET_KEYS or len(inbound_token_key) < 32:
+        raise RuntimeError(f"INBOUND_TOKEN_KEY is weak for {env_name} configuration")
+
+    outreach_signing_key = os.environ.get("OUTREACH_SIGNING_KEY", "")
+    if not outreach_signing_key:
+        raise RuntimeError(f"OUTREACH_SIGNING_KEY is required for {env_name} configuration")
+    if outreach_signing_key.strip().lower() in WEAK_SECRET_KEYS or len(outreach_signing_key) < 32:
+        raise RuntimeError(f"OUTREACH_SIGNING_KEY is weak for {env_name} configuration")
+
     config_class.SECRET_KEY = secret_key
     config_class.SQLALCHEMY_DATABASE_URI = database_url
     config_class.REDIS_URL = redis_url
     config_class.PROXY_FIX_HOPS = os.environ.get("PROXY_FIX_HOPS", 0)
     config_class.SERVER_NAME = os.environ.get("SERVER_NAME") or None
     config_class.ALLOWED_HOSTS = os.environ.get("ALLOWED_HOSTS", "")
-    config_class.INBOUND_TOKEN_KEY = os.environ.get("INBOUND_TOKEN_KEY", "")
-    config_class.OUTREACH_SIGNING_KEY = os.environ.get("OUTREACH_SIGNING_KEY", "")
+    config_class.INBOUND_TOKEN_KEY = inbound_token_key
+    config_class.OUTREACH_SIGNING_KEY = outreach_signing_key
 
 
 def resolve_config(config_name: str | None = None) -> type[BaseConfig]:

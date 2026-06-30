@@ -171,6 +171,8 @@ def test_session_cookie_secure_in_production(monkeypatch) -> None:
     monkeypatch.setenv("TENANT_SECRET_KEY", "a-32-char-tenant-secret-key-ok!!!")
     monkeypatch.setenv("DATABASE_URL", "postgresql://leadflow:pass@db:5432/leadflow")
     monkeypatch.setenv("REDIS_URL", "redis://redis:6379/0")
+    monkeypatch.setenv("INBOUND_TOKEN_KEY", "c" * 40)
+    monkeypatch.setenv("OUTREACH_SIGNING_KEY", "d" * 40)
     from app.config import resolve_config
 
     config = resolve_config("production")

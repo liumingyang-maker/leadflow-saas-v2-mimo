@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-import hashlib
-import hmac
 import time
 
 from flask import Flask, Response, redirect, render_template, request, session
@@ -23,6 +21,7 @@ from app.modules.outreach.service import (
     track_open,
     unsubscribe,
     verify_redirect,
+    verify_unsubscribe_token,
 )
 from app.modules.outreach.service import _is_safe_url as _safe_url
 
@@ -201,7 +200,7 @@ def register_outreach_routes(app: Flask) -> None:
             return "Invalid link", 400
         if time.time() > expires_at:
             return "Link expired", 410
-        if not verify_redirect(tracking_id, target, expires_at, sig):
+        if not verify_redirect(app, tracking_id, target, expires_at, sig):
             return "Invalid signature", 400
         if not _safe_url(target):
             return "Unsafe target", 400
@@ -211,22 +210,10 @@ def register_outreach_routes(app: Flask) -> None:
     # Unsubscribe
     @app.route("/unsubscribe/<token>", methods=["GET", "POST"])
     def unsubscribe_route(token: str):
-        # Simplified: token contains tracking_id:email:hmac
-        try:
-            from base64 import urlsafe_b64decode
-
-            decoded = urlsafe_b64decode(token.encode()).decode()
-            parts = decoded.split(":", 2)
-            if len(parts) != 3:
-                return "Invalid unsubscribe link", 400
-            tracking_id, email, sig = parts
-            expected = hmac.new(
-                b"unsub-key-v1", f"{tracking_id}:{email}".encode(), hashlib.sha256
-            ).hexdigest()[:16]
-            if not hmac.compare_digest(sig, expected):
-                return "Invalid unsubscribe link", 400
-        except Exception:
+        token_data = verify_unsubscribe_token(app, token)
+        if token_data is None:
             return "Invalid unsubscribe link", 400
+        tracking_id, email = token_data
 
         # Look up tracking without tenant scope since token is self-contained
         engine = get_engine(app)
