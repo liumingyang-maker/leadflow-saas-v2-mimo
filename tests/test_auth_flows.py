@@ -1,7 +1,34 @@
 from __future__ import annotations
 
+from datetime import UTC, datetime, timedelta
+
 from sqlalchemy import select
 from sqlalchemy.orm import Session
+
+
+class RecordingMailer:
+    def __init__(self, *, success: bool = True) -> None:
+        self.success = success
+        self.messages = []
+
+    def send(self, *, to_email: str, subject: str, body_text: str, body_html: str):
+        self.messages.append(
+            {
+                "to_email": to_email,
+                "subject": subject,
+                "body_text": body_text,
+                "body_html": body_html,
+            }
+        )
+        return type(
+            "Result",
+            (),
+            {
+                "success": self.success,
+                "error_code": "" if self.success else "mailer_not_configured",
+                "error_summary": "" if self.success else "Email sending is not configured",
+            },
+        )()
 
 
 def _client(monkeypatch):
@@ -16,6 +43,50 @@ def _client(monkeypatch):
     Base.metadata.create_all(engine)
 
     return flask_app.test_client(), engine
+
+
+def test_register_sends_verification_email(monkeypatch) -> None:
+    mailer = RecordingMailer()
+    monkeypatch.setattr("app.modules.accounts.service.get_mailer", lambda: mailer)
+    client, engine = _client(monkeypatch)
+
+    response = client.post(
+        "/register",
+        data={
+            "email": "Owner@Example.com ",
+            "password": "safe-password-123",
+            "company_name": "Acme Export",
+        },
+    )
+
+    from app.modules.accounts.models import EmailToken
+
+    assert response.status_code in {302, 303}
+    with Session(engine) as session:
+        token = session.scalars(select(EmailToken.token)).one()
+    assert len(mailer.messages) == 1
+    message = mailer.messages[0]
+    assert message["to_email"] == "owner@example.com"
+    assert "Verify" in message["subject"]
+    assert f"/verify-email/{token}" in message["body_text"]
+
+
+def test_register_reports_verification_email_failure(monkeypatch) -> None:
+    mailer = RecordingMailer(success=False)
+    monkeypatch.setattr("app.modules.accounts.service.get_mailer", lambda: mailer)
+    client, _engine = _client(monkeypatch)
+
+    response = client.post(
+        "/register",
+        data={
+            "email": "Owner@Example.com ",
+            "password": "safe-password-123",
+            "company_name": "Acme Export",
+        },
+    )
+
+    assert response.status_code == 400
+    assert "Verification email could not be sent" in response.get_data(as_text=True)
 
 
 def test_register_creates_unverified_owner_tenant_and_token(monkeypatch) -> None:
@@ -116,6 +187,32 @@ def test_email_verification_token_is_single_use(monkeypatch) -> None:
 
     assert first.status_code in {302, 303}
     assert second.status_code == 400
+
+
+def test_email_verification_expired_or_forged_token_is_rejected(monkeypatch) -> None:
+    client, engine = _client(monkeypatch)
+    client.post(
+        "/register",
+        data={
+            "email": "owner@example.com",
+            "password": "safe-password-123",
+            "company_name": "Acme Export",
+        },
+    )
+
+    from app.modules.accounts.models import EmailToken
+
+    with Session(engine) as session:
+        token = session.scalars(select(EmailToken).where(EmailToken.token_type == "verify")).one()
+        token.expires_at = datetime.now(UTC) - timedelta(minutes=1)
+        session.commit()
+        token_id = token.token
+
+    expired = client.get(f"/verify-email/{token_id}")
+    forged = client.get("/verify-email/not-a-real-token")
+
+    assert expired.status_code == 400
+    assert forged.status_code == 400
 
 
 def test_logout_clears_tenant_session(monkeypatch) -> None:

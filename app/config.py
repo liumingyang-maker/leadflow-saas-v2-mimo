@@ -18,6 +18,12 @@ class BaseConfig:
     ALLOWED_HOSTS: ClassVar[str] = os.environ.get("ALLOWED_HOSTS", "")
     INBOUND_TOKEN_KEY: ClassVar[str] = os.environ.get("INBOUND_TOKEN_KEY", "")
     OUTREACH_SIGNING_KEY: ClassVar[str] = os.environ.get("OUTREACH_SIGNING_KEY", "")
+    SMTP_HOST: ClassVar[str] = os.environ.get("SMTP_HOST", "")
+    SMTP_PORT: ClassVar[str] = os.environ.get("SMTP_PORT", "587")
+    SMTP_USER: ClassVar[str] = os.environ.get("SMTP_USER", "")
+    SMTP_PASSWORD: ClassVar[str] = os.environ.get("SMTP_PASSWORD", "")
+    SMTP_FROM: ClassVar[str] = os.environ.get("SMTP_FROM", "")
+    SMTP_USE_TLS: ClassVar[str] = os.environ.get("SMTP_USE_TLS", "true")
     TESTING: ClassVar[bool] = False
     DEBUG: ClassVar[bool] = False
     WTF_CSRF_ENABLED: ClassVar[bool] = True
@@ -121,6 +127,17 @@ def _validate_deploy_config(config_class: type[BaseConfig], env_name: str) -> No
     if outreach_signing_key.strip().lower() in WEAK_SECRET_KEYS or len(outreach_signing_key) < 32:
         raise RuntimeError(f"OUTREACH_SIGNING_KEY is weak for {env_name} configuration")
 
+    smtp_required = {
+        "SMTP_HOST": os.environ.get("SMTP_HOST", ""),
+        "SMTP_USER": os.environ.get("SMTP_USER", ""),
+        "SMTP_PASSWORD": os.environ.get("SMTP_PASSWORD", ""),
+        "SMTP_FROM": os.environ.get("SMTP_FROM", ""),
+    }
+    missing_smtp = [name for name, value in smtp_required.items() if not value]
+    if missing_smtp:
+        missing = ", ".join(missing_smtp)
+        raise RuntimeError(f"{missing} required for {env_name} account email configuration")
+
     config_class.SECRET_KEY = secret_key
     config_class.SQLALCHEMY_DATABASE_URI = database_url
     config_class.REDIS_URL = redis_url
@@ -129,6 +146,12 @@ def _validate_deploy_config(config_class: type[BaseConfig], env_name: str) -> No
     config_class.ALLOWED_HOSTS = os.environ.get("ALLOWED_HOSTS", "")
     config_class.INBOUND_TOKEN_KEY = inbound_token_key
     config_class.OUTREACH_SIGNING_KEY = outreach_signing_key
+    config_class.SMTP_HOST = os.environ["SMTP_HOST"]
+    config_class.SMTP_PORT = os.environ.get("SMTP_PORT", "587")
+    config_class.SMTP_USER = os.environ["SMTP_USER"]
+    config_class.SMTP_PASSWORD = os.environ["SMTP_PASSWORD"]
+    config_class.SMTP_FROM = os.environ["SMTP_FROM"]
+    config_class.SMTP_USE_TLS = os.environ.get("SMTP_USE_TLS", "true")
 
 
 def resolve_config(config_name: str | None = None) -> type[BaseConfig]:

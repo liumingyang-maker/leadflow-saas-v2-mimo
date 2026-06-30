@@ -51,10 +51,17 @@ SERVER_NAME=staging.example.com
 ALLOWED_HOSTS=staging.example.com
 INBOUND_TOKEN_KEY=<32-plus-character-staging-secret>
 OUTREACH_SIGNING_KEY=<32-plus-character-staging-secret>
+SMTP_HOST=<smtp-host>
+SMTP_PORT=587
+SMTP_USER=<smtp-user>
+SMTP_PASSWORD=<smtp-password>
+SMTP_FROM=<verified-from-address>
+SMTP_USE_TLS=true
 ```
 
 The compose file supplies `DATABASE_URL` and `REDIS_URL` to the web and worker
-services. Do not use SQLite for staging.
+services. Do not use SQLite for staging. Account verification and password reset
+emails require the SMTP variables above.
 
 ## Rollback
 

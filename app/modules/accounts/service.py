@@ -9,6 +9,7 @@ from werkzeug.security import check_password_hash, generate_password_hash
 
 from app.modules.accounts.models import EmailToken, Tenant, TenantMembership, User
 from app.modules.accounts.repository import session_scope
+from app.modules.outreach.mailer import get_mailer
 
 
 class AccountError(ValueError):
@@ -41,7 +42,8 @@ def register_account(app: Flask, *, email: str, password: str, company_name: str
         session.add(token)
         session.flush()
         session.expunge(token)
-        return token
+    _send_verification_email(app, email=clean_email, token=token.token)
+    return token
 
 
 def verify_email(app: Flask, token: str) -> None:
@@ -82,7 +84,8 @@ def request_password_reset(app: Flask, *, email: str) -> EmailToken | None:
         session.add(token)
         session.flush()
         session.expunge(token)
-        return token
+    _send_password_reset_email(app, email=clean_email, token=token.token)
+    return token
 
 
 def reset_password(app: Flask, *, token: str, password: str) -> None:
@@ -152,6 +155,47 @@ def _validate_registration(email: str, password: str) -> None:
         raise AccountError("invalid_email", "A valid email is required")
     if len(password or "") < 8:
         raise AccountError("weak_password", "Password must be at least 8 characters")
+
+
+def _send_verification_email(app: Flask, *, email: str, token: str) -> None:
+    link = _account_url(app, f"/verify-email/{token}")
+    result = get_mailer().send(
+        to_email=email,
+        subject="Verify your LeadFlow email",
+        body_text=(
+            "Welcome to LeadFlow.\n\n"
+            "Verify your email address with this link:\n"
+            f"{link}\n\n"
+            "This link expires in 30 minutes."
+        ),
+        body_html="",
+    )
+    if not result.success:
+        raise AccountError("email_send_failed", "Verification email could not be sent")
+
+
+def _send_password_reset_email(app: Flask, *, email: str, token: str) -> None:
+    link = _account_url(app, f"/reset-password/{token}")
+    result = get_mailer().send(
+        to_email=email,
+        subject="Reset your LeadFlow password",
+        body_text=(
+            "Reset your LeadFlow password with this link:\n"
+            f"{link}\n\n"
+            "This link expires in 30 minutes. If you did not request this, ignore this email."
+        ),
+        body_html="",
+    )
+    if not result.success:
+        raise AccountError("email_send_failed", "Password reset email could not be sent")
+
+
+def _account_url(app: Flask, path: str) -> str:
+    base_url = str(app.config.get("ACCOUNT_EMAIL_BASE_URL") or "").rstrip("/")
+    if not base_url:
+        server_name = app.config.get("SERVER_NAME")
+        base_url = f"https://{server_name}" if server_name else "http://localhost"
+    return f"{base_url}{path}"
 
 
 def _now() -> datetime:

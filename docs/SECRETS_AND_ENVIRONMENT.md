@@ -20,6 +20,20 @@ SERVER_NAME=<host-name>
 ALLOWED_HOSTS=<comma-separated-hosts>
 ```
 
+## Account Email Variables
+
+Staging and production require SMTP configuration so registration verification and password
+reset emails do not silently fall back to a fake sender.
+
+```text
+SMTP_HOST=<smtp-host>
+SMTP_PORT=587
+SMTP_USER=<smtp-user>
+SMTP_PASSWORD=<smtp-password>
+SMTP_FROM=<verified-from-address>
+SMTP_USE_TLS=true
+```
+
 ## Provider Variables
 
 Keep these fake for RC1 unless real credentials are explicitly approved.

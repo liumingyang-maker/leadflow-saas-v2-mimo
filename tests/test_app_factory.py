@@ -65,6 +65,10 @@ def test_production_config_requires_strong_secret_key(
     monkeypatch.setenv("REDIS_URL", "redis://redis:6379/0")
     monkeypatch.setenv("INBOUND_TOKEN_KEY", "c" * 40)
     monkeypatch.setenv("OUTREACH_SIGNING_KEY", "d" * 40)
+    monkeypatch.setenv("SMTP_HOST", "smtp.example.com")
+    monkeypatch.setenv("SMTP_USER", "smtp-user")
+    monkeypatch.setenv("SMTP_PASSWORD", "smtp-password")
+    monkeypatch.setenv("SMTP_FROM", "noreply@example.com")
     assert resolve_config("production").SESSION_COOKIE_SECURE is True
 
 

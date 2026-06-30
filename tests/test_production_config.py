@@ -15,6 +15,10 @@ def _set_deploy_defaults(monkeypatch: pytest.MonkeyPatch, env_name: str) -> None
     monkeypatch.setenv("REDIS_URL", "redis://redis:6379/0")
     monkeypatch.setenv("INBOUND_TOKEN_KEY", "c" * 40)
     monkeypatch.setenv("OUTREACH_SIGNING_KEY", "d" * 40)
+    monkeypatch.setenv("SMTP_HOST", "smtp.example.com")
+    monkeypatch.setenv("SMTP_USER", "smtp-user")
+    monkeypatch.setenv("SMTP_PASSWORD", "smtp-password")
+    monkeypatch.setenv("SMTP_FROM", "noreply@example.com")
 
 
 class TestProductionSecretValidation:
@@ -91,6 +95,13 @@ class TestProductionSecretValidation:
         monkeypatch.setenv("OUTREACH_SIGNING_KEY", "short")
 
         with pytest.raises(RuntimeError, match="OUTREACH_SIGNING_KEY is weak"):
+            resolve_config("production")
+
+    def test_rejects_missing_smtp_for_account_email(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        _set_deploy_defaults(monkeypatch, "production")
+        monkeypatch.delenv("SMTP_HOST", raising=False)
+
+        with pytest.raises(RuntimeError, match="SMTP_HOST required"):
             resolve_config("production")
 
 
@@ -176,4 +187,13 @@ class TestStagingConfigValidation:
         monkeypatch.setenv("OUTREACH_SIGNING_KEY", "short")
 
         with pytest.raises(RuntimeError, match="OUTREACH_SIGNING_KEY is weak"):
+            resolve_config("staging")
+
+    def test_staging_rejects_missing_smtp_for_account_email(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        _set_deploy_defaults(monkeypatch, "staging")
+        monkeypatch.delenv("SMTP_PASSWORD", raising=False)
+
+        with pytest.raises(RuntimeError, match="SMTP_PASSWORD required"):
             resolve_config("staging")

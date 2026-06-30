@@ -72,7 +72,10 @@ def register_account_routes(app: Flask) -> None:
 
     @app.post("/forgot-password")
     def forgot_password_submit():
-        request_password_reset(app, email=request.form.get("email", ""))
+        try:
+            request_password_reset(app, email=request.form.get("email", ""))
+        except AccountError:
+            pass
         return render_template("auth/forgot_password.html", sent=True)
 
     @app.get("/reset-password/<token>")

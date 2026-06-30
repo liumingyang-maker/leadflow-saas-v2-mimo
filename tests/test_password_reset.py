@@ -1,8 +1,35 @@
 from __future__ import annotations
 
+from datetime import UTC, datetime, timedelta
+
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 from werkzeug.security import check_password_hash
+
+
+class RecordingMailer:
+    def __init__(self, *, success: bool = True) -> None:
+        self.success = success
+        self.messages = []
+
+    def send(self, *, to_email: str, subject: str, body_text: str, body_html: str):
+        self.messages.append(
+            {
+                "to_email": to_email,
+                "subject": subject,
+                "body_text": body_text,
+                "body_html": body_html,
+            }
+        )
+        return type(
+            "Result",
+            (),
+            {
+                "success": self.success,
+                "error_code": "" if self.success else "mailer_not_configured",
+                "error_summary": "" if self.success else "Email sending is not configured",
+            },
+        )()
 
 
 def _client(monkeypatch):
@@ -40,8 +67,11 @@ def _verified_account(client, engine):
 def test_forgot_password_uses_generic_response_and_creates_token_for_known_email(
     monkeypatch,
 ) -> None:
+    mailer = RecordingMailer()
+    monkeypatch.setattr("app.modules.accounts.service.get_mailer", lambda: mailer)
     client, engine = _client(monkeypatch)
     _verified_account(client, engine)
+    mailer.messages.clear()
 
     known = client.post("/forgot-password", data={"email": "owner@example.com"})
     unknown = client.post("/forgot-password", data={"email": "missing@example.com"})
@@ -58,6 +88,39 @@ def test_forgot_password_uses_generic_response_and_creates_token_for_known_email
         ).all()
         assert len(reset_tokens) == 1
         assert reset_tokens[0].email == "owner@example.com"
+        token = reset_tokens[0].token
+    assert len(mailer.messages) == 1
+    assert mailer.messages[0]["to_email"] == "owner@example.com"
+    assert "Reset" in mailer.messages[0]["subject"]
+    assert f"/reset-password/{token}" in mailer.messages[0]["body_text"]
+
+
+def test_forgot_password_hides_mailer_failure_for_existing_email(monkeypatch) -> None:
+    mailer = RecordingMailer(success=False)
+    monkeypatch.setattr("app.modules.accounts.service.get_mailer", lambda: mailer)
+    client, engine = _client(monkeypatch)
+    _verified_account(client, engine)
+    mailer.messages.clear()
+
+    response = client.post("/forgot-password", data={"email": "owner@example.com"})
+
+    assert response.status_code == 200
+    assert "If the email exists" in response.get_data(as_text=True)
+    assert len(mailer.messages) == 1
+
+
+def test_forgot_password_hides_mailer_failure_for_missing_email(monkeypatch) -> None:
+    mailer = RecordingMailer(success=False)
+    monkeypatch.setattr("app.modules.accounts.service.get_mailer", lambda: mailer)
+    client, engine = _client(monkeypatch)
+    _verified_account(client, engine)
+    mailer.messages.clear()
+
+    response = client.post("/forgot-password", data={"email": "missing@example.com"})
+
+    assert response.status_code == 200
+    assert "If the email exists" in response.get_data(as_text=True)
+    assert mailer.messages == []
 
 
 def test_reset_password_consumes_token_and_invalidates_old_password(monkeypatch) -> None:
@@ -93,6 +156,28 @@ def test_reset_password_consumes_token_and_invalidates_old_password(monkeypatch)
     )
     assert old_login.status_code == 200
     assert new_login.status_code in {302, 303}
+
+
+def test_reset_password_expired_or_forged_token_is_rejected(monkeypatch) -> None:
+    client, engine = _client(monkeypatch)
+    _verified_account(client, engine)
+    client.post("/forgot-password", data={"email": "owner@example.com"})
+
+    from app.modules.accounts.models import EmailToken
+
+    with Session(engine) as session:
+        token = session.scalars(select(EmailToken).where(EmailToken.token_type == "reset")).one()
+        token.expires_at = datetime.now(UTC) - timedelta(minutes=1)
+        session.commit()
+        token_id = token.token
+
+    expired = client.post(f"/reset-password/{token_id}", data={"password": "new-safe-password-456"})
+    forged = client.post(
+        "/reset-password/not-a-real-token", data={"password": "new-safe-password-456"}
+    )
+
+    assert expired.status_code == 400
+    assert forged.status_code == 400
 
 
 def test_login_rotates_auth_session_marker(monkeypatch) -> None:
