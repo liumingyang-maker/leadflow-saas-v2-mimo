@@ -49,3 +49,16 @@ class TestStagingComposeExists:
         with open("docker-compose.staging.yml") as f:
             content = f.read()
         assert "postgres" in content.lower()
+        assert "sqlite" not in content.lower()
+
+    def test_staging_compose_sets_app_env(self) -> None:
+        with open("docker-compose.staging.yml") as f:
+            content = f.read()
+        assert "APP_ENV=staging" in content
+
+    def test_staging_runbook_uses_staging_compose_and_postgres(self) -> None:
+        with open("docs/RUNBOOK_STAGING.md") as f:
+            content = f.read()
+        assert "docker compose -f docker-compose.staging.yml" in content
+        assert "postgresql://leadflow:" in content
+        assert "sqlite:///" not in content.lower()

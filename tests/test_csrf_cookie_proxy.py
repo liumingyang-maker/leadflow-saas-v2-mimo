@@ -169,6 +169,8 @@ def test_session_cookie_secure_in_production(monkeypatch) -> None:
     """Production config forces Secure flag."""
     monkeypatch.setenv("SECRET_KEY", "a-32-char-production-key-that-is-ok!")
     monkeypatch.setenv("TENANT_SECRET_KEY", "a-32-char-tenant-secret-key-ok!!!")
+    monkeypatch.setenv("DATABASE_URL", "postgresql://leadflow:pass@db:5432/leadflow")
+    monkeypatch.setenv("REDIS_URL", "redis://redis:6379/0")
     from app.config import resolve_config
 
     config = resolve_config("production")

@@ -61,6 +61,8 @@ def test_production_config_requires_strong_secret_key(
         resolve_config("production")
 
     monkeypatch.setenv("TENANT_SECRET_KEY", "a-32-char-tenant-secret-key-ok!!!")
+    monkeypatch.setenv("DATABASE_URL", "postgresql://leadflow:pass@db:5432/leadflow")
+    monkeypatch.setenv("REDIS_URL", "redis://redis:6379/0")
     assert resolve_config("production").SESSION_COOKIE_SECURE is True
 
 

@@ -3,7 +3,7 @@ from __future__ import annotations
 import os
 from typing import ClassVar, Literal
 
-type ConfigName = Literal["development", "testing", "production"]
+type ConfigName = Literal["development", "testing", "staging", "production"]
 
 
 class BaseConfig:
@@ -12,6 +12,12 @@ class BaseConfig:
         "DATABASE_URL", "sqlite:///leadflow-v2-dev.db"
     )
     SQLALCHEMY_ENGINE_OPTIONS: ClassVar[dict[str, object]] = {"future": True}
+    REDIS_URL: ClassVar[str] = os.environ.get("REDIS_URL", "redis://localhost:6379/0")
+    PROXY_FIX_HOPS: ClassVar[str | int] = os.environ.get("PROXY_FIX_HOPS", 0)
+    SERVER_NAME: ClassVar[str | None] = os.environ.get("SERVER_NAME") or None
+    ALLOWED_HOSTS: ClassVar[str] = os.environ.get("ALLOWED_HOSTS", "")
+    INBOUND_TOKEN_KEY: ClassVar[str] = os.environ.get("INBOUND_TOKEN_KEY", "")
+    OUTREACH_SIGNING_KEY: ClassVar[str] = os.environ.get("OUTREACH_SIGNING_KEY", "")
     TESTING: ClassVar[bool] = False
     DEBUG: ClassVar[bool] = False
     WTF_CSRF_ENABLED: ClassVar[bool] = True
@@ -39,11 +45,17 @@ class ProductionConfig(BaseConfig):
     PREFERRED_URL_SCHEME: ClassVar[str] = "https"
 
 
+class StagingConfig(ProductionConfig):
+    DEBUG: ClassVar[bool] = False
+
+
 CONFIGS: dict[str, type[BaseConfig]] = {
     "development": DevelopmentConfig,
     "dev": DevelopmentConfig,
     "testing": TestingConfig,
     "test": TestingConfig,
+    "staging": StagingConfig,
+    "stage": StagingConfig,
     "production": ProductionConfig,
     "prod": ProductionConfig,
 }
@@ -58,6 +70,39 @@ WEAK_SECRET_KEYS = {
 }
 
 
+def _validate_deploy_config(config_class: type[BaseConfig], env_name: str) -> None:
+    secret_key = os.environ.get("SECRET_KEY", "")
+    if not secret_key:
+        raise RuntimeError(f"SECRET_KEY is required for {env_name} configuration")
+    if secret_key.strip().lower() in WEAK_SECRET_KEYS or len(secret_key) < 32:
+        raise RuntimeError(f"SECRET_KEY is weak for {env_name} configuration")
+
+    tenant_secret_key = os.environ.get("TENANT_SECRET_KEY", "")
+    if not tenant_secret_key:
+        raise RuntimeError(f"TENANT_SECRET_KEY is required for {env_name} configuration")
+    if tenant_secret_key.strip().lower() in WEAK_SECRET_KEYS or len(tenant_secret_key) < 32:
+        raise RuntimeError(f"TENANT_SECRET_KEY is weak for {env_name} configuration")
+
+    database_url = os.environ.get("DATABASE_URL", "")
+    if not database_url:
+        raise RuntimeError(f"DATABASE_URL is required for {env_name} configuration")
+    if database_url.startswith("sqlite:"):
+        raise RuntimeError(f"DATABASE_URL must use PostgreSQL for {env_name} configuration")
+
+    redis_url = os.environ.get("REDIS_URL", "")
+    if not redis_url:
+        raise RuntimeError(f"REDIS_URL is required for {env_name} configuration")
+
+    config_class.SECRET_KEY = secret_key
+    config_class.SQLALCHEMY_DATABASE_URI = database_url
+    config_class.REDIS_URL = redis_url
+    config_class.PROXY_FIX_HOPS = os.environ.get("PROXY_FIX_HOPS", 0)
+    config_class.SERVER_NAME = os.environ.get("SERVER_NAME") or None
+    config_class.ALLOWED_HOSTS = os.environ.get("ALLOWED_HOSTS", "")
+    config_class.INBOUND_TOKEN_KEY = os.environ.get("INBOUND_TOKEN_KEY", "")
+    config_class.OUTREACH_SIGNING_KEY = os.environ.get("OUTREACH_SIGNING_KEY", "")
+
+
 def resolve_config(config_name: str | None = None) -> type[BaseConfig]:
     name = (config_name or os.environ.get("APP_ENV") or "development").lower()
     try:
@@ -68,17 +113,8 @@ def resolve_config(config_name: str | None = None) -> type[BaseConfig]:
             f"Unknown APP_ENV/config name {name!r}. Expected one of: {allowed}"
         ) from exc
 
-    if config_class is ProductionConfig:
-        secret_key = os.environ.get("SECRET_KEY", "")
-        if not secret_key:
-            raise RuntimeError("SECRET_KEY is required for production configuration")
-        if secret_key.strip().lower() in WEAK_SECRET_KEYS or len(secret_key) < 32:
-            raise RuntimeError("SECRET_KEY is weak for production configuration")
-        tenant_secret_key = os.environ.get("TENANT_SECRET_KEY", "")
-        if not tenant_secret_key:
-            raise RuntimeError("TENANT_SECRET_KEY is required for production configuration")
-        if len(tenant_secret_key) < 32:
-            raise RuntimeError("TENANT_SECRET_KEY is weak for production configuration")
-        ProductionConfig.SECRET_KEY = secret_key
+    if config_class in {StagingConfig, ProductionConfig}:
+        env_label = "staging" if config_class is StagingConfig else "production"
+        _validate_deploy_config(config_class, env_label)
 
     return config_class

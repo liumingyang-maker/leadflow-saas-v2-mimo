@@ -78,6 +78,7 @@ class TestStagingCompose:
         # Secrets should use ${VAR} references, not hardcoded values
         assert "SECRET_KEY=${SECRET_KEY}" in content
         assert "TENANT_SECRET_KEY=${TENANT_SECRET_KEY}" in content
+        assert "dev-only-change-me" not in content
 
     def test_staging_services_have_restart_policy(self) -> None:
         import yaml
@@ -96,3 +97,14 @@ class TestStagingCompose:
             if name == "worker":
                 continue  # Worker doesn't serve HTTP
             assert "healthcheck" in svc, f"Service {name} missing healthcheck"
+
+    def test_staging_web_and_worker_use_staging_env_and_postgres(self) -> None:
+        import yaml
+
+        with open("docker-compose.staging.yml") as f:
+            config = yaml.safe_load(f)
+        for name in ("web", "worker"):
+            env = config["services"][name]["environment"]
+            assert "APP_ENV=staging" in env
+            assert any(item.startswith("DATABASE_URL=postgresql://") for item in env)
+            assert "REDIS_URL=redis://redis:6379/0" in env
