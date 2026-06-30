@@ -1,0 +1,36 @@
+{% from "components/_shell.html" import shell %}
+{% from "components/_buttons.html" import button %}
+{% from "components/_forms.html" import field %}
+{% from "components/_badges.html" import badge %}
+{% from "components/_empty_states.html" import empty_state %}
+
+{% call shell("Signal Workspace Design System") %}
+<header class="lf-page-header">
+  <div>
+    <h1 class="lf-page-title">Signal Workspace</h1>
+    <p>Reusable LeadFlow V2 interface primitives for a focused B2B intelligence workspace.</p>
+  </div>
+  {{ button("Open filters", aria_label="Open filters") }}
+</header>
+
+<section class="lf-grid" aria-label="Component states">
+  <article class="lf-panel">
+    <h2>Actions</h2>
+    <div class="lf-status-row">
+      {{ button("Start search", "primary") }}
+      {{ button("Save view") }}
+      {{ badge("Ready", "success") }}
+    </div>
+  </article>
+  <article class="lf-panel">
+    <h2>Forms</h2>
+    {{ field("demo-email", "Buyer email", "email", "", "Use a work email when possible.") }}
+  </article>
+  <article class="lf-panel" aria-live="polite">
+    <h2>States</h2>
+    <p class="lf-loading">Loading…</p>
+    <p class="lf-error">Unable to load leads</p>
+    {{ empty_state("No accepted leads yet", "Accepted leads will appear here after review.", "Review leads") }}
+  </article>
+</section>
+{% endcall %}

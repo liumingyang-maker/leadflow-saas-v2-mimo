@@ -1,0 +1,12 @@
+{
+  "task": "V2-01-008",
+  "motion_audit": "PASS",
+  "personality": "Corporate",
+  "checks": {
+    "functional_motion_only": "PASS",
+    "duration_tokens_120_180ms": "PASS",
+    "no_transition_all": "PASS",
+    "prefers_reduced_motion": "PASS",
+    "no_layout_shift_animation": "PASS"
+  }
+}

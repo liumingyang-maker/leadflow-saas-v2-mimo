@@ -1,0 +1,7 @@
+{% macro stat(label, value, hint) -%}
+<article class="lf-panel lf-stat">
+  <span>{{ label }}</span>
+  <strong>{{ value }}</strong>
+  <small>{{ hint }}</small>
+</article>
+{%- endmacro %}

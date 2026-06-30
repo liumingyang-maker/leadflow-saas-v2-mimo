@@ -1,0 +1,6 @@
+{% macro confirm_dialog(title, body) -%}
+<section class="lf-dialog" role="dialog" aria-modal="true" aria-label="{{ title }}">
+  <strong>{{ title }}</strong>
+  <p>{{ body }}</p>
+</section>
+{%- endmacro %}

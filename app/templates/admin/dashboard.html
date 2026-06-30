@@ -1,0 +1,15 @@
+{% from "components/_shell.html" import shell %}{% from "components/_badges.html" import badge %}{% from "components/_empty_states.html" import empty_state %}{% from "components/_buttons.html" import button %}
+{% call shell("Admin dashboard") %}
+<header class="lf-page-header"><div><span class="lf-eyebrow">Admin</span><h1 class="lf-page-title">Admin Dashboard</h1><p>Tenant lifecycle, audit, and system overview.</p></div></header>
+<nav class="lf-top-nav"><a href="/admin" aria-current="page">Dashboard</a><a href="/audit">Audit</a><a href="/admin/system">System</a></nav>
+<div class="lf-grid lf-section">
+  <div class="lf-panel"><strong>Total tenants</strong><br><span class="lf-stat">{{ tenant_count }}</span></div>
+  <div class="lf-panel"><strong>Active</strong><br><span class="lf-stat">{{ active_count }}</span></div>
+  <div class="lf-panel"><strong>Suspended</strong><br><span class="lf-stat">{{ suspended_count }}</span></div>
+</div>
+<section class="lf-section"><h2>Tenants</h2>
+{% if tenants %}<div class="lf-table-wrap"><table class="lf-table"><thead><tr><th>Company</th><th>Status</th><th>Plan</th><th>Created</th></tr></thead><tbody>
+{% for t in tenants %}<tr><td>{{ t.company_name or "(unnamed)" }}</td><td><span class="lf-badge">{{ t.status }}</span></td><td>{{ t.plan }}</td><td>{{ t.created_at.strftime("%Y-%m-%d") if t.created_at else "" }}</td></tr>{% endfor %}</tbody></table></div>
+{% else %}{{ empty_state("No tenants", "No tenants registered yet.") }}{% endif %}
+</section>
+{% endcall %}

@@ -1,0 +1,3 @@
+{% macro badge(label, tone="neutral") -%}
+<span class="lf-badge{% if tone == 'success' %} lf-badge-success{% endif %}">{{ label }}</span>
+{%- endmacro %}

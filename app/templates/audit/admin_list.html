@@ -1,0 +1,7 @@
+{% from "components/_shell.html" import shell %}{% from "components/_empty_states.html" import empty_state %}
+{% call shell("Admin audit") %}
+<header class="lf-page-header"><div><span class="lf-eyebrow">Admin</span><h1 class="lf-page-title">System audit</h1></div></header>
+{% if events %}<div class="lf-table-wrap"><table class="lf-table"><thead><tr><th>Tenant</th><th>Action</th><th>Summary</th><th>Time</th></tr></thead><tbody>
+{% for e in events %}<tr><td>{{ e.tenant_id[:8] if e.tenant_id else "system" }}</td><td><span class="lf-badge">{{ e.action }}</span></td><td>{{ e.safe_summary[:80] }}</td><td>{{ e.created_at.strftime("%Y-%m-%d %H:%M") if e.created_at else "" }}</td></tr>{% endfor %}</tbody></table></div>
+{% else %}{{ empty_state("No events", "System-wide audit events will appear here.") }}{% endif %}
+{% endcall %}

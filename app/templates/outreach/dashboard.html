@@ -1,0 +1,42 @@
+{% from "components/_shell.html" import shell %}
+{% from "components/_buttons.html" import button %}
+{% from "components/_badges.html" import badge %}
+{% from "components/_empty_states.html" import empty_state %}
+{% call shell("Outreach") %}
+<header class="lf-page-header">
+  <div><span class="lf-eyebrow">Outreach</span><h1 class="lf-page-title">Outreach</h1></div>
+  <a href="/outreach/templates" class="lf-button">Templates</a>
+</header>
+
+<section class="lf-section">
+  <h2>Deliverability overview</h2>
+  <div class="lf-grid">
+    <div class="lf-panel"><strong>Sent</strong><br><span class="lf-stat">{{ sent }}</span></div>
+    <div class="lf-panel"><strong>Opens</strong><br><span class="lf-stat">{{ opens }}</span></div>
+    <div class="lf-panel"><strong>Clicks</strong><br><span class="lf-stat">{{ clicks }}</span></div>
+    <div class="lf-panel"><strong>Suppressed</strong><br><span class="lf-stat">{{ suppressed }}</span></div>
+    <div class="lf-panel"><strong>Failed</strong><br><span class="lf-stat">{{ failed }}</span></div>
+  </div>
+  {% if sent %}
+  <div class="lf-grid">
+    <div class="lf-panel"><strong>Open rate</strong><br><span class="lf-stat">{{ "%.1f"|format(opens / sent * 100) }}%</span></div>
+    <div class="lf-panel"><strong>Click rate</strong><br><span class="lf-stat">{{ "%.1f"|format(clicks / sent * 100) }}%</span></div>
+  </div>
+  {% endif %}
+  <div class="lf-status-row"><span class="lf-badge">Fake mailer — no real email sent</span></div>
+  <div class="lf-status-row lf-muted">DNS/domain checks not configured</div>
+</section>
+
+<section class="lf-section">
+  <h2>Templates</h2>
+  {% if templates %}
+  <ul class="lf-panel">
+    {% for t in templates %}
+    <li><strong>{{ t.name }}</strong> — {{ t.subject }}</li>
+    {% endfor %}
+  </ul>
+  {% else %}
+  {{ empty_state("No templates yet", "Create email templates for reuse.", "/outreach/templates") }}
+  {% endif %}
+</section>
+{% endcall %}

@@ -1,0 +1,7 @@
+{% from "components/_shell.html" import shell %}{% from "components/_empty_states.html" import empty_state %}
+{% call shell("Audit log") %}
+<header class="lf-page-header"><div><span class="lf-eyebrow">Audit</span><h1 class="lf-page-title">Audit log</h1></div></header>
+{% if events %}<div class="lf-table-wrap"><table class="lf-table"><thead><tr><th>Action</th><th>Target</th><th>Summary</th><th>Time</th></tr></thead><tbody>
+{% for e in events %}<tr><td><span class="lf-badge">{{ e.action }}</span></td><td>{{ e.target_type }} {{ e.target_id[:8] }}</td><td>{{ e.safe_summary[:80] }}</td><td>{{ e.created_at.strftime("%Y-%m-%d %H:%M") if e.created_at else "" }}</td></tr>{% endfor %}</tbody></table></div>
+{% else %}{{ empty_state("No events", "Security and operational events will appear here.") }}{% endif %}
+{% endcall %}

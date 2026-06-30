@@ -1,0 +1,60 @@
+{
+  "project_name": "leadflow-saas-v2",
+  "repo_path": "/home/brian/projects/leadflow-saas-v2",
+  "old_repo_path": "",
+  "reasonix_mcp_tool_hint": "mimo",
+  "controller": {
+    "name": "Qingyan (GLM)",
+    "role": "Controller / Architect / Release Manager",
+    "direct_feature_code_max_changed_lines": 30
+  },
+  "worker": {
+    "mode": "mcp_delegated",
+    "name": "Xiaomi MiMo",
+    "role": "Implementation Worker",
+    "max_fix_rounds": 4
+  },
+  "reviewer": {
+    "name": "DeepSeek",
+    "role": "Reviewer",
+    "max_review_rounds": 4,
+    "review_template": "templates/review_report.md",
+    "api_key_env": "DEEPSEEK_API_KEY"
+  },
+  "milestones": [
+    "V2-01",
+    "V2-02",
+    "V2-03",
+    "V2-04",
+    "V2-05",
+    "V2-06"
+  ],
+  "rc2_tasks": [
+    "RC2-001",
+    "RC2-002",
+    "RC2-003",
+    "RC2-004",
+    "RC2-005",
+    "RC2-006",
+    "RC2-007",
+    "RC2-008",
+    "RC2-009",
+    "RC2-010",
+    "RC2-011",
+    "RC2-012"
+  ],
+  "gates": {
+    "ruff": ["python", "-m", "ruff", "check", "."],
+    "format": ["python", "-m", "ruff", "format", "--check", "."],
+    "pytest": ["python", "-m", "pytest"],
+    "diff_check": ["git", "diff", "--check"],
+    "security_review": ["python", "-m", "pytest", "tests/", "-k", "security", "-v"]
+  },
+  "git": {
+    "remote": "origin",
+    "base_branch": "main",
+    "allow_auto_merge": true,
+    "allow_production_deploy": false
+  },
+  "preserve_paths": []
+}

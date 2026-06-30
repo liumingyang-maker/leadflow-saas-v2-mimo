@@ -1,0 +1,26 @@
+{% macro shell(title) -%}
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>{{ title }}</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/tokens.css') }}">
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/components.css') }}">
+    <script src="{{ url_for('static', filename='vendor/htmx/htmx.min.js') }}" defer></script>
+    <script src="{{ url_for('static', filename='js/lead-drawer.js') }}" defer></script>
+  </head>
+  <body>
+    <a class="lf-skip-link" href="#main">Skip to content</a>
+    <div class="lf-shell">
+      <aside class="lf-sidebar" aria-label="Design system sections">
+        <strong>LeadFlow V2</strong>
+        <p>Signal Workspace</p>
+      </aside>
+      <main class="lf-main" id="main">
+        {{ caller() }}
+      </main>
+    </div>
+  </body>
+</html>
+{%- endmacro %}

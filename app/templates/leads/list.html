@@ -1,0 +1,83 @@
+{% from "components/_shell.html" import shell %}
+{% from "components/_buttons.html" import button %}
+{% from "components/_forms.html" import csrf_input %}
+{% from "components/_empty_states.html" import empty_state %}
+
+{% call shell("Leads") %}
+<header class="lf-page-header">
+  <div>
+    <span class="lf-eyebrow">CRM</span>
+    <h1 class="lf-page-title">Leads ({{ leads|length }})</h1>
+  </div>
+  <a href="/leads/import" class="lf-button lf-button-primary">Import</a>
+</header>
+
+<form class="lf-status-row" method="get" action="/leads">
+  <input class="lf-field" name="search" placeholder="Search email or name" value="{{ current_search }}">
+  <select class="lf-field" name="status">
+    <option value="">All statuses</option>
+    <option value="raw" {% if current_status == 'raw' %}selected{% endif %}>Raw</option>
+    <option value="pending_review" {% if current_status == 'pending_review' %}selected{% endif %}>Pending review</option>
+    <option value="accepted" {% if current_status == 'accepted' %}selected{% endif %}>Accepted</option>
+    <option value="rejected" {% if current_status == 'rejected' %}selected{% endif %}>Rejected</option>
+  </select>
+  <select class="lf-field" name="stage">
+    <option value="">All stages</option>
+    <option value="new" {% if current_stage == 'new' %}selected{% endif %}>New</option>
+    <option value="contacted" {% if current_stage == 'contacted' %}selected{% endif %}>Contacted</option>
+    <option value="qualified" {% if current_stage == 'qualified' %}selected{% endif %}>Qualified</option>
+    <option value="proposal" {% if current_stage == 'proposal' %}selected{% endif %}>Proposal</option>
+    <option value="negotiation" {% if current_stage == 'negotiation' %}selected{% endif %}>Negotiation</option>
+    <option value="won" {% if current_stage == 'won' %}selected{% endif %}>Won</option>
+    <option value="lost" {% if current_stage == 'lost' %}selected{% endif %}>Lost</option>
+  </select>
+  <button class="lf-button" type="submit">Filter</button>
+</form>
+
+{% if leads %}
+<div class="lf-table-wrap">
+  <table class="lf-table">
+    <thead>
+      <tr>
+        <th>Email</th>
+        <th>Name</th>
+        <th>Status</th>
+        <th>Stage</th>
+        <th>Source</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for lead in leads %}
+      <tr>
+        <td>
+          <a href="/leads/{{ lead.id }}"
+             hx-get="/leads/{{ lead.id }}/drawer"
+             hx-target="#lead-drawer-content"
+             data-drawer-trigger="true"
+             hx-swap="innerHTML">{% if lead.email %}{{ lead.email }}{% else %}N/A{% endif %}</a>
+        </td>
+        <td>{{ lead.first_name }} {{ lead.last_name }}</td>
+        <td><span class="lf-badge">{{ lead.status }}</span></td>
+        <td><span class="lf-badge {% if lead.stage == 'won' %}lf-badge-success{% endif %}">{{ lead.stage }}</span></td>
+        <td>{{ lead.source }}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+{% else %}
+  {{ empty_state("No leads yet", "Import leads to start building your pipeline.", "Import leads") }}
+{% endif %}
+
+<!-- Drawer container: initially hidden -->
+<div id="lead-drawer" class="lf-drawer-container lf-drawer-closed" aria-hidden="true">
+  <div class="lf-drawer-backdrop"></div>
+  <aside class="lf-drawer" role="dialog" aria-modal="true" aria-label="Lead detail"
+         style="transform: translateX(100%);">
+    <button class="lf-drawer-close" aria-label="Close drawer">&times;</button>
+    <div id="lead-drawer-content" class="lf-drawer-content" tabindex="-1">
+      <div class="lf-loading">Loading lead details...</div>
+    </div>
+  </aside>
+</div>
+{% endcall %}

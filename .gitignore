@@ -1,0 +1,11 @@
+.autopilot/logs/
+.autopilot/screenshots/
+.autopilot/tmp/
+.autopilot/controller-output/
+.reasonix/
+.skill-cache/
+__pycache__/
+*.pyc
+leadflow-v2-dev.db
+.env
+.venv/

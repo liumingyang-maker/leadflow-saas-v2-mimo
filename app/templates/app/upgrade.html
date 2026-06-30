@@ -1,0 +1,11 @@
+{% from "components/_shell.html" import shell %}
+{% from "components/_buttons.html" import button %}
+
+{% call shell("Upgrade LeadFlow") %}
+<section class="lf-panel">
+  <span class="lf-eyebrow">Plan required</span>
+  <h1 class="lf-page-title">Upgrade LeadFlow</h1>
+  <p class="lf-muted">Your workspace needs an active plan before continuing.</p>
+  {{ button("Choose plan", "primary") }}
+</section>
+{% endcall %}

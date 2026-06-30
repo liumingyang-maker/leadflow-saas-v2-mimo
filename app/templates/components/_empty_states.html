@@ -1,0 +1,7 @@
+{% macro empty_state(title, body, action_label=None) -%}
+<section class="lf-empty-state">
+  <strong>{{ title }}</strong>
+  <span>{{ body }}</span>
+  {% if action_label %}<button class="lf-button lf-button-primary" type="button">{{ action_label }}</button>{% endif %}
+</section>
+{%- endmacro %}

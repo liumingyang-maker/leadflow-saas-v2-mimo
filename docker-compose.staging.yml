@@ -1,0 +1,72 @@
+services:
+  web:
+    build: .
+    environment:
+      - APP_ENV=staging
+      - SECRET_KEY=${SECRET_KEY}
+      - TENANT_SECRET_KEY=${TENANT_SECRET_KEY}
+      - DATABASE_URL=postgresql://leadflow:${POSTGRES_PASSWORD}@db:5432/leadflow
+      - REDIS_URL=redis://redis:6379/0
+      - WTF_CSRF_ENABLED=true
+      - SESSION_COOKIE_SECURE=true
+      - PROXY_FIX_HOPS=1
+    ports:
+      - "5000:5000"
+    depends_on:
+      redis:
+        condition: service_healthy
+      db:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:5000/health/live', timeout=3).read()"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
+    restart: unless-stopped
+
+  redis:
+    image: redis:7.4.2-alpine
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 3
+    restart: unless-stopped
+
+  db:
+    image: postgres:16-alpine
+    environment:
+      - POSTGRES_DB=leadflow
+      - POSTGRES_USER=leadflow
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
+    volumes:
+      - pg_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U leadflow -d leadflow"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
+  worker:
+    build: .
+    environment:
+      - APP_ENV=staging
+      - SECRET_KEY=${SECRET_KEY}
+      - TENANT_SECRET_KEY=${TENANT_SECRET_KEY}
+      - DATABASE_URL=postgresql://leadflow:${POSTGRES_PASSWORD}@db:5432/leadflow
+      - REDIS_URL=redis://redis:6379/0
+    depends_on:
+      redis:
+        condition: service_healthy
+      db:
+        condition: service_healthy
+    command: python run_worker.py default
+    restart: unless-stopped
+
+volumes:
+  pg_data:
+  redis_data:

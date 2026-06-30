@@ -1,0 +1,6 @@
+{
+  "task": "V2-01-004",
+  "verdict": "PASS",
+  "notes": "V2-01-004 PASS. Security review: security headers applied to success and error responses; JSON 404 and unhandled exception responses return stable error codes; test marker proves internal path/secret text is not returned to clients. Architecture review: hooks are isolated in app.core.security and app.core.errors. UI not applicable.",
+  "at": "2026-06-17T04:05:01.052928+00:00"
+}

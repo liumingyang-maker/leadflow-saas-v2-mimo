@@ -1,0 +1,357 @@
+===== |safe (8) =====
+.autopilot/evidence/V2-05/release-evidence.md:34:- No `|safe`, `Markup`, `render_template_string`, remote runtime CDN, or Alpine runtime in non-test code.
+docs/LAUNCH_CHECKLIST.md:16:- [ ] No `|safe` in templates
+tests/test_lead_drawer.py:99:    """The drawer partial template contains no |safe."""
+tests/test_lead_drawer.py:107:    assert "|safe" not in content
+tests/test_runtime_closure.py:131:    """Verify no |safe, Markup, or render_template_string anywhere."""
+tests/test_runtime_closure.py:135:        ["git", "grep", "-n", "|safe", "--", "*.html", "*.py"],
+tests/test_runtime_closure.py:140:    # Exclude test files which mention |safe in comments/assertions only
+tests/test_runtime_closure.py:144:    assert len(safe_lines) == 0, f"|safe found in non-test code: {safe_lines}"
+===== Markup (5) =====
+.autopilot/evidence/V2-05/release-evidence.md:34:- No `|safe`, `Markup`, `render_template_string`, remote runtime CDN, or Alpine runtime in non-test code.
+requirements.lock:11:MarkupSafe==3.0.3
+tests/test_runtime_closure.py:131:    """Verify no |safe, Markup, or render_template_string anywhere."""
+tests/test_runtime_closure.py:147:        ["git", "grep", "-n", "Markup", "--", "*.py"], capture_output=True, text=True, cwd=ROOT
+tests/test_runtime_closure.py:152:    assert len(markup_lines) == 0, f"Markup found: {markup_lines}"
+===== render_template_string (4) =====
+.autopilot/evidence/V2-05/release-evidence.md:34:- No `|safe`, `Markup`, `render_template_string`, remote runtime CDN, or Alpine runtime in non-test code.
+tests/test_runtime_closure.py:131:    """Verify no |safe, Markup, or render_template_string anywhere."""
+tests/test_runtime_closure.py:155:        ["git", "grep", "-n", "render_template_string", "--", "*.py"],
+tests/test_runtime_closure.py:163:    assert len(rts_lines) == 0, f"render_template_string found: {rts_lines}"
+===== unpkg.com (2) =====
+docs/THIRD_PARTY_ASSETS.md:5:| HTMX | 2.0.4 | BSD 2-Clause | https://unpkg.com/htmx.org@2.0.4/dist/htmx.min.js | `app/static/vendor/htmx/htmx.min.js` |
+tests/test_runtime_closure.py:37:    assert "unpkg.com" not in shell
+===== cdn.jsdelivr.net (1) =====
+tests/test_runtime_closure.py:38:    assert "cdn.jsdelivr.net" not in shell
+===== x-data (2) =====
+tests/test_runtime_closure.py:44:    assert "x-data" not in html
+tests/test_runtime_closure.py:54:    assert "x-data" not in html
+===== x-show (2) =====
+tests/test_runtime_closure.py:45:    assert "x-show" not in html
+tests/test_runtime_closure.py:55:    assert "x-show" not in html
+===== x-effect (1) =====
+tests/test_runtime_closure.py:46:    assert "x-effect" not in html
+===== _task_status (0) =====
+===== Thread( (4) =====
+tests/test_playwright_collection.py:85:    thread = threading.Thread(target=server.serve_forever, daemon=True)
+tests/test_playwright_crm.py:58:    thread = threading.Thread(target=server.serve_forever, daemon=True)
+tests/test_playwright_launch_acceptance.py:81:    thread = threading.Thread(target=server.serve_forever, daemon=True)
+tests/test_playwright_outreach_inbound.py:74:    thread = threading.Thread(target=server.serve_forever, daemon=True)
+===== pickle (0) =====
+===== API_KEY (1) =====
+docs/LAUNCH_CHECKLIST.md:19:- [ ] No `API_KEY` in code
+===== SECRET (112) =====
+.autopilot/evidence/V2-01-milestone-acceptance.json:38:      "Production SECRET_KEY validation, response hardening, sanitized error handling and request id propagation are in place.",
+.autopilot/reviews/V2-01-002-20260617-112754.json:4:  "notes": "V2-01-002 PASS. TDD red/green evidence captured: tests/test_app_factory.py failed before app package existed, then passed after minimal create_app/config implementation. Architecture review: factory/config scoped and no import side effects. Security review: production SECRET_KEY validation and safe cookie defaults present. Worker safety failure recorded; old repository restored to pre-existing state.",
+app/config.py:10:    SECRET_KEY: ClassVar[str] = os.environ.get("SECRET_KEY", "dev-only-change-me")
+app/config.py:32:    SECRET_KEY: ClassVar[str] = os.environ.get(
+app/config.py:33:        "SECRET_KEY", "testing-secret-key-not-for-production"
+app/config.py:51:WEAK_SECRET_KEYS = {
+app/config.py:72:        secret_key = os.environ.get("SECRET_KEY", "")
+app/config.py:74:            raise RuntimeError("SECRET_KEY is required for production configuration")
+app/config.py:75:        if secret_key.strip().lower() in WEAK_SECRET_KEYS or len(secret_key) < 32:
+app/config.py:76:            raise RuntimeError("SECRET_KEY is weak for production configuration")
+app/config.py:77:        tenant_secret_key = os.environ.get("TENANT_SECRET_KEY", "")
+app/config.py:79:            raise RuntimeError("TENANT_SECRET_KEY is required for production configuration")
+app/config.py:81:            raise RuntimeError("TENANT_SECRET_KEY is weak for production configuration")
+app/config.py:82:        ProductionConfig.SECRET_KEY = secret_key
+app/modules/accounts/secret_store.py:19:    Current key is read from ``TENANT_SECRET_KEY`` env var.
+app/modules/accounts/secret_store.py:20:    Previous key (if any) is read from ``TENANT_SECRET_KEY_PREVIOUS``
+app/modules/accounts/secret_store.py:28:            _require_env("TENANT_SECRET_KEY", "current tenant secret key")
+app/modules/accounts/secret_store.py:30:        previous_raw = os.environ.get("TENANT_SECRET_KEY_PREVIOUS")
+docker-compose.yml:6:      - SECRET_KEY=dev-only-change-me
+docker-compose.yml:57:      - SECRET_KEY=dev-only-change-me
+docs/LAUNCH_CHECKLIST.md:6:- [ ] `SECRET_KEY` set (32+ chars)
+docs/LAUNCH_CHECKLIST.md:7:- [ ] `TENANT_SECRET_KEY` set (32+ chars)
+docs/RUNBOOK_BACKUP_RESTORE.md:46:- `SECRET_KEY`, `TENANT_SECRET_KEY`, `INBOUND_TOKEN_KEY` must be rotated separately
+docs/RUNBOOK_STAGING.md:42:SECRET_KEY=<staging-secret>
+docs/RUNBOOK_STAGING.md:43:TENANT_SECRET_KEY=<tenant-secret>
+tests/test_acceptance.py:23:    monkeypatch.setenv("SECRET_KEY", "test-secret-key-that-is-long-enough")
+tests/test_acceptance.py:24:    monkeypatch.setenv("TENANT_SECRET_KEY", "test-tenant-secret-key")
+tests/test_acceptance.py:25:    monkeypatch.delenv("TENANT_SECRET_KEY_PREVIOUS", raising=False)
+tests/test_acceptance.py:244:    monkeypatch.setenv("SECRET_KEY", "test-secret-key-that-is-long-enough")
+tests/test_acceptance.py:341:    monkeypatch.setenv("TENANT_SECRET_KEY", "test-tenant-secret-key")
+tests/test_acceptance.py:359:    monkeypatch.setenv("TENANT_SECRET_KEY", "new-encryption-key")
+tests/test_acceptance.py:360:    monkeypatch.setenv("TENANT_SECRET_KEY_PREVIOUS", "test-tenant-secret-key")
+tests/test_acceptance.py:386:        monkeypatch.setenv("SECRET_KEY", "test-secret-key-that-is-long-enough")
+tests/test_acceptance.py:403:    monkeypatch.setenv("SECRET_KEY", "test-secret-key-that-is-long-enough")
+tests/test_admin_lifecycle.py:10:    monkeypatch.setenv("SECRET_KEY", "test-secret-key-that-is-long-enough")
+tests/test_app_factory.py:11:    monkeypatch.setenv("SECRET_KEY", "test-secret-key-that-is-long-enough")
+tests/test_app_factory.py:32:    monkeypatch.setenv("SECRET_KEY", "test-secret-key-that-is-long-enough")
+tests/test_app_factory.py:43:    monkeypatch.delenv("SECRET_KEY", raising=False)
+tests/test_app_factory.py:47:    with pytest.raises(RuntimeError, match="SECRET_KEY"):
+tests/test_app_factory.py:50:    monkeypatch.setenv("SECRET_KEY", "dev")
+tests/test_app_factory.py:54:    monkeypatch.setenv("SECRET_KEY", "a-32-char-production-key-that-is-ok!")
+tests/test_app_factory.py:55:    monkeypatch.delenv("TENANT_SECRET_KEY", raising=False)
+tests/test_app_factory.py:56:    with pytest.raises(RuntimeError, match="TENANT_SECRET_KEY"):
+tests/test_app_factory.py:59:    monkeypatch.setenv("TENANT_SECRET_KEY", "short")
+tests/test_app_factory.py:60:    with pytest.raises(RuntimeError, match="TENANT_SECRET_KEY.*weak"):
+tests/test_app_factory.py:63:    monkeypatch.setenv("TENANT_SECRET_KEY", "a-32-char-tenant-secret-key-ok!!!")
+tests/test_app_factory.py:79:    monkeypatch.setenv("SECRET_KEY", "test-secret-key-that-is-long-enough")
+tests/test_app_shell.py:11:    monkeypatch.setenv("SECRET_KEY", "test-secret-key-that-is-long-enough")
+tests/test_auth_flows.py:8:    monkeypatch.setenv("SECRET_KEY", "test-secret-key-that-is-long-enough")
+tests/test_crm_acceptance.py:17:    monkeypatch.setenv("SECRET_KEY", "test-secret-key-that-is-long-enough")
+tests/test_crm_acceptance.py:18:    monkeypatch.setenv("TENANT_SECRET_KEY", "test-tenant-secret-key")
+tests/test_crm_acceptance.py:168:        monkeypatch.setenv("SECRET_KEY", "test-secret-key")
+tests/test_crm_acceptance.py:182:    monkeypatch.setenv("SECRET_KEY", "test-key")
+tests/test_csrf_cookie_proxy.py:15:    monkeypatch.setenv("SECRET_KEY", "test-secret-key-that-is-long-enough")
+tests/test_csrf_cookie_proxy.py:28:    monkeypatch.setenv("SECRET_KEY", "test-secret-key-that-is-long-enough")
+tests/test_csrf_cookie_proxy.py:170:    monkeypatch.setenv("SECRET_KEY", "a-32-char-production-key-that-is-ok!")
+tests/test_csrf_cookie_proxy.py:171:    monkeypatch.setenv("TENANT_SECRET_KEY", "a-32-char-tenant-secret-key-ok!!!")
+tests/test_csrf_cookie_proxy.py:280:    monkeypatch.setenv("SECRET_KEY", "test-secret-key-that-is-long-enough")
+tests/test_csrf_cookie_proxy.py:296:    monkeypatch.setenv("SECRET_KEY", "test-secret-key-that-is-long-enough")
+tests/test_csrf_cookie_proxy.py:328:    monkeypatch.setenv("SECRET_KEY", "test-secret-key-that-is-long-enough")
+tests/test_csrf_crm.py:19:    monkeypatch.setenv("SECRET_KEY", "test-secret-key-that-is-long-enough")
+tests/test_data_layer.py:13:    monkeypatch.setenv("SECRET_KEY", "test-secret-key-that-is-long-enough")
+tests/test_data_layer.py:26:    monkeypatch.setenv("SECRET_KEY", "test-secret-key-that-is-long-enough")
+tests/test_design_system.py:52:    monkeypatch.setenv("SECRET_KEY", "test-secret-key-that-is-long-enough")
+tests/test_docker_baseline.py:25:    assert "SECRET_KEY=dev-only-change-me" in compose
+tests/test_health_and_request_id.py:11:    monkeypatch.setenv("SECRET_KEY", "test-secret-key-that-is-long-enough")
+tests/test_import_batch.py:13:    monkeypatch.setenv("SECRET_KEY", "test-secret-key-that-is-long-enough")
+tests/test_job_isolation.py:13:    monkeypatch.setenv("SECRET_KEY", "test-secret-key-that-is-long-enough")
+tests/test_job_isolation.py:149:    monkeypatch.setenv("SECRET_KEY", "test-key")
+tests/test_job_models.py:11:    monkeypatch.setenv("SECRET_KEY", "test-secret-key-that-is-long-enough")
+tests/test_lead_drawer.py:10:    monkeypatch.setenv("SECRET_KEY", "test-secret-key-that-is-long-enough")
+tests/test_lead_drawer.py:133:    monkeypatch.setenv("SECRET_KEY", "test-key")
+tests/test_lead_models.py:10:    monkeypatch.setenv("SECRET_KEY", "test-secret-key-that-is-long-enough")
+tests/test_lead_repositories.py:10:    monkeypatch.setenv("SECRET_KEY", "test-secret-key-that-is-long-enough")
+tests/test_lead_service.py:13:    monkeypatch.setenv("SECRET_KEY", "test-secret-key-that-is-long-enough")
+tests/test_milestone_v4.py:7:    monkeypatch.setenv("SECRET_KEY", "test-secret-key-that-is-long-enough")
+tests/test_milestone_v4.py:28:        monkeypatch.setenv("SECRET_KEY", "test-secret-key")
+tests/test_outreach_inbound.py:17:    monkeypatch.setenv("SECRET_KEY", "test-secret-key-that-is-long-enough")
+tests/test_outreach_inbound.py:18:    monkeypatch.setenv("TENANT_SECRET_KEY", "test-tenant-secret-key-that-is-long-enough")
+tests/test_password_reset.py:9:    monkeypatch.setenv("SECRET_KEY", "test-secret-key-that-is-long-enough")
+tests/test_playwright_collection.py:41:    monkeypatch.setenv("SECRET_KEY", "playwright-secret-key-that-is-long-enough")
+tests/test_playwright_collection.py:42:    DevelopmentConfig.SECRET_KEY = os.environ["SECRET_KEY"]
+tests/test_playwright_crm.py:40:    monkeypatch.setenv("SECRET_KEY", "playwright-secret-key-that-is-long-enough")
+tests/test_playwright_crm.py:41:    monkeypatch.setenv("TENANT_SECRET_KEY", "playwright-tenant-secret-key-that-is-long-enough")
+tests/test_playwright_crm.py:42:    DevelopmentConfig.SECRET_KEY = os.environ["SECRET_KEY"]
+tests/test_playwright_launch_acceptance.py:40:    monkeypatch.setenv("SECRET_KEY", "playwright-secret-key-that-is-long-enough")
+tests/test_playwright_launch_acceptance.py:41:    monkeypatch.setenv("TENANT_SECRET_KEY", "playwright-tenant-secret-key-that-is-long-enough")
+tests/test_playwright_launch_acceptance.py:42:    DevelopmentConfig.SECRET_KEY = os.environ["SECRET_KEY"]
+tests/test_playwright_outreach_inbound.py:42:    monkeypatch.setenv("SECRET_KEY", "playwright-secret-key-that-is-long-enough")
+tests/test_playwright_outreach_inbound.py:43:    monkeypatch.setenv("TENANT_SECRET_KEY", "playwright-tenant-secret-key-that-is-long-enough")
+tests/test_playwright_outreach_inbound.py:44:    DevelopmentConfig.SECRET_KEY = os.environ["SECRET_KEY"]
+tests/test_queue_safety.py:15:    monkeypatch.setenv("SECRET_KEY", "test-secret-key-that-is-long-enough")
+tests/test_queue_safety.py:138:    monkeypatch.setenv("SECRET_KEY", "test-key")
+tests/test_restart_persistence.py:20:    _os.environ["SECRET_KEY"] = "test-secret-key-that-is-long-enough"
+tests/test_secret_store.py:9:    monkeypatch.setenv("SECRET_KEY", "test-secret-key-that-is-long-enough")
+tests/test_secret_store.py:10:    monkeypatch.setenv("TENANT_SECRET_KEY", key)
+tests/test_secret_store.py:11:    monkeypatch.delenv("TENANT_SECRET_KEY_PREVIOUS", raising=False)
+tests/test_secret_store.py:80:    monkeypatch.setenv("TENANT_SECRET_KEY", "new-secret-key")
+tests/test_secret_store.py:81:    monkeypatch.setenv("TENANT_SECRET_KEY_PREVIOUS", "old-secret-key")
+tests/test_secret_store.py:130:    monkeypatch.setenv("TENANT_SECRET_KEY", "key-b")
+tests/test_secret_store.py:131:    monkeypatch.delenv("TENANT_SECRET_KEY_PREVIOUS", raising=False)
+tests/test_secret_store.py:178:    monkeypatch.setenv("TENANT_SECRET_KEY", "different-key")
+tests/test_secret_store.py:208:    monkeypatch.setenv("TENANT_SECRET_KEY", "wrong-current-key")
+tests/test_secret_store.py:209:    monkeypatch.delenv("TENANT_SECRET_KEY_PREVIOUS", raising=False)
+tests/test_security_middleware.py:7:    monkeypatch.setenv("SECRET_KEY", "test-secret-key-that-is-long-enough")
+tests/test_tenant_guards.py:10:    monkeypatch.setenv("SECRET_KEY", "test-secret-key-that-is-long-enough")
+tests/test_tenant_isolation.py:8:    monkeypatch.setenv("SECRET_KEY", "test-secret-key-that-is-long-enough")
+tests/test_v2_06_acceptance.py:11:    monkeypatch.setenv("SECRET_KEY", "test-secret-key-that-is-long-enough")
+tests/test_v2_06_acceptance.py:12:    monkeypatch.setenv("TENANT_SECRET_KEY", "test-tenant-secret-key-that-is-long-enough")
+tests/test_v2_06_acceptance.py:162:    assert "SECRET_KEY" not in html
+tests/test_worker_contracts.py:52:    monkeypatch.setenv("SECRET_KEY", "test-secret-key-that-is-long-enough")
+tests/test_worker_contracts.py:69:    monkeypatch.setenv("SECRET_KEY", "test-secret-key-that-is-long-enough")
+===== password (196) =====
+.agents/skills/ui-ux-pro-max/SKILL.md:220:- `password-toggle` - Provide show/hide toggle for password fields (MD)
+.autopilot/evidence/V2-02-001-model-review.json:17:      "Admin users retain must_change_password default true for CLI-created lifecycle in later tasks.",
+.autopilot/evidence/V2-02-002-auth-review.json:16:      "Passwords are stored with Werkzeug password hashes, never as plaintext.",
+.autopilot/evidence/V2-02-003-security-review.json:8:      "Forgot-password responses are generic for known and unknown emails, preventing account enumeration.",
+.autopilot/evidence/V2-02-003-security-review.json:10:      "Password reset updates the stored hash and invalidates the old password.",
+.autopilot/evidence/V2-02-006-admin-review.json:16:      "Admin creation requires explicit service call and strong password.",
+.autopilot/packets/V2-02-003.md:6:Branch: task/v2-02-003-password-reset-and-session-rotation
+app/modules/accounts/admin_routes.py:26:                password=request.form.get("password", ""),
+app/modules/accounts/admin_routes.py:35:        session["admin_must_change_password"] = identity.must_change_password
+app/modules/accounts/admin_service.py:8:from werkzeug.security import check_password_hash, generate_password_hash
+app/modules/accounts/admin_service.py:25:    must_change_password: bool
+app/modules/accounts/admin_service.py:29:    app: Flask, *, email: str, password: str, must_change_password: bool = True
+app/modules/accounts/admin_service.py:32:    _validate_admin_password(clean_email, password)
+app/modules/accounts/admin_service.py:38:            password_hash=generate_password_hash(password),
+app/modules/accounts/admin_service.py:39:            must_change_password=must_change_password,
+app/modules/accounts/admin_service.py:47:def authenticate_admin(app: Flask, *, email: str, password: str) -> AdminIdentity:
+app/modules/accounts/admin_service.py:54:            or not check_password_hash(admin.password_hash, password or "")
+app/modules/accounts/admin_service.py:56:            raise AdminAccountError("invalid_credentials", "Email or password is incorrect")
+app/modules/accounts/admin_service.py:60:            must_change_password=admin.must_change_password,
+app/modules/accounts/admin_service.py:68:def _validate_admin_password(email: str, password: str) -> None:
+app/modules/accounts/admin_service.py:71:    if len(password or "") < 12:
+app/modules/accounts/admin_service.py:72:        raise AdminAccountError("weak_password", "Admin password must be at least 12 characters")
+app/modules/accounts/models.py:75:    password_hash: Mapped[str] = mapped_column(String(255), nullable=False)
+app/modules/accounts/models.py:116:    password_hash: Mapped[str] = mapped_column(String(255), nullable=False)
+app/modules/accounts/models.py:117:    must_change_password: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+app/modules/accounts/routes.py:11:    request_password_reset,
+app/modules/accounts/routes.py:12:    reset_password,
+app/modules/accounts/routes.py:28:                password=request.form.get("password", ""),
+app/modules/accounts/routes.py:43:                password=request.form.get("password", ""),
+app/modules/accounts/routes.py:69:    @app.get("/forgot-password")
+app/modules/accounts/routes.py:70:    def forgot_password_form():
+app/modules/accounts/routes.py:71:        return render_template("auth/forgot_password.html", sent=False)
+app/modules/accounts/routes.py:73:    @app.post("/forgot-password")
+app/modules/accounts/routes.py:74:    def forgot_password_submit():
+app/modules/accounts/routes.py:75:        request_password_reset(app, email=request.form.get("email", ""))
+app/modules/accounts/routes.py:76:        return render_template("auth/forgot_password.html", sent=True)
+app/modules/accounts/routes.py:78:    @app.get("/reset-password/<token>")
+app/modules/accounts/routes.py:79:    def reset_password_form(token: str):
+app/modules/accounts/routes.py:80:        return render_template("auth/reset_password.html", token=token, error="")
+app/modules/accounts/routes.py:82:    @app.post("/reset-password/<token>")
+app/modules/accounts/routes.py:83:    def reset_password_submit(token: str):
+app/modules/accounts/routes.py:85:            reset_password(app, token=token, password=request.form.get("password", ""))
+app/modules/accounts/routes.py:88:                render_template("auth/reset_password.html", token=token, error=error.message),
+app/modules/accounts/service.py:8:from werkzeug.security import check_password_hash, generate_password_hash
+app/modules/accounts/service.py:28:def register_account(app: Flask, *, email: str, password: str, company_name: str) -> EmailToken:
+app/modules/accounts/service.py:31:    _validate_registration(clean_email, password)
+app/modules/accounts/service.py:38:        user = User(email=clean_email, password_hash=generate_password_hash(password))
+app/modules/accounts/service.py:70:def request_password_reset(app: Flask, *, email: str) -> EmailToken | None:
+app/modules/accounts/service.py:88:def reset_password(app: Flask, *, token: str, password: str) -> None:
+app/modules/accounts/service.py:91:    if len(password or "") < 8:
+app/modules/accounts/service.py:92:        raise AccountError("weak_password", "Password must be at least 8 characters")
+app/modules/accounts/service.py:108:        user.password_hash = generate_password_hash(password)
+app/modules/accounts/service.py:112:def authenticate(app: Flask, *, email: str, password: str) -> LoginIdentity:
+app/modules/accounts/service.py:116:        if user is None or not check_password_hash(user.password_hash, password or ""):
+app/modules/accounts/service.py:117:            raise AccountError("invalid_credentials", "Email or password is incorrect")
+app/modules/accounts/service.py:150:def _validate_registration(email: str, password: str) -> None:
+app/modules/accounts/service.py:153:    if len(password or "") < 8:
+app/modules/accounts/service.py:154:        raise AccountError("weak_password", "Password must be at least 8 characters")
+app/templates/admin/login.html:16:    {{ field("password", "Password", "password") }}
+app/templates/auth/forgot_password.html:5:{% call shell("Reset your password") %}
+app/templates/auth/forgot_password.html:9:    <h1 class="lf-page-title">Reset your password</h1>
+app/templates/auth/forgot_password.html:12:  <form class="lf-panel lf-form-stack" method="post" action="/forgot-password">
+app/templates/auth/login.html:19:    {{ field("password", "Password", "password") }}
+app/templates/auth/login.html:23:      <a href="/forgot-password">Forgot password?</a>
+app/templates/auth/register.html:17:    {{ field("password", "Password", "password", "", "Use at least 8 characters.") }}
+app/templates/auth/reset_password.html:5:{% call shell("Choose a new password") %}
+app/templates/auth/reset_password.html:9:    <h1 class="lf-page-title">Choose a new password</h1>
+app/templates/auth/reset_password.html:10:    <p>After reset, sign in again with the new password.</p>
+app/templates/auth/reset_password.html:12:  <form class="lf-panel lf-form-stack" method="post" action="/reset-password/{{ token }}">
+app/templates/auth/reset_password.html:15:    {{ field("password", "New password", "password", "", "Use at least 8 characters.") }}
+app/templates/auth/reset_password.html:16:    {{ button("Update password", "primary", "submit") }}
+docs/OLD_TO_V2_MIGRATION_MATRIX.md:10:| Registration, login, logout, verification, password reset | `/register`, `/login`, `/logout`, `/verify-email/<token>`, `/forgot-password`, `/reset-password/<token>` | `app.modules.auth` | V2-02 | Preserve flows and P0 security behavior; implement with Application Factory, CSRF, service/repository split. |
+docs/OLD_TO_V2_MIGRATION_MATRIX.md:20:| Admin | `/admin/*` | `app.modules.admin` | V2-06 | Preserve no-default-admin rule, first password change, tenant status controls, and audit boundary. |
+docs/OLD_TO_V2_MIGRATION_MATRIX.md:27:| Tenant | `id`, `email`, `password_hash`, `company_name`, `status`, `plan`, `trial_ends`, `plan_expires_at`, `email_verified`, `onboarding_done`, timestamps | SQLAlchemy `Tenant`, `User`, and `TenantMembership`; status and plan guarded on every protected request. |
+docs/OLD_TO_V2_MIGRATION_MATRIX.md:28:| Admin user | `id`, `email`, `password_hash`, `must_change_password`, timestamps | Separate admin model/session boundary; no default password, CLI-created admin only. |
+docs/OLD_TO_V2_MIGRATION_MATRIX.md:44:| P0-001 no default admin | Empty DB creates no weak admin; CLI creation requires strong password and first change. | `tests/test_admin_security.py` |
+migrations/versions/0002_account_models.py:52:        sa.Column("password_hash", sa.String(length=255), nullable=False),
+migrations/versions/0002_account_models.py:72:        sa.Column("password_hash", sa.String(length=255), nullable=False),
+migrations/versions/0002_account_models.py:73:        sa.Column("must_change_password", sa.Boolean(), nullable=False),
+milestones/V2-02.json:38:      "branch": "task/v2-02-003-password-reset-and-session-rotation",
+tests/test_acceptance.py:50:            "password": "safe-password-123",
+tests/test_acceptance.py:60:    client.post("/login", data={"email": "owner@example.com", "password": "safe-password-123"})
+tests/test_acceptance.py:79:            "password": "safe-password-123",
+tests/test_acceptance.py:107:        "/login", data={"email": "alice@example.com", "password": "safe-password-123"}
+tests/test_acceptance.py:196:        password="temporary-safe-password-123",
+tests/test_acceptance.py:197:        must_change_password=False,
+tests/test_acceptance.py:257:    resp = client.post("/login", data={"email": "a@b.com", "password": "12345678"})
+tests/test_acceptance.py:288:        password="temporary-safe-password-123",
+tests/test_acceptance.py:289:        must_change_password=False,
+tests/test_acceptance.py:298:        data={"email": "admin@example.com", "password": "temporary-safe-password-123"},
+tests/test_acceptance.py:329:    client.post("/login", data={"email": "owner@example.com", "password": "safe-password-123"})
+tests/test_acceptance.py:353:        store.save(tenant_id, "smtp_password", "original-secret")
+tests/test_acceptance.py:363:        assert store.load(tenant_id, "smtp_password") == "original-secret"
+tests/test_acceptance.py:364:        store.rotate(tenant_id, "smtp_password")
+tests/test_acceptance.py:368:        assert store.load(tenant_id, "smtp_password") == "original-secret"
+tests/test_account_models.py:40:            user = User(email="owner@example.com", password_hash="pbkdf2$hash")
+tests/test_account_models.py:42:            admin = AdminUser(email="ops@example.com", password_hash="pbkdf2$admin")
+tests/test_account_models.py:59:            assert stored_admin.must_change_password is True
+tests/test_admin_lifecycle.py:6:from werkzeug.security import check_password_hash
+tests/test_admin_lifecycle.py:31:def test_create_admin_hashes_password_and_rejects_weak_or_duplicate(monkeypatch) -> None:
+tests/test_admin_lifecycle.py:38:        create_admin(app, email="owner@example.com", password="short")
+tests/test_admin_lifecycle.py:40:    admin = create_admin(app, email="Owner@Example.com ", password="temporary-safe-password-123")
+tests/test_admin_lifecycle.py:42:        create_admin(app, email="owner@example.com", password="another-safe-password-456")
+tests/test_admin_lifecycle.py:48:        assert stored.password_hash != "temporary-safe-password-123"
+tests/test_admin_lifecycle.py:49:        assert check_password_hash(stored.password_hash, "temporary-safe-password-123")
+tests/test_admin_lifecycle.py:50:        assert stored.must_change_password is True
+tests/test_admin_lifecycle.py:61:        password="temporary-safe-password-123",
+tests/test_admin_lifecycle.py:62:        must_change_password=False,
+tests/test_admin_lifecycle.py:70:        data={"email": "admin@example.com", "password": "temporary-safe-password-123"},
+tests/test_admin_lifecycle.py:100:        password="temporary-safe-password-123",
+tests/test_admin_lifecycle.py:101:        must_change_password=False,
+tests/test_admin_lifecycle.py:114:        data={"email": "admin@example.com", "password": "temporary-safe-password-123"},
+tests/test_app_shell.py:29:    assert 'for="password"' in html
+tests/test_app_shell.py:30:    assert 'type="password"' in html
+tests/test_auth_flows.py:28:            "password": "safe-password-123",
+tests/test_auth_flows.py:44:        assert user.password_hash != "safe-password-123"
+tests/test_auth_flows.py:61:            "password": "safe-password-123",
+tests/test_auth_flows.py:71:        "/login", data={"email": "owner@example.com", "password": "safe-password-123"}
+tests/test_auth_flows.py:86:        "/login", data={"email": "owner@example.com", "password": "safe-password-123"}
+tests/test_auth_flows.py:104:            "password": "safe-password-123",
+tests/test_crm_acceptance.py:42:            "password": "safe-password-123",
+tests/test_crm_acceptance.py:52:    client.post("/login", data={"email": "owner@example.com", "password": "safe-password-123"})
+tests/test_csrf_cookie_proxy.py:75:def test_csrf_token_rendered_on_forgot_password_page(monkeypatch) -> None:
+tests/test_csrf_cookie_proxy.py:77:    html = app.test_client().get("/forgot-password").get_data(as_text=True)
+tests/test_csrf_cookie_proxy.py:98:        data={"email": "owner@example.com", "password": "safe-password-123"},
+tests/test_csrf_cookie_proxy.py:111:            "password": "safe-password-123",
+tests/test_csrf_cookie_proxy.py:125:            "password": "safe-password-123",
+tests/test_csrf_cookie_proxy.py:147:            "password": "safe-password-123",
+tests/test_csrf_cookie_proxy.py:159:        "/login", data={"email": "owner@example.com", "password": "safe-password-123"}
+tests/test_csrf_cookie_proxy.py:196:            "password": "safe-password-123",
+tests/test_csrf_cookie_proxy.py:207:    client.post("/login", data={"email": "owner@example.com", "password": "safe-password-123"})
+tests/test_csrf_cookie_proxy.py:222:        password="temporary-safe-password-123",
+tests/test_csrf_cookie_proxy.py:223:        must_change_password=False,
+tests/test_csrf_cookie_proxy.py:237:            "password": "temporary-safe-password-123",
+tests/test_csrf_crm.py:11:from werkzeug.security import generate_password_hash
+tests/test_csrf_crm.py:34:            password_hash=generate_password_hash("pass1234"),
+tests/test_job_isolation.py:143:        assert "password" not in payload
+tests/test_job_isolation.py:160:    from werkzeug.security import generate_password_hash
+tests/test_job_isolation.py:166:        user = User(email="a@b.com", password_hash=generate_password_hash("p"))
+tests/test_lead_drawer.py:62:        from werkzeug.security import generate_password_hash
+tests/test_lead_drawer.py:64:        other_user = User(email="other@x.com", password_hash=generate_password_hash("pass"))
+tests/test_lead_drawer.py:171:            "password": "safe-password-123",
+tests/test_lead_drawer.py:181:    client.post("/login", data={"email": "owner@example.com", "password": "safe-password-123"})
+tests/test_outreach_inbound.py:13:from werkzeug.security import generate_password_hash
+tests/test_outreach_inbound.py:38:            password_hash=generate_password_hash("safe-password-123"),
+tests/test_password_reset.py:5:from werkzeug.security import check_password_hash
+tests/test_password_reset.py:27:            "password": "safe-password-123",
+tests/test_password_reset.py:40:def test_forgot_password_uses_generic_response_and_creates_token_for_known_email(
+tests/test_password_reset.py:46:    known = client.post("/forgot-password", data={"email": "owner@example.com"})
+tests/test_password_reset.py:47:    unknown = client.post("/forgot-password", data={"email": "missing@example.com"})
+tests/test_password_reset.py:63:def test_reset_password_consumes_token_and_invalidates_old_password(monkeypatch) -> None:
+tests/test_password_reset.py:66:    client.post("/forgot-password", data={"email": "owner@example.com"})
+tests/test_password_reset.py:75:    reset = client.post(f"/reset-password/{token}", data={"password": "new-safe-password-456"})
+tests/test_password_reset.py:76:    reused = client.post(f"/reset-password/{token}", data={"password": "another-safe-password-789"})
+tests/test_password_reset.py:85:        assert check_password_hash(user.password_hash, "new-safe-password-456")
+tests/test_password_reset.py:86:        assert not check_password_hash(user.password_hash, "safe-password-123")
+tests/test_password_reset.py:89:        "/login", data={"email": "owner@example.com", "password": "safe-password-123"}
+tests/test_password_reset.py:92:        "/login", data={"email": "owner@example.com", "password": "new-safe-password-456"}
+tests/test_password_reset.py:108:        "/login", data={"email": "owner@example.com", "password": "safe-password-123"}
+tests/test_playwright_collection.py:15:from werkzeug.security import generate_password_hash
+tests/test_playwright_collection.py:55:            password_hash=generate_password_hash("safe-password-123"),
+tests/test_playwright_collection.py:144:    page.locator("input[name='password']").fill("safe-password-123")
+tests/test_playwright_crm.py:53:        password="admin-password-123",
+tests/test_playwright_crm.py:54:        must_change_password=False,
+tests/test_playwright_crm.py:165:    page.locator("input[name='password']").fill("safe-password-123")
+tests/test_playwright_crm.py:172:    page.locator("input[name='password']").fill("safe-password-123")
+tests/test_playwright_crm.py:186:    page.locator("input[name='password']").fill("admin-password-123")
+tests/test_playwright_launch_acceptance.py:15:from werkzeug.security import generate_password_hash
+tests/test_playwright_launch_acceptance.py:54:            password_hash=generate_password_hash("safe-password-123"),
+tests/test_playwright_launch_acceptance.py:59:            password_hash=generate_password_hash("temporary-safe-password-123"),
+tests/test_playwright_launch_acceptance.py:60:            must_change_password=False,
+tests/test_playwright_launch_acceptance.py:146:    page.locator("input[name='password']").fill("safe-password-123")
+tests/test_playwright_launch_acceptance.py:154:    page.locator("input[name='password']").fill("temporary-safe-password-123")
+tests/test_playwright_outreach_inbound.py:15:from werkzeug.security import generate_password_hash
+tests/test_playwright_outreach_inbound.py:56:            password_hash=generate_password_hash("safe-password-123"),
+tests/test_playwright_outreach_inbound.py:144:    page.locator("input[name='password']").fill("safe-password-123")
+tests/test_queue_safety.py:133:        assert "password" not in payload
+tests/test_queue_safety.py:149:    from werkzeug.security import generate_password_hash
+tests/test_queue_safety.py:155:        user = User(email="a@b.com", password_hash=generate_password_hash("p"))
+tests/test_secret_store.py:34:        store.save(tenant.id, "smtp_password", "super-secret-value")
+tests/test_secret_store.py:39:        assert store.load(tenant.id, "smtp_password") == "super-secret-value"
+tests/test_secret_store.py:40:        masked = store.mask(tenant.id, "smtp_password")
+tests/test_secret_store.py:175:        store.save(tenant_id, "smtp_password", "shhh-dont-tell-anyone")
+tests/test_secret_store.py:182:            bad_store.load(tenant_id, "smtp_password")
+tests/test_secret_store.py:204:        store.save(tenant_id, "smtp_password", "stable-secret")
+tests/test_secret_store.py:213:            store.rotate(tenant_id, "smtp_password")
+tests/test_tenant_guards.py:27:            "password": "safe-password-123",
+tests/test_tenant_guards.py:40:        "/login", data={"email": "owner@example.com", "password": "safe-password-123"}
+tests/test_tenant_isolation.py:25:    user_a = User(email="a@example.com", password_hash="pbkdf2$a")
+tests/test_tenant_isolation.py:26:    user_b = User(email="b@example.com", password_hash="pbkdf2$b")
+tests/test_tenant_isolation.py:56:        user = User(email="a@example.com", password_hash="pbkdf2$a")
+tests/test_v2_06_acceptance.py:7:from werkzeug.security import generate_password_hash
+tests/test_v2_06_acceptance.py:32:            password_hash=generate_password_hash("safe-password-123"),
+tests/test_v2_06_acceptance.py:37:            password_hash=generate_password_hash("safe-password-123"),
+tests/test_v2_06_acceptance.py:42:            password_hash=generate_password_hash("temporary-safe-password-123"),
+tests/test_v2_06_acceptance.py:43:            must_change_password=False,
+===== SMTP (2) =====
+docs/LAUNCH_CHECKLIST.md:20:- [ ] No SMTP/SendGrid/Mailgun credentials in code
+milestones/V2-05.json:22:      "title": "SMTP adapter and deliverability checks",
+===== sendgrid (0) =====
+===== mailgun (0) =====

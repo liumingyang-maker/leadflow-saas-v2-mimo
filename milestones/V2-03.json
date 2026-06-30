@@ -1,0 +1,178 @@
+{
+  "milestone": "V2-03",
+  "tasks": [
+    {
+      "id": "V2-03-001",
+      "title": "Lead, company, tag and activity models",
+      "category": "data",
+      "worker": "reasonix-deepseek",
+      "controller": "codex",
+      "branch": "task/v2-03-001-lead-company-tag-and-activity-models",
+      "required_gates": [
+        "ruff",
+        "format",
+        "pytest",
+        "diff_check"
+      ]
+    },
+    {
+      "id": "V2-03-002",
+      "title": "Lead repositories and tenant isolation",
+      "category": "backend",
+      "worker": "reasonix-deepseek",
+      "controller": "codex",
+      "branch": "task/v2-03-002-lead-repositories-and-tenant-isolation",
+      "required_gates": [
+        "ruff",
+        "format",
+        "pytest",
+        "diff_check"
+      ]
+    },
+    {
+      "id": "V2-03-003",
+      "title": "CSV/XLSX import parser",
+      "category": "backend",
+      "worker": "reasonix-deepseek",
+      "controller": "codex",
+      "branch": "task/v2-03-003-csv-xlsx-import-parser",
+      "required_gates": [
+        "ruff",
+        "format",
+        "pytest",
+        "diff_check"
+      ]
+    },
+    {
+      "id": "V2-03-004",
+      "title": "Normalization and deduplication service",
+      "category": "backend",
+      "worker": "reasonix-deepseek",
+      "controller": "codex",
+      "branch": "task/v2-03-004-normalization-and-deduplication-service",
+      "required_gates": [
+        "ruff",
+        "format",
+        "pytest",
+        "diff_check"
+      ]
+    },
+    {
+      "id": "V2-03-005",
+      "title": "Import preview and confirm workflow",
+      "category": "ui",
+      "worker": "reasonix-deepseek",
+      "controller": "codex",
+      "branch": "task/v2-03-005-import-preview-and-confirm-workflow",
+      "required_gates": [
+        "ruff",
+        "format",
+        "pytest",
+        "diff_check",
+        "ui_audit",
+        "playwright"
+      ]
+    },
+    {
+      "id": "V2-03-006",
+      "title": "Lead review queue and decision actions",
+      "category": "backend",
+      "worker": "reasonix-deepseek",
+      "controller": "codex",
+      "branch": "task/v2-03-006-lead-review-queue-and-decision-actions",
+      "required_gates": [
+        "ruff",
+        "format",
+        "pytest",
+        "diff_check"
+      ]
+    },
+    {
+      "id": "V2-03-007",
+      "title": "CRM stage, notes, tags and follow-up",
+      "category": "backend",
+      "worker": "reasonix-deepseek",
+      "controller": "codex",
+      "branch": "task/v2-03-007-crm-stage-notes-tags-and-follow-up",
+      "required_gates": [
+        "ruff",
+        "format",
+        "pytest",
+        "diff_check"
+      ]
+    },
+    {
+      "id": "V2-03-008",
+      "title": "Activity timeline",
+      "category": "backend",
+      "worker": "reasonix-deepseek",
+      "controller": "codex",
+      "branch": "task/v2-03-008-activity-timeline",
+      "required_gates": [
+        "ruff",
+        "format",
+        "pytest",
+        "diff_check"
+      ]
+    },
+    {
+      "id": "V2-03-009",
+      "title": "CRM table, filters and detail drawer",
+      "category": "ui",
+      "worker": "reasonix-deepseek",
+      "controller": "codex",
+      "branch": "task/v2-03-009-crm-table-filters-and-detail-drawer",
+      "required_gates": [
+        "ruff",
+        "format",
+        "pytest",
+        "diff_check",
+        "ui_audit",
+        "playwright"
+      ]
+    },
+    {
+      "id": "V2-03-010",
+      "title": "Bulk-safe actions and audit trail",
+      "category": "security",
+      "worker": "reasonix-deepseek",
+      "controller": "codex",
+      "branch": "task/v2-03-010-bulk-safe-actions-and-audit-trail",
+      "required_gates": [
+        "ruff",
+        "format",
+        "pytest",
+        "diff_check",
+        "security_review"
+      ]
+    },
+    {
+      "id": "V2-03-011",
+      "title": "CRM browser E2E and accessibility",
+      "category": "quality",
+      "worker": "reasonix-deepseek",
+      "controller": "codex",
+      "branch": "task/v2-03-011-crm-browser-e2e-and-accessibility",
+      "required_gates": [
+        "ruff",
+        "format",
+        "pytest",
+        "diff_check"
+      ]
+    },
+    {
+      "id": "V2-03-012",
+      "title": "Milestone acceptance",
+      "category": "release",
+      "worker": "reasonix-deepseek",
+      "controller": "codex",
+      "branch": "task/v2-03-012-milestone-acceptance",
+      "required_gates": [
+        "ruff",
+        "format",
+        "pytest",
+        "diff_check"
+      ]
+    }
+  ]
+}

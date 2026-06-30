@@ -1,0 +1,28 @@
+{
+  "skills": [
+    {
+      "name": "ui-ux-pro-max",
+      "repo": "https://github.com/nextlevelbuilder/ui-ux-pro-max-skill.git",
+      "path": ".claude/skills/ui-ux-pro-max",
+      "license": "MIT"
+    },
+    {
+      "name": "frontend-design",
+      "repo": "https://github.com/anthropics/skills.git",
+      "path": "skills/frontend-design",
+      "license": "source-specific; inspect upstream notices"
+    },
+    {
+      "name": "web-design-guidelines",
+      "repo": "https://github.com/vercel-labs/agent-skills.git",
+      "path": "skills/web-design-guidelines",
+      "license": "MIT"
+    },
+    {
+      "name": "motion-design",
+      "repo": "https://github.com/LottieFiles/motion-design-skill.git",
+      "path": "skills/motion-design",
+      "license": "MIT"
+    }
+  ]
+}

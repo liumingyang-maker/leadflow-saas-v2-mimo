@@ -1,0 +1,162 @@
+{
+  "milestone": "V2-04",
+  "tasks": [
+    {
+      "id": "V2-04-001",
+      "title": "Persistent job model and repository",
+      "category": "data",
+      "worker": "reasonix-deepseek",
+      "controller": "codex",
+      "branch": "task/v2-04-001-persistent-job-model-and-repository",
+      "required_gates": [
+        "ruff",
+        "format",
+        "pytest",
+        "diff_check"
+      ]
+    },
+    {
+      "id": "V2-04-002",
+      "title": "Redis and RQ development services",
+      "category": "devops",
+      "worker": "reasonix-deepseek",
+      "controller": "codex",
+      "branch": "task/v2-04-002-redis-and-rq-development-services",
+      "required_gates": [
+        "ruff",
+        "format",
+        "pytest",
+        "diff_check"
+      ]
+    },
+    {
+      "id": "V2-04-003",
+      "title": "Worker bootstrap and job contracts",
+      "category": "backend",
+      "worker": "reasonix-deepseek",
+      "controller": "codex",
+      "branch": "task/v2-04-003-worker-bootstrap-and-job-contracts",
+      "required_gates": [
+        "ruff",
+        "format",
+        "pytest",
+        "diff_check"
+      ]
+    },
+    {
+      "id": "V2-04-004",
+      "title": "Google Search integration adapter",
+      "category": "integration",
+      "worker": "reasonix-deepseek",
+      "controller": "codex",
+      "branch": "task/v2-04-004-google-search-integration-adapter",
+      "required_gates": [
+        "ruff",
+        "format",
+        "pytest",
+        "diff_check"
+      ]
+    },
+    {
+      "id": "V2-04-005",
+      "title": "Google Maps integration adapter",
+      "category": "integration",
+      "worker": "reasonix-deepseek",
+      "controller": "codex",
+      "branch": "task/v2-04-005-google-maps-integration-adapter",
+      "required_gates": [
+        "ruff",
+        "format",
+        "pytest",
+        "diff_check"
+      ]
+    },
+    {
+      "id": "V2-04-006",
+      "title": "CSV/XLSX collection adapter",
+      "category": "integration",
+      "worker": "reasonix-deepseek",
+      "controller": "codex",
+      "branch": "task/v2-04-006-csv-xlsx-collection-adapter",
+      "required_gates": [
+        "ruff",
+        "format",
+        "pytest",
+        "diff_check"
+      ]
+    },
+    {
+      "id": "V2-04-007",
+      "title": "Collection orchestration service",
+      "category": "backend",
+      "worker": "reasonix-deepseek",
+      "controller": "codex",
+      "branch": "task/v2-04-007-collection-orchestration-service",
+      "required_gates": [
+        "ruff",
+        "format",
+        "pytest",
+        "diff_check"
+      ]
+    },
+    {
+      "id": "V2-04-008",
+      "title": "Progress, retries and safe failure summaries",
+      "category": "backend",
+      "worker": "reasonix-deepseek",
+      "controller": "codex",
+      "branch": "task/v2-04-008-progress-retries-and-safe-failure-summaries",
+      "required_gates": [
+        "ruff",
+        "format",
+        "pytest",
+        "diff_check"
+      ]
+    },
+    {
+      "id": "V2-04-009",
+      "title": "Collection UI and persistent progress",
+      "category": "ui",
+      "worker": "reasonix-deepseek",
+      "controller": "codex",
+      "branch": "task/v2-04-009-collection-ui-and-persistent-progress",
+      "required_gates": [
+        "ruff",
+        "format",
+        "pytest",
+        "diff_check",
+        "ui_audit",
+        "playwright"
+      ]
+    },
+    {
+      "id": "V2-04-010",
+      "title": "Job tenant-isolation and restart tests",
+      "category": "security",
+      "worker": "reasonix-deepseek",
+      "controller": "codex",
+      "branch": "task/v2-04-010-job-tenant-isolation-and-restart-tests",
+      "required_gates": [
+        "ruff",
+        "format",
+        "pytest",
+        "diff_check",
+        "security_review"
+      ]
+    },
+    {
+      "id": "V2-04-011",
+      "title": "Milestone acceptance",
+      "category": "release",
+      "worker": "reasonix-deepseek",
+      "controller": "codex",
+      "branch": "task/v2-04-011-milestone-acceptance",
+      "required_gates": [
+        "ruff",
+        "format",
+        "pytest",
+        "diff_check"
+      ]
+    }
+  ]
+}
