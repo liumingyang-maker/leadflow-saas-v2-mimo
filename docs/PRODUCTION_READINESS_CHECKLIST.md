@@ -33,8 +33,10 @@ RC1 is ready for staging rehearsal, not production launch. Complete every item b
 ## Operations
 
 - [ ] Database backup schedule configured.
+- [ ] Staging backup/restore smoke passed with `scripts/staging_backup_restore_smoke.py`.
 - [ ] Restore rehearsal completed.
 - [ ] Migration rollback plan tested.
+- [ ] Staging migration rollback smoke passed with `scripts/staging_migration_rollback_smoke.py`.
 - [ ] Redis persistence expectations documented.
 - [ ] Worker recovery tested after restart.
 - [ ] Logs are collected without secrets.

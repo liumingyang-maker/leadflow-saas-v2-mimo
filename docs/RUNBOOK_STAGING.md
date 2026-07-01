@@ -41,6 +41,37 @@ docker compose -f docker-compose.staging.yml up -d worker
 docker compose -f docker-compose.staging.yml logs -f worker
 ```
 
+## Operational smoke rehearsals
+
+These scripts are staging-only. Do not run them against production or a shared
+database with customer data.
+
+Backup/restore smoke:
+
+```bash
+python scripts/staging_backup_restore_smoke.py \
+  --env-file /tmp/leadflow-staging-smoke.env \
+  --confirm-staging
+```
+
+PASS looks like: `backup restored into restore_check and required tables
+verified`. The script uses a dedicated compose project, creates a PostgreSQL
+dump, restores it into `restore_check`, verifies `alembic_version`, `tenants`,
+`users`, `jobs`, and `leads`, then cleans up temporary resources.
+
+Migration rollback smoke:
+
+```bash
+python scripts/staging_migration_rollback_smoke.py \
+  --env-file /tmp/leadflow-staging-smoke.env \
+  --confirm-staging
+```
+
+PASS looks like: `alembic downgrade -1 and upgrade head returned database to
+head`. If rollback fails, stop the release, keep the logs, do not edit existing
+migrations in place, and create a follow-up migration or rollback plan for
+review.
+
 ## Environment
 
 Set in `.env` or docker-compose environment:
