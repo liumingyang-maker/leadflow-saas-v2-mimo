@@ -1,0 +1,117 @@
+# LeadFlow SaaS V2 — Production Compose
+# Env file: /etc/leadflow/production.env (chmod 600)
+# Usage: docker compose -f docker-compose.production.yml --env-file /etc/leadflow/production.env up -d
+
+services:
+  web:
+    build: .
+    environment:
+      - APP_ENV=production
+      - SECRET_KEY=${SECRET_KEY}
+      - TENANT_SECRET_KEY=${TENANT_SECRET_KEY}
+      - DATABASE_URL=postgresql://leadflow:${POSTGRES_PASSWORD}@db:5432/leadflow
+      - REDIS_URL=redis://redis:6379/0
+      - WTF_CSRF_ENABLED=true
+      - SESSION_COOKIE_SECURE=true
+      - PROXY_FIX_HOPS=1
+      - SERVER_NAME=${SERVER_NAME}
+      - ALLOWED_HOSTS=${ALLOWED_HOSTS}
+      - INBOUND_TOKEN_KEY=${INBOUND_TOKEN_KEY}
+      - OUTREACH_SIGNING_KEY=${OUTREACH_SIGNING_KEY}
+      - SMTP_HOST=${SMTP_HOST}
+      - SMTP_PORT=${SMTP_PORT:-587}
+      - SMTP_USER=${SMTP_USER}
+      - SMTP_PASSWORD=${SMTP_PASSWORD}
+      - SMTP_FROM=${SMTP_FROM}
+      - SMTP_USE_TLS=${SMTP_USE_TLS:-true}
+      - SMTP_USE_SSL=${SMTP_USE_SSL:-false}
+      - WEB_CONCURRENCY=${WEB_CONCURRENCY:-2}
+      - GUNICORN_THREADS=${GUNICORN_THREADS:-4}
+      - GUNICORN_TIMEOUT=${GUNICORN_TIMEOUT:-60}
+    ports:
+      - "127.0.0.1:8000:8000"
+    depends_on:
+      redis:
+        condition: service_healthy
+      db:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:5000/health/live', timeout=3).read()"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
+    restart: unless-stopped
+
+  redis:
+    image: redis:7.4.2-alpine
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 3
+    restart: unless-stopped
+
+  db:
+    image: postgres:16-alpine
+    environment:
+      - POSTGRES_DB=leadflow
+      - POSTGRES_USER=leadflow
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
+    volumes:
+      - pg_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U leadflow -d leadflow"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
+  migrate:
+    build: .
+    environment:
+      - APP_ENV=production
+      - DATABASE_URL=postgresql://leadflow:${POSTGRES_PASSWORD}@db:5432/leadflow
+    depends_on:
+      db:
+        condition: service_healthy
+    command: alembic upgrade head
+    restart: "no"
+
+  worker:
+    build: .
+    environment:
+      - APP_ENV=production
+      - SECRET_KEY=${SECRET_KEY}
+      - TENANT_SECRET_KEY=${TENANT_SECRET_KEY}
+      - DATABASE_URL=postgresql://leadflow:${POSTGRES_PASSWORD}@db:5432/leadflow
+      - REDIS_URL=redis://redis:6379/0
+      - PROXY_FIX_HOPS=1
+      - SERVER_NAME=${SERVER_NAME}
+      - ALLOWED_HOSTS=${ALLOWED_HOSTS}
+      - INBOUND_TOKEN_KEY=${INBOUND_TOKEN_KEY}
+      - OUTREACH_SIGNING_KEY=${OUTREACH_SIGNING_KEY}
+      - SMTP_HOST=${SMTP_HOST}
+      - SMTP_PORT=${SMTP_PORT:-587}
+      - SMTP_USER=${SMTP_USER}
+      - SMTP_PASSWORD=${SMTP_PASSWORD}
+      - SMTP_FROM=${SMTP_FROM}
+      - SMTP_USE_TLS=${SMTP_USE_TLS:-true}
+      - SMTP_USE_SSL=${SMTP_USE_SSL:-false}
+    depends_on:
+      redis:
+        condition: service_healthy
+      db:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+    command: python run_worker.py default
+    restart: unless-stopped
+
+volumes:
+  pg_data:
+  redis_data:
