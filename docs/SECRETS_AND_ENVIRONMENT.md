@@ -32,7 +32,22 @@ SMTP_USER=<smtp-user>
 SMTP_PASSWORD=<smtp-password>
 SMTP_FROM=<verified-from-address>
 SMTP_USE_TLS=true
+SMTP_USE_SSL=false
 ```
+
+For Aliyun DirectMail implicit SSL, use port 465 with STARTTLS disabled:
+
+```text
+SMTP_HOST=smtpdm.aliyun.com
+SMTP_PORT=465
+SMTP_USER=<verified-sender-address>
+SMTP_PASSWORD=<redacted-password>
+SMTP_FROM=<verified-sender-address>
+SMTP_USE_TLS=false
+SMTP_USE_SSL=true
+```
+
+Do not enable `SMTP_USE_TLS` and `SMTP_USE_SSL` at the same time.
 
 ## Provider Variables
 

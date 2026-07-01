@@ -56,7 +56,7 @@ class NotConfiguredMailer:
 
 
 class SmtpMailer:
-    """Real SMTP mailer — sends email via SMTP with TLS."""
+    """Real SMTP mailer — sends email via SMTP, STARTTLS, or implicit SSL."""
 
     def __init__(
         self,
@@ -67,13 +67,18 @@ class SmtpMailer:
         password: str,
         from_email: str,
         use_tls: bool = True,
+        use_ssl: bool = False,
     ) -> None:
+        if use_tls and use_ssl:
+            raise ValueError("SMTP_USE_TLS and SMTP_USE_SSL cannot both be true")
+        implicit_ssl = port == 465
         self._host = host
         self._port = port
         self._user = user
         self._password = password
         self._from_email = from_email
-        self._use_tls = use_tls
+        self._use_tls = False if implicit_ssl else use_tls
+        self._use_ssl = use_ssl or implicit_ssl
 
     def send(self, *, to_email: str, subject: str, body_text: str, body_html: str) -> MailerResult:
         msg = MIMEMultipart("alternative")
@@ -85,7 +90,8 @@ class SmtpMailer:
             msg.attach(MIMEText(body_html, "html"))
 
         try:
-            with smtplib.SMTP(self._host, self._port, timeout=30) as server:
+            smtp_client = smtplib.SMTP_SSL if self._use_ssl else smtplib.SMTP
+            with smtp_client(self._host, self._port, timeout=30) as server:
                 if self._use_tls:
                     server.starttls()
                 server.login(self._user, self._password)
@@ -116,26 +122,30 @@ def _smtp_is_configured() -> bool:
     return bool(os.environ.get("SMTP_HOST"))
 
 
+def _env_bool(name: str, default: str = "false") -> bool:
+    return os.environ.get(name, default).strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _smtp_mailer_from_env() -> SmtpMailer:
+    use_tls = _env_bool("SMTP_USE_TLS", "true")
+    use_ssl = _env_bool("SMTP_USE_SSL", "false")
+    return SmtpMailer(
+        host=os.environ["SMTP_HOST"],
+        port=int(os.environ.get("SMTP_PORT", "587")),
+        user=os.environ.get("SMTP_USER", ""),
+        password=os.environ.get("SMTP_PASSWORD", ""),
+        from_email=os.environ.get("SMTP_FROM", ""),
+        use_tls=use_tls,
+        use_ssl=use_ssl,
+    )
+
+
 def get_mailer() -> Mailer:
     if _is_allowed_env():
         if _smtp_is_configured():
-            return SmtpMailer(
-                host=os.environ["SMTP_HOST"],
-                port=int(os.environ.get("SMTP_PORT", "587")),
-                user=os.environ.get("SMTP_USER", ""),
-                password=os.environ.get("SMTP_PASSWORD", ""),
-                from_email=os.environ.get("SMTP_FROM", ""),
-                use_tls=os.environ.get("SMTP_USE_TLS", "true").lower() == "true",
-            )
+            return _smtp_mailer_from_env()
         return FakeMailer()
     # Production/staging: require SMTP config
     if _smtp_is_configured():
-        return SmtpMailer(
-            host=os.environ["SMTP_HOST"],
-            port=int(os.environ.get("SMTP_PORT", "587")),
-            user=os.environ.get("SMTP_USER", ""),
-            password=os.environ.get("SMTP_PASSWORD", ""),
-            from_email=os.environ.get("SMTP_FROM", ""),
-            use_tls=os.environ.get("SMTP_USE_TLS", "true").lower() == "true",
-        )
+        return _smtp_mailer_from_env()
     return NotConfiguredMailer()

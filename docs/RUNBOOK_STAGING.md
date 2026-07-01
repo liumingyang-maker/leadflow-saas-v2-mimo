@@ -96,6 +96,7 @@ SMTP_USER=<smtp-user>
 SMTP_PASSWORD=<smtp-password>
 SMTP_FROM=<verified-from-address>
 SMTP_USE_TLS=true
+SMTP_USE_SSL=false
 WEB_CONCURRENCY=2
 GUNICORN_THREADS=4
 GUNICORN_TIMEOUT=60
@@ -104,6 +105,11 @@ GUNICORN_TIMEOUT=60
 The compose file supplies `DATABASE_URL` and `REDIS_URL` to the web and worker
 services. Do not use SQLite for staging. Account verification and password reset
 emails require the SMTP variables above.
+
+For Aliyun DirectMail, use `SMTP_HOST=smtpdm.aliyun.com`, `SMTP_PORT=465`,
+`SMTP_USE_TLS=false`, and `SMTP_USE_SSL=true`. Keep `SMTP_USER` and `SMTP_FROM`
+set to the verified sender address and store the redacted password only in the
+staging secret source, never in Git.
 
 ## Rollback
 
