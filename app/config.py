@@ -108,7 +108,7 @@ def _validate_deploy_config(config_class: type[BaseConfig], env_name: str) -> No
     database_url = os.environ.get("DATABASE_URL", "")
     if not database_url:
         raise RuntimeError(f"DATABASE_URL is required for {env_name} configuration")
-    if database_url.startswith("sqlite:"):
+    if database_url.startswith("sqlite:") and not os.environ.get("LOWMEM_ALLOW_SQLITE"):
         raise RuntimeError(f"DATABASE_URL must use PostgreSQL for {env_name} configuration")
 
     redis_url = os.environ.get("REDIS_URL", "")

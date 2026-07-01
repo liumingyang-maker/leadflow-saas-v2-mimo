@@ -4,7 +4,7 @@
 # Example: bash ops/lightserver-deploy.sh v1.0.0-beta.2
 #
 # Target: Alibaba Cloud lightweight server (409 MiB RAM)
-# Stack: Python 3.12 venv + waitress + SQLite + Redis (no Docker)
+# Stack: Python 3.12 venv + gunicorn + SQLite + Redis (no Docker)
 set -Eeuo pipefail
 
 REPO_URL="https://github.com/liumingyang-maker/leadflow-saas-v2-mimo.git"
@@ -171,7 +171,7 @@ Type=simple
 User=root
 WorkingDirectory=${REPO_DIR}
 EnvironmentFile=${ENV_FILE}
-ExecStart=${VENV_DIR}/bin/waitress-serve --listen=127.0.0.1:8000 --call app:create_app
+ExecStart=${VENV_DIR}/bin/gunicorn -w 1 --threads 2 -b 127.0.0.1:8000 app:create_app()
 Restart=on-failure
 RestartSec=5
 StandardOutput=journal
