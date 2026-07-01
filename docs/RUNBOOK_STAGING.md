@@ -16,8 +16,12 @@ docker compose -f docker-compose.staging.yml ps
 ## Run migrations
 
 ```bash
-docker compose -f docker-compose.staging.yml run --rm web alembic upgrade head
+docker compose -f docker-compose.staging.yml up migrate
 ```
+
+Staging compose also runs this automatically on `up`: the one-shot `migrate`
+service waits for PostgreSQL health, runs `alembic upgrade head`, and web/worker
+wait for it to complete successfully before starting.
 
 ## Verify
 

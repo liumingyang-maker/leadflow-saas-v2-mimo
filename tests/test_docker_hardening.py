@@ -130,9 +130,7 @@ class TestStagingCompose:
         migrate = config["services"]["migrate"]
         assert migrate["command"] == "alembic upgrade head"
         assert migrate["depends_on"]["db"]["condition"] == "service_healthy"
-        assert any(
-            item.startswith("DATABASE_URL=postgresql://") for item in migrate["environment"]
-        )
+        assert any(item.startswith("DATABASE_URL=postgresql://") for item in migrate["environment"])
 
         for name in ("web", "worker"):
             depends_on = config["services"][name]["depends_on"]
