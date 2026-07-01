@@ -7,6 +7,10 @@ ROOT = Path(__file__).resolve().parents[1]
 BACKUP_RESTORE = ROOT / "scripts" / "staging_backup_restore_smoke.py"
 MIGRATION_ROLLBACK = ROOT / "scripts" / "staging_migration_rollback_smoke.py"
 RUNBOOK = ROOT / "docs" / "RUNBOOK_STAGING.md"
+CHECKLIST = ROOT / "docs" / "PRODUCTION_READINESS_CHECKLIST.md"
+EVIDENCE_TEMPLATE = (
+    ROOT / ".autopilot" / "evidence" / "templates" / "production-readiness-evidence-template.md"
+)
 
 
 def _read(path: Path) -> str:
@@ -69,3 +73,77 @@ def test_staging_runbook_references_ops_smoke_scripts() -> None:
     assert "scripts/staging_migration_rollback_smoke.py" in content
     assert "backup restored into restore_check" in content
     assert "downgrade -1 and upgrade head" in content
+
+
+def test_production_readiness_evidence_template_exists() -> None:
+    assert EVIDENCE_TEMPLATE.is_file()
+
+
+def test_production_readiness_evidence_template_has_required_sections() -> None:
+    content = _read(EVIDENCE_TEMPLATE)
+    content_lower = content.lower()
+
+    required = [
+        "release candidate name / version",
+        "commit hash",
+        "branch",
+        "reviewer",
+        "date",
+        "environment",
+        "Python version",
+        "Docker version",
+        "Ruff result",
+        "Format check result",
+        "Pytest result",
+        "Browser / Playwright result",
+        "Docker build result",
+        "Staging compose smoke result",
+        "Migration result",
+        "Backup / restore smoke result",
+        "Migration rollback smoke result",
+        "`/health/live` result",
+        "`/health/ready` result",
+        "Real SMTP verification",
+        "Real provider verification, if applicable",
+        "Known limitations",
+        "Unresolved risks",
+        "Go / No-Go decision",
+        "Approver",
+    ]
+    for section in required:
+        assert section.lower() in content_lower
+
+
+def test_production_readiness_evidence_template_uses_honest_placeholders() -> None:
+    content = _read(EVIDENCE_TEMPLATE)
+
+    for value in ("NOT_RUN", "BLOCKED", "PASS", "FAIL", "NEEDS_MANUAL_VERIFICATION"):
+        assert value in content
+    assert "This is a template, not final release evidence" in content
+    assert "Do not mark a result `PASS`" in content
+
+
+def test_production_readiness_checklist_references_required_rehearsals() -> None:
+    content = _read(CHECKLIST)
+
+    assert "scripts/staging_backup_restore_smoke.py" in content
+    assert "scripts/staging_migration_rollback_smoke.py" in content
+    assert "staging compose smoke passed" in content.lower()
+    assert "/health/live" in content
+    assert "/health/ready" in content
+
+
+def test_production_readiness_checklist_is_not_ready_by_default() -> None:
+    content = _read(CHECKLIST)
+
+    assert "not production launch" in content
+    assert "must not be treated as PASS" in content
+    assert "- [x]" not in content.lower()
+
+
+def test_staging_runbook_references_release_evidence_template() -> None:
+    content = _read(RUNBOOK)
+
+    assert "production-readiness-evidence-template.md" in content
+    assert "NOT_RUN" in content
+    assert "NEEDS_MANUAL_VERIFICATION" in content

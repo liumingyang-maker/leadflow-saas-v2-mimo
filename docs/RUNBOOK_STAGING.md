@@ -118,3 +118,11 @@ docker compose -f docker-compose.staging.yml run --rm web alembic downgrade -1
 
 - `/health/live` — lightweight aliveness
 - `/health/ready` — DB + Redis checks
+
+## Release evidence
+
+Before any production Go/No-Go review, copy
+`.autopilot/evidence/templates/production-readiness-evidence-template.md` to a
+release-specific evidence file. Leave checks as `NOT_RUN`, `BLOCKED`, or
+`NEEDS_MANUAL_VERIFICATION` until the command or manual verification actually
+runs and evidence is attached.
