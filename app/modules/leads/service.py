@@ -22,6 +22,7 @@ from app.modules.leads.repository import (
     LeadRepository,
     TagRepository,
 )
+from app.modules.leads.safety import safe_tag_color
 
 
 class LeadServiceError(ValueError):
@@ -419,7 +420,11 @@ def add_tag(
         tags = tag_repo.list(tenant_id=tenant_id)
         tag = next((t for t in tags if t.name.lower() == tag_name.lower()), None)
         if tag is None:
-            tag = Tag(tenant_id=tenant_id, name=tag_name.strip()[:80], color=tag_color)
+            tag = Tag(
+                tenant_id=tenant_id,
+                name=tag_name.strip()[:80],
+                color=safe_tag_color(tag_color),
+            )
             tag_repo.add(tag, tenant_id=tenant_id)
 
         # Add association if not already present

@@ -24,6 +24,63 @@ def test_security_headers_are_added_to_success_responses(
     assert "geolocation=()" in response.headers["Permissions-Policy"]
 
 
+def test_hsts_is_added_for_production_like_responses(monkeypatch: pytest.MonkeyPatch) -> None:
+    flask_app = _app(monkeypatch)
+    flask_app.config["TESTING"] = False
+    flask_app.config["DEBUG"] = False
+    flask_app.config["SESSION_COOKIE_SECURE"] = True
+    flask_app.config["ALLOWED_HOSTS"] = "app.example.com"
+
+    response = flask_app.test_client().get("/health/live", headers={"Host": "app.example.com"})
+
+    assert response.status_code == 200
+    assert response.headers["Strict-Transport-Security"] == "max-age=31536000; includeSubDomains"
+
+
+def test_hsts_is_not_forced_in_testing(monkeypatch: pytest.MonkeyPatch) -> None:
+    flask_app = _app(monkeypatch)
+
+    response = flask_app.test_client().get("/health/live")
+
+    assert "Strict-Transport-Security" not in response.headers
+
+
+def test_invalid_host_is_rejected_for_production_like_responses(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    flask_app = _app(monkeypatch)
+    flask_app.config["TESTING"] = False
+    flask_app.config["DEBUG"] = False
+    flask_app.config["SESSION_COOKIE_SECURE"] = True
+    flask_app.config["ALLOWED_HOSTS"] = "app.example.com,localhost"
+
+    response = flask_app.test_client().get("/health/live", headers={"Host": "evil.example"})
+
+    assert response.status_code == 400
+
+
+def test_valid_host_is_accepted_for_production_like_responses(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    flask_app = _app(monkeypatch)
+    flask_app.config["TESTING"] = False
+    flask_app.config["DEBUG"] = False
+    flask_app.config["SESSION_COOKIE_SECURE"] = True
+    flask_app.config["ALLOWED_HOSTS"] = "app.example.com,localhost"
+
+    response = flask_app.test_client().get("/health/live", headers={"Host": "app.example.com"})
+
+    assert response.status_code == 200
+
+
+def test_host_allowlist_is_not_forced_in_testing(monkeypatch: pytest.MonkeyPatch) -> None:
+    flask_app = _app(monkeypatch)
+
+    response = flask_app.test_client().get("/health/live", headers={"Host": "evil.example"})
+
+    assert response.status_code == 200
+
+
 def test_json_404_uses_stable_error_without_traceback(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

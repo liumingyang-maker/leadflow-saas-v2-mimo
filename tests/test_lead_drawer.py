@@ -95,6 +95,27 @@ def test_xss_prevention_in_drawer(monkeypatch) -> None:
     assert "onmouseover" not in html
 
 
+def test_unsafe_website_does_not_render_clickable_javascript_href(monkeypatch) -> None:
+    client, _engine, _app, _tid, lead_id = _setup_with_malicious_website(monkeypatch)
+
+    response = client.get(f"/leads/{lead_id}")
+    html = response.get_data(as_text=True).lower()
+
+    assert response.status_code == 200
+    assert 'href="javascript:' not in html
+    assert "javascript:alert(1)" in html
+
+
+def test_safe_website_still_renders_clickable_http_href(monkeypatch) -> None:
+    client, _engine, _app, _tid, lead_id = _setup_with_website(monkeypatch, "https://example.com")
+
+    response = client.get(f"/leads/{lead_id}")
+    html = response.get_data(as_text=True)
+
+    assert response.status_code == 200
+    assert 'href="https://example.com"' in html
+
+
 def test_drawer_has_no_safe_or_markup(monkeypatch) -> None:
     """The drawer partial template contains no |safe."""
     import os
@@ -152,6 +173,34 @@ def _setup_with_malicious(monkeypatch):
                 tenant_id=tid,
                 email="<script>alert(1)</script>@x.com",
                 notes='<img src=x onerror=fetch("http://evil")>',
+            ),
+            tenant_id=tid,
+        )
+        session.commit()
+        lead_id = lead.id
+
+    return client, engine, flask_app, tid, lead_id
+
+
+def _setup_with_malicious_website(monkeypatch):
+    return _setup_with_website(monkeypatch, "javascript:alert(1)")
+
+
+def _setup_with_website(monkeypatch, website: str):
+    """Return (client, engine, app, tenant_id, lead_id) with lead website."""
+    client, engine, flask_app = _client(monkeypatch)
+    tid = _register_and_login(client, engine)
+
+    from app.modules.leads.models import Lead
+    from app.modules.leads.repository import LeadRepository
+
+    with Session(engine) as session:
+        repo = LeadRepository(session)
+        lead = repo.add(
+            Lead(
+                tenant_id=tid,
+                email="website@example.com",
+                website=website,
             ),
             tenant_id=tid,
         )

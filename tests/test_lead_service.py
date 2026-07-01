@@ -209,6 +209,30 @@ def test_add_and_remove_tag(monkeypatch) -> None:
         assert len(assocs) == 0
 
 
+def test_add_tag_sanitizes_unsafe_color(monkeypatch) -> None:
+    app, engine = _app(monkeypatch)
+    from app.modules.leads.models import Lead, Tag
+    from app.modules.leads.service import add_tag, confirm_import
+
+    confirm_import(
+        app, tenant_id="t1", filename="leads.csv", content=_csv_bytes("email", "lead@x.com")
+    )
+    with Session(engine) as session:
+        lead_id = session.scalars(select(Lead.id)).one()
+
+    add_tag(
+        app,
+        tenant_id="t1",
+        lead_id=lead_id,
+        tag_name="Unsafe",
+        tag_color="#fff; background:url(javascript:alert(1))",
+    )
+
+    with Session(engine) as session:
+        tag = session.scalars(select(Tag)).one()
+        assert tag.color == "#246BFD"
+
+
 # ---------------------------------------------------------------------------
 # V2-03-008: Activity timeline
 # ---------------------------------------------------------------------------

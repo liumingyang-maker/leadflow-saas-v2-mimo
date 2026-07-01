@@ -22,8 +22,8 @@
     <dl class="lf-dl">
       <dt>Email</dt><dd>{{ lead.email }}</dd>
       <dt>Phone</dt><dd>{{ lead.phone or "N/A" }}</dd>
-      <dt>Website</dt><dd>{% if lead.website %}<a href="{{ lead.website }}">{{ lead.website }}</a>{% else %}N/A{% endif %}</dd>
-      <dt>LinkedIn</dt><dd>{% if lead.linkedin_url %}<a href="{{ lead.linkedin_url }}">{{ lead.linkedin_url }}</a>{% else %}N/A{% endif %}</dd>
+      <dt>Website</dt><dd>{% set website_url = lead.website|external_url_href %}{% if website_url %}<a href="{{ website_url }}" rel="noopener noreferrer">{{ lead.website }}</a>{% elif lead.website %}{{ lead.website }}{% else %}N/A{% endif %}</dd>
+      <dt>LinkedIn</dt><dd>{% set linkedin_url = lead.linkedin_url|external_url_href %}{% if linkedin_url %}<a href="{{ linkedin_url }}" rel="noopener noreferrer">{{ lead.linkedin_url }}</a>{% elif lead.linkedin_url %}{{ lead.linkedin_url }}{% else %}N/A{% endif %}</dd>
     </dl>
   </section>
 
@@ -70,7 +70,7 @@
     <h2>Tags</h2>
     <div class="lf-status-row">
       {% for t in tags %}
-      <span class="lf-badge" style="border-color: {{ t.color }}">{{ t.name }}</span>
+      <span class="lf-badge" style="border-color: {{ t.color|tag_border_color }}">{{ t.name }}</span>
       {% else %}
       <p class="lf-muted">No tags yet</p>
       {% endfor %}

@@ -9,6 +9,7 @@ from app.modules.leads.repository import (
     LeadRepository,
     TagRepository,
 )
+from app.modules.leads.safety import safe_external_url, safe_tag_color
 from app.modules.leads.service import (
     LeadServiceError,
     add_note,
@@ -25,6 +26,9 @@ from app.modules.leads.service import (
 
 
 def register_lead_routes(app: Flask) -> None:
+    app.jinja_env.filters["external_url_href"] = safe_external_url
+    app.jinja_env.filters["tag_border_color"] = safe_tag_color
+
     # ------------------------------------------------------------------
     # Lead list (CRM table)
     # ------------------------------------------------------------------
