@@ -119,6 +119,12 @@ docker compose -f docker-compose.staging.yml run --rm web alembic downgrade -1
 - `/health/live` — lightweight aliveness
 - `/health/ready` — DB + Redis checks
 
+## Core user journey acceptance
+
+Use `docs/CORE_USER_JOURNEY_ACCEPTANCE.md` for the real-user staging trial
+checklist. Record PASS/FAIL, known issues, and evidence paths there before
+updating release evidence.
+
 ## Release evidence
 
 Before any production Go/No-Go review, copy

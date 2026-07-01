@@ -72,6 +72,7 @@ Unchecked items are not complete and must not be treated as PASS without attache
 ## Manual Acceptance
 
 - [ ] Browser acceptance or manual acceptance completed.
+- [ ] Core user journey checklist completed with `docs/CORE_USER_JOURNEY_ACCEPTANCE.md`.
 - [ ] Login and logout.
 - [ ] Onboarding.
 - [ ] CRM list, import, drawer, stage change, note, tag, follow-up.
