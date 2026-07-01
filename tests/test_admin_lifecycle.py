@@ -79,6 +79,33 @@ def test_admin_login_uses_separate_session_boundary(monkeypatch) -> None:
         assert "tenant_email" not in sess
 
 
+def test_admin_login_rate_limits_failed_attempts(monkeypatch) -> None:
+    client, _engine, app = _client(monkeypatch)
+
+    from app.modules.accounts.admin_service import create_admin
+
+    create_admin(
+        app,
+        email="admin@example.com",
+        password="temporary-safe-password-123",
+        must_change_password=False,
+    )
+
+    for _ in range(5):
+        response = client.post(
+            "/admin/login",
+            data={"email": "admin@example.com", "password": "wrong-password"},
+        )
+        assert response.status_code == 200
+
+    limited = client.post(
+        "/admin/login",
+        data={"email": "admin@example.com", "password": "temporary-safe-password-123"},
+    )
+
+    assert limited.status_code == 429
+
+
 def test_admin_console_requires_admin_session(monkeypatch) -> None:
     client, _engine, _app = _client(monkeypatch)
 
@@ -86,6 +113,85 @@ def test_admin_console_requires_admin_session(monkeypatch) -> None:
 
     assert response.status_code in {302, 303}
     assert response.headers["Location"].endswith("/admin/login")
+
+
+def test_admin_must_change_password_redirects_from_dashboard(monkeypatch) -> None:
+    client, _engine, app = _client(monkeypatch)
+
+    from app.modules.accounts.admin_service import create_admin
+
+    create_admin(app, email="admin@example.com", password="temporary-safe-password-123")
+    client.post(
+        "/admin/login",
+        data={"email": "admin@example.com", "password": "temporary-safe-password-123"},
+    )
+
+    response = client.get("/admin")
+
+    assert response.status_code in {302, 303}
+    assert response.headers["Location"].endswith("/admin/change-password")
+
+
+def test_admin_must_change_password_can_access_change_password(monkeypatch) -> None:
+    client, _engine, app = _client(monkeypatch)
+
+    from app.modules.accounts.admin_service import create_admin
+
+    create_admin(app, email="admin@example.com", password="temporary-safe-password-123")
+    client.post(
+        "/admin/login",
+        data={"email": "admin@example.com", "password": "temporary-safe-password-123"},
+    )
+
+    response = client.get("/admin/change-password")
+
+    assert response.status_code == 200
+    assert "Change password" in response.get_data(as_text=True)
+
+
+def test_admin_must_change_password_can_logout(monkeypatch) -> None:
+    client, _engine, app = _client(monkeypatch)
+
+    from app.modules.accounts.admin_service import create_admin
+
+    create_admin(app, email="admin@example.com", password="temporary-safe-password-123")
+    client.post(
+        "/admin/login",
+        data={"email": "admin@example.com", "password": "temporary-safe-password-123"},
+    )
+
+    response = client.post("/admin/logout")
+
+    assert response.status_code in {302, 303}
+    with client.session_transaction() as sess:
+        assert "is_admin" not in sess
+
+
+def test_admin_password_change_clears_must_change_password(monkeypatch) -> None:
+    client, engine, app = _client(monkeypatch)
+
+    from app.modules.accounts.admin_service import create_admin
+    from app.modules.accounts.models import AdminUser
+
+    create_admin(app, email="admin@example.com", password="temporary-safe-password-123")
+    client.post(
+        "/admin/login",
+        data={"email": "admin@example.com", "password": "temporary-safe-password-123"},
+    )
+
+    response = client.post(
+        "/admin/change-password",
+        data={"password": "new-temporary-safe-password-456"},
+    )
+
+    assert response.status_code in {302, 303}
+    assert response.headers["Location"].endswith("/admin")
+    with client.session_transaction() as sess:
+        assert sess["admin_must_change_password"] is False
+    with Session(engine) as session:
+        admin = session.scalars(select(AdminUser)).one()
+        assert admin.must_change_password is False
+        assert check_password_hash(admin.password_hash, "new-temporary-safe-password-456")
 
 
 def test_admin_console_escapes_tenant_fields(monkeypatch) -> None:

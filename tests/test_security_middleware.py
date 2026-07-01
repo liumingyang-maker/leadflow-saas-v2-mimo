@@ -81,6 +81,16 @@ def test_host_allowlist_is_not_forced_in_testing(monkeypatch: pytest.MonkeyPatch
     assert response.status_code == 200
 
 
+def test_rate_limit_keys_hash_user_controlled_identifiers() -> None:
+    from app.core.abuse import rate_limit_key_for_tests
+
+    key = rate_limit_key_for_tests("auth:login", ["1.2.3.4", "Owner@Example.com"])
+
+    assert "owner@example.com" not in key
+    assert "1.2.3.4" not in key
+    assert key.startswith("leadflow:rate-limit:auth:login:")
+
+
 def test_json_404_uses_stable_error_without_traceback(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

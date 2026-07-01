@@ -61,6 +61,17 @@ def authenticate_admin(app: Flask, *, email: str, password: str) -> AdminIdentit
         )
 
 
+def change_admin_password(app: Flask, *, admin_id: str, password: str) -> None:
+    if len(password or "") < 12:
+        raise AdminAccountError("weak_password", "Admin password must be at least 12 characters")
+    with session_scope(app) as session:
+        admin = session.get(AdminUser, admin_id)
+        if admin is None or admin.disabled_at is not None:
+            raise AdminAccountError("not_found", "Admin account is unavailable")
+        admin.password_hash = generate_password_hash(password)
+        admin.must_change_password = False
+
+
 def _normalize_email(email: str) -> str:
     return (email or "").strip().lower()[:320]
 

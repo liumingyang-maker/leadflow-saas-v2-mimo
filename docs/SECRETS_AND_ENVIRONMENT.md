@@ -72,5 +72,7 @@ The repository contains development-only placeholder values such as `dev-only-ch
 - Do not add real customer data to staging unless explicitly approved.
 - Set `ALLOWED_HOSTS` to the exact staging hostnames. Staging and production reject
   requests with hosts outside this allowlist and emit HSTS when secure cookies are enabled.
+- Keep Redis available before user trials. Staging and production use Redis-backed atomic
+  counters for login, registration, password-reset, admin-login, and inbound API abuse limits.
 - CSP currently keeps inline script/style allowances for existing HTMX and inline UI behavior.
   Plan a separate nonce/hash CSP migration before tightening those directives further.

@@ -123,6 +123,37 @@ def test_forgot_password_hides_mailer_failure_for_missing_email(monkeypatch) -> 
     assert mailer.messages == []
 
 
+def test_forgot_password_rate_limit_is_non_enumerating_for_existing_email(monkeypatch) -> None:
+    mailer = RecordingMailer()
+    monkeypatch.setattr("app.modules.accounts.service.get_mailer", lambda: mailer)
+    client, engine = _client(monkeypatch)
+    _verified_account(client, engine)
+    mailer.messages.clear()
+
+    responses = [
+        client.post("/forgot-password", data={"email": "owner@example.com"}) for _ in range(6)
+    ]
+
+    assert {response.status_code for response in responses} == {200}
+    assert all("If the email exists" in response.get_data(as_text=True) for response in responses)
+
+
+def test_forgot_password_rate_limit_is_non_enumerating_for_missing_email(monkeypatch) -> None:
+    mailer = RecordingMailer()
+    monkeypatch.setattr("app.modules.accounts.service.get_mailer", lambda: mailer)
+    client, engine = _client(monkeypatch)
+    _verified_account(client, engine)
+    mailer.messages.clear()
+
+    responses = [
+        client.post("/forgot-password", data={"email": "missing@example.com"}) for _ in range(6)
+    ]
+
+    assert {response.status_code for response in responses} == {200}
+    assert all("If the email exists" in response.get_data(as_text=True) for response in responses)
+    assert mailer.messages == []
+
+
 def test_reset_password_consumes_token_and_invalidates_old_password(monkeypatch) -> None:
     client, engine = _client(monkeypatch)
     _verified_account(client, engine)

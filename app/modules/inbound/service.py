@@ -13,11 +13,11 @@ from flask import Flask
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from app.core.abuse import rate_limit_hit
 from app.extensions import get_engine
 from app.modules.inbound.models import (
     InboundAllowedOrigin,
     InboundIdempotency,
-    InboundRateLimit,
     InboundToken,
 )
 from app.modules.leads.models import Activity, Lead
@@ -152,33 +152,14 @@ RATE_LIMIT_WINDOW_SECONDS = 3600
 
 
 def check_rate_limit(app: Flask, *, scope: str, bucket: str) -> bool:
-    now = datetime.now(UTC)
-    with _session(app) as session:
-        record = session.scalar(
-            select(InboundRateLimit).where(
-                InboundRateLimit.scope == scope, InboundRateLimit.bucket == bucket
-            )
-        )
-        if record is None:
-            record = InboundRateLimit(
-                scope=scope,
-                bucket=bucket,
-                count=1,
-                reset_at=now + timedelta(seconds=RATE_LIMIT_WINDOW_SECONDS),
-            )
-            session.add(record)
-            session.commit()
-            return True
-        if _as_utc(record.reset_at) < now:
-            record.count = 1
-            record.reset_at = now + timedelta(seconds=RATE_LIMIT_WINDOW_SECONDS)
-            session.commit()
-            return True
-        if record.count >= RATE_LIMIT_COUNT:
-            return False
-        record.count += 1
-        session.commit()
-        return True
+    decision = rate_limit_hit(
+        app,
+        namespace="inbound-api",
+        identifiers=[scope, bucket],
+        limit=RATE_LIMIT_COUNT,
+        window_seconds=RATE_LIMIT_WINDOW_SECONDS,
+    )
+    return decision.allowed
 
 
 # ---------------------------------------------------------------------------

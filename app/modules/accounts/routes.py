@@ -4,6 +4,7 @@ import uuid
 
 from flask import Flask, redirect, render_template, request, session
 
+from app.core.abuse import rate_limit_clear, rate_limit_exceeded, rate_limit_hit
 from app.modules.accounts.service import (
     AccountError,
     authenticate,
@@ -21,10 +22,13 @@ def register_account_routes(app: Flask) -> None:
 
     @app.post("/register")
     def register_submit():
+        email = request.form.get("email", "")
+        if _request_rate_limited(app, "auth:register", [request.remote_addr or "unknown", email]):
+            return render_template("auth/register.html", error="Too many attempts. Try later."), 429
         try:
             register_account(
                 app,
-                email=request.form.get("email", ""),
+                email=email,
                 password=request.form.get("password", ""),
                 company_name=request.form.get("company_name", ""),
             )
@@ -36,15 +40,21 @@ def register_account_routes(app: Flask) -> None:
     def login():
         if request.method == "GET":
             return render_template("auth/login.html", error="")
+        email = request.form.get("email", "")
+        identifiers = [request.remote_addr or "unknown", email]
+        if _login_blocked(app, "auth:login", identifiers):
+            return render_template("auth/login.html", error="Too many attempts. Try later."), 429
         try:
             identity = authenticate(
                 app,
-                email=request.form.get("email", ""),
+                email=email,
                 password=request.form.get("password", ""),
             )
         except AccountError as error:
+            _record_login_failure(app, "auth:login", identifiers)
             return render_template("auth/login.html", error=error.message), 200
 
+        rate_limit_clear(app, namespace="auth:login", identifiers=identifiers)
         session.clear()
         session.permanent = True
         session["tenant_id"] = identity.tenant_id
@@ -72,8 +82,13 @@ def register_account_routes(app: Flask) -> None:
 
     @app.post("/forgot-password")
     def forgot_password_submit():
+        email = request.form.get("email", "")
+        if _request_rate_limited(
+            app, "auth:forgot-password", [request.remote_addr or "unknown", email]
+        ):
+            return render_template("auth/forgot_password.html", sent=True), 200
         try:
-            request_password_reset(app, email=request.form.get("email", ""))
+            request_password_reset(app, email=email)
         except AccountError:
             pass
         return render_template("auth/forgot_password.html", sent=True)
@@ -93,3 +108,33 @@ def register_account_routes(app: Flask) -> None:
             )
         session.clear()
         return redirect("/login")
+
+
+def _login_blocked(app: Flask, namespace: str, identifiers: list[str]) -> bool:
+    return rate_limit_exceeded(
+        app,
+        namespace=namespace,
+        identifiers=identifiers,
+        limit=5,
+    )
+
+
+def _record_login_failure(app: Flask, namespace: str, identifiers: list[str]) -> None:
+    rate_limit_hit(
+        app,
+        namespace=namespace,
+        identifiers=identifiers,
+        limit=5,
+        window_seconds=15 * 60,
+    )
+
+
+def _request_rate_limited(app: Flask, namespace: str, identifiers: list[str]) -> bool:
+    decision = rate_limit_hit(
+        app,
+        namespace=namespace,
+        identifiers=identifiers,
+        limit=5,
+        window_seconds=15 * 60,
+    )
+    return not decision.allowed

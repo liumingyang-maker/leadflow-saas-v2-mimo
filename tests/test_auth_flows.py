@@ -166,6 +166,56 @@ def test_login_requires_verified_email_and_rotates_session(monkeypatch) -> None:
         assert sess.permanent is True
 
 
+def test_login_rate_limits_failed_attempts(monkeypatch) -> None:
+    client, engine = _client(monkeypatch)
+    client.post(
+        "/register",
+        data={
+            "email": "owner@example.com",
+            "password": "safe-password-123",
+            "company_name": "Acme Export",
+        },
+    )
+
+    from app.modules.accounts.models import EmailToken
+
+    with Session(engine) as session:
+        token = session.scalars(select(EmailToken.token)).one()
+    client.get(f"/verify-email/{token}")
+
+    for _ in range(5):
+        response = client.post(
+            "/login",
+            data={"email": "owner@example.com", "password": "wrong-password"},
+        )
+        assert response.status_code == 200
+
+    limited = client.post(
+        "/login",
+        data={"email": "owner@example.com", "password": "safe-password-123"},
+    )
+
+    assert limited.status_code == 429
+
+
+def test_register_rate_limits_repeated_attempts(monkeypatch) -> None:
+    client, _engine = _client(monkeypatch)
+
+    for _ in range(5):
+        response = client.post(
+            "/register",
+            data={"email": "bad@example.com", "password": "short", "company_name": "Acme"},
+        )
+        assert response.status_code == 400
+
+    limited = client.post(
+        "/register",
+        data={"email": "bad@example.com", "password": "short", "company_name": "Acme"},
+    )
+
+    assert limited.status_code == 429
+
+
 def test_email_verification_token_is_single_use(monkeypatch) -> None:
     client, engine = _client(monkeypatch)
     client.post(
