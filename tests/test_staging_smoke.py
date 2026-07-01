@@ -56,6 +56,37 @@ class TestStagingComposeExists:
             content = f.read()
         assert "APP_ENV=staging" in content
 
+    def test_staging_compose_sets_database_url_for_runtime_and_migrations(self) -> None:
+        import yaml
+
+        with open("docker-compose.staging.yml") as f:
+            config = yaml.safe_load(f)
+
+        for service in ("web", "worker", "migrate"):
+            env = config["services"][service]["environment"]
+            assert any(item.startswith("DATABASE_URL=postgresql://") for item in env)
+            assert not any(item.startswith("DATABASE_URL=sqlite:///") for item in env)
+
+    def test_staging_compose_runs_migrations_before_runtime_services(self) -> None:
+        import yaml
+
+        with open("docker-compose.staging.yml") as f:
+            config = yaml.safe_load(f)
+
+        assert config["services"]["migrate"]["command"] == "alembic upgrade head"
+        for service in ("web", "worker"):
+            depends_on = config["services"][service]["depends_on"]
+            assert depends_on["migrate"]["condition"] == "service_completed_successfully"
+
+    def test_alembic_env_prefers_database_url_over_ini_default(self) -> None:
+        with open("migrations/env.py") as f:
+            content = f.read()
+
+        assert 'os.environ.get("DATABASE_URL")' in content
+        assert 'config.set_main_option("sqlalchemy.url", database_url)' in content
+        assert '{"staging", "production"}' in content
+        assert "DATABASE_URL is required for Alembic migrations" in content
+
     def test_staging_runbook_uses_staging_compose_and_postgres(self) -> None:
         with open("docs/RUNBOOK_STAGING.md") as f:
             content = f.read()

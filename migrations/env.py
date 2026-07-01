@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 from logging.config import fileConfig
 
 from alembic import context
@@ -19,6 +20,19 @@ if config.config_file_name is not None:
     fileConfig(config.config_file_name)
 
 target_metadata = Base.metadata
+
+
+def configure_database_url() -> str:
+    database_url = os.environ.get("DATABASE_URL")
+    if not database_url and os.environ.get("APP_ENV", "").lower() in {"staging", "production"}:
+        raise RuntimeError("DATABASE_URL is required for Alembic migrations in staging/production")
+
+    database_url = database_url or config.get_main_option("sqlalchemy.url")
+    config.set_main_option("sqlalchemy.url", database_url)
+    return database_url
+
+
+configure_database_url()
 
 
 def run_migrations_offline() -> None:

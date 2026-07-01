@@ -86,6 +86,8 @@ class TestStagingCompose:
         with open("docker-compose.staging.yml") as f:
             config = yaml.safe_load(f)
         for name, svc in config.get("services", {}).items():
+            if name == "migrate":
+                continue  # One-shot migration job exits after alembic upgrade head.
             assert "restart" in svc, f"Service {name} missing restart policy"
 
     def test_staging_all_services_have_healthchecks(self) -> None:
@@ -94,7 +96,7 @@ class TestStagingCompose:
         with open("docker-compose.staging.yml") as f:
             config = yaml.safe_load(f)
         for name, svc in config.get("services", {}).items():
-            if name == "worker":
+            if name in {"worker", "migrate"}:
                 continue  # Worker doesn't serve HTTP
             assert "healthcheck" in svc, f"Service {name} missing healthcheck"
 
@@ -108,3 +110,47 @@ class TestStagingCompose:
             assert "APP_ENV=staging" in env
             assert any(item.startswith("DATABASE_URL=postgresql://") for item in env)
             assert "REDIS_URL=redis://redis:6379/0" in env
+
+    def test_alembic_migrations_use_database_url_when_set(self) -> None:
+        with open("migrations/env.py") as f:
+            content = f.read()
+
+        assert 'os.environ.get("DATABASE_URL")' in content
+        assert 'config.set_main_option("sqlalchemy.url", database_url)' in content
+        assert 'url = config.get_main_option("sqlalchemy.url")' in content
+        assert '{"staging", "production"}' in content
+        assert "DATABASE_URL is required for Alembic migrations" in content
+
+    def test_staging_migrate_service_runs_before_web_and_worker(self) -> None:
+        import yaml
+
+        with open("docker-compose.staging.yml") as f:
+            config = yaml.safe_load(f)
+
+        migrate = config["services"]["migrate"]
+        assert migrate["command"] == "alembic upgrade head"
+        assert migrate["depends_on"]["db"]["condition"] == "service_healthy"
+        assert any(
+            item.startswith("DATABASE_URL=postgresql://") for item in migrate["environment"]
+        )
+
+        for name in ("web", "worker"):
+            depends_on = config["services"][name]["depends_on"]
+            assert depends_on["migrate"]["condition"] == "service_completed_successfully"
+
+    def test_staging_web_and_worker_include_smtp_env(self) -> None:
+        import yaml
+
+        expected = {
+            "SMTP_HOST=${SMTP_HOST}",
+            "SMTP_PORT=${SMTP_PORT:-587}",
+            "SMTP_USER=${SMTP_USER}",
+            "SMTP_PASSWORD=${SMTP_PASSWORD}",
+            "SMTP_FROM=${SMTP_FROM}",
+            "SMTP_USE_TLS=${SMTP_USE_TLS:-true}",
+        }
+        with open("docker-compose.staging.yml") as f:
+            config = yaml.safe_load(f)
+        for name in ("web", "worker"):
+            env = set(config["services"][name]["environment"])
+            assert expected.issubset(env)

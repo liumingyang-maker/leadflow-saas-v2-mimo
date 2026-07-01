@@ -14,6 +14,12 @@ services:
       - ALLOWED_HOSTS=${ALLOWED_HOSTS}
       - INBOUND_TOKEN_KEY=${INBOUND_TOKEN_KEY}
       - OUTREACH_SIGNING_KEY=${OUTREACH_SIGNING_KEY}
+      - SMTP_HOST=${SMTP_HOST}
+      - SMTP_PORT=${SMTP_PORT:-587}
+      - SMTP_USER=${SMTP_USER}
+      - SMTP_PASSWORD=${SMTP_PASSWORD}
+      - SMTP_FROM=${SMTP_FROM}
+      - SMTP_USE_TLS=${SMTP_USE_TLS:-true}
     ports:
       - "5000:5000"
     depends_on:
@@ -21,6 +27,8 @@ services:
         condition: service_healthy
       db:
         condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:5000/health/live', timeout=3).read()"]
       interval: 30s
@@ -55,6 +63,17 @@ services:
       retries: 5
     restart: unless-stopped
 
+  migrate:
+    build: .
+    environment:
+      - APP_ENV=staging
+      - DATABASE_URL=postgresql://leadflow:${POSTGRES_PASSWORD}@db:5432/leadflow
+    depends_on:
+      db:
+        condition: service_healthy
+    command: alembic upgrade head
+    restart: "no"
+
   worker:
     build: .
     environment:
@@ -68,11 +87,19 @@ services:
       - ALLOWED_HOSTS=${ALLOWED_HOSTS}
       - INBOUND_TOKEN_KEY=${INBOUND_TOKEN_KEY}
       - OUTREACH_SIGNING_KEY=${OUTREACH_SIGNING_KEY}
+      - SMTP_HOST=${SMTP_HOST}
+      - SMTP_PORT=${SMTP_PORT:-587}
+      - SMTP_USER=${SMTP_USER}
+      - SMTP_PASSWORD=${SMTP_PASSWORD}
+      - SMTP_FROM=${SMTP_FROM}
+      - SMTP_USE_TLS=${SMTP_USE_TLS:-true}
     depends_on:
       redis:
         condition: service_healthy
       db:
         condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
     command: python run_worker.py default
     restart: unless-stopped
 

@@ -4,5 +4,6 @@ Alembic>=1.13,<2
 cryptography>=41,<50
 Flask-WTF>=1.2,<2
 openpyxl>=3.1,<4
+psycopg2-binary>=2.9,<3
 redis>=5,<9
 rq>=2,<3
