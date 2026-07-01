@@ -10,6 +10,7 @@ def test_runtime_requirements_include_data_layer_dependencies() -> None:
 
     assert "SQLAlchemy" in requirements
     assert "Alembic" in requirements
+    assert "gunicorn>=23,<24" in requirements
     assert "psycopg2-binary>=2.9,<3" in requirements
 
 
@@ -17,3 +18,9 @@ def test_runtime_lock_includes_postgres_driver() -> None:
     lock = (ROOT / "requirements.lock").read_text(encoding="utf-8")
 
     assert "psycopg2-binary==" in lock
+
+
+def test_runtime_lock_includes_wsgi_server() -> None:
+    lock = (ROOT / "requirements.lock").read_text(encoding="utf-8")
+
+    assert "gunicorn==23.0.0" in lock

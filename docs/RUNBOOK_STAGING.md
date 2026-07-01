@@ -26,9 +26,13 @@ wait for it to complete successfully before starting.
 ## Verify
 
 ```bash
-curl http://localhost:5000/health/live
-curl http://localhost:5000/health/ready
+curl http://localhost:8000/health/live
+curl http://localhost:8000/health/ready
 ```
+
+The web container runs Gunicorn against the Flask application factory and listens
+on container port 5000, exposed as host port 8000 by staging compose. Tune it
+with `WEB_CONCURRENCY`, `GUNICORN_THREADS`, and `GUNICORN_TIMEOUT` when needed.
 
 ## Worker
 
@@ -61,6 +65,9 @@ SMTP_USER=<smtp-user>
 SMTP_PASSWORD=<smtp-password>
 SMTP_FROM=<verified-from-address>
 SMTP_USE_TLS=true
+WEB_CONCURRENCY=2
+GUNICORN_THREADS=4
+GUNICORN_TIMEOUT=60
 ```
 
 The compose file supplies `DATABASE_URL` and `REDIS_URL` to the web and worker

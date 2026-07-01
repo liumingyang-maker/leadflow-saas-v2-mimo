@@ -20,8 +20,11 @@ services:
       - SMTP_PASSWORD=${SMTP_PASSWORD}
       - SMTP_FROM=${SMTP_FROM}
       - SMTP_USE_TLS=${SMTP_USE_TLS:-true}
+      - WEB_CONCURRENCY=${WEB_CONCURRENCY:-2}
+      - GUNICORN_THREADS=${GUNICORN_THREADS:-4}
+      - GUNICORN_TIMEOUT=${GUNICORN_TIMEOUT:-60}
     ports:
-      - "5000:5000"
+      - "8000:5000"
     depends_on:
       redis:
         condition: service_healthy

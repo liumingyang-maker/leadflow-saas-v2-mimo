@@ -23,6 +23,17 @@ class TestDockerfileHardening:
             content = f.read()
         assert "HEALTHCHECK" in content
 
+    def test_container_runtime_uses_gunicorn(self) -> None:
+        with open("Dockerfile") as f:
+            content = f.read()
+        assert "gunicorn" in content
+        assert "app:create_app()" in content
+        assert "--bind 0.0.0.0:5000" in content
+        assert "--access-logfile -" in content
+        assert "--error-logfile -" in content
+        assert "flask run" not in content
+        assert 'python", "-m", "flask' not in content
+
     def test_no_root_user_in_cmd(self) -> None:
         """CMD should not explicitly run as root."""
         with open("Dockerfile") as f:
@@ -110,6 +121,27 @@ class TestStagingCompose:
             assert "APP_ENV=staging" in env
             assert any(item.startswith("DATABASE_URL=postgresql://") for item in env)
             assert "REDIS_URL=redis://redis:6379/0" in env
+
+    def test_staging_web_exposes_gunicorn_port_on_smoke_port(self) -> None:
+        import yaml
+
+        with open("docker-compose.staging.yml") as f:
+            config = yaml.safe_load(f)
+
+        assert "8000:5000" in config["services"]["web"]["ports"]
+
+    def test_staging_web_includes_gunicorn_tuning_env(self) -> None:
+        import yaml
+
+        with open("docker-compose.staging.yml") as f:
+            config = yaml.safe_load(f)
+
+        env = set(config["services"]["web"]["environment"])
+        assert {
+            "WEB_CONCURRENCY=${WEB_CONCURRENCY:-2}",
+            "GUNICORN_THREADS=${GUNICORN_THREADS:-4}",
+            "GUNICORN_TIMEOUT=${GUNICORN_TIMEOUT:-60}",
+        }.issubset(env)
 
     def test_alembic_migrations_use_database_url_when_set(self) -> None:
         with open("migrations/env.py") as f:
