@@ -1,11 +1,14 @@
 from __future__ import annotations
 
-import os
-
-from cryptography.fernet import Fernet, InvalidToken
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from app.core.secret_crypto import (
+    SecretCryptoError,
+    decrypt_secret,
+    encrypt_secret,
+    mask_secret,
+)
 from app.modules.accounts.models import TenantSecret
 
 
@@ -24,13 +27,6 @@ class SecretStore:
 
     def __init__(self, session: Session) -> None:
         self.session = session
-        self._current_key = _derive_fernet_key(
-            _require_env("TENANT_SECRET_KEY", "current tenant secret key")
-        )
-        previous_raw = os.environ.get("TENANT_SECRET_KEY_PREVIOUS")
-        self._previous_key: Fernet | None = (
-            _derive_fernet_key(previous_raw) if previous_raw else None
-        )
 
     # ------------------------------------------------------------------
     # Public API
@@ -70,10 +66,7 @@ class SecretStore:
 
     def mask(self, tenant_id: str, name: str) -> str:
         """Return a masked representation (last four chars visible)."""
-        plaintext = self.load(tenant_id, name)
-        if len(plaintext) <= 4:
-            return plaintext
-        return "*" * (len(plaintext) - 4) + plaintext[-4:]
+        return mask_secret(self.load(tenant_id, name))
 
     def rotate(self, tenant_id: str, name: str) -> None:
         """Re-encrypt the named secret under the current key.
@@ -100,37 +93,15 @@ class SecretStore:
         )
 
     def _encrypt(self, plaintext: str) -> str:
-        return self._current_key.encrypt(plaintext.encode("utf-8")).decode("utf-8")
+        try:
+            return encrypt_secret(plaintext)
+        except SecretCryptoError as exc:
+            raise SecretStoreError(str(exc)) from exc
 
     def _decrypt(self, ciphertext: str) -> str:
-        raw = ciphertext.encode("utf-8")
         try:
-            return self._current_key.decrypt(raw).decode("utf-8")
-        except InvalidToken:
-            pass
-        if self._previous_key is not None:
-            try:
-                return self._previous_key.decrypt(raw).decode("utf-8")
-            except InvalidToken:
-                pass
-        raise SecretStoreError("failed to decrypt secret – key mismatch or corrupt data")
-
-
-def _derive_fernet_key(raw: str) -> Fernet:
-    """Derive a valid 32-byte Fernet key from an arbitrary string.
-
-    Fernet requires a base64-encoded 32-byte key.  We use SHA-256 so
-    that any reasonably long passphrase works.
-    """
-    import base64
-    import hashlib
-
-    digest = hashlib.sha256(raw.encode("utf-8")).digest()
-    return Fernet(base64.urlsafe_b64encode(digest))
-
-
-def _require_env(name: str, hint: str) -> str:
-    value = os.environ.get(name)
-    if not value:
-        raise SecretStoreError(f"{name} environment variable is required ({hint})")
-    return value
+            return decrypt_secret(ciphertext)
+        except SecretCryptoError as exc:
+            raise SecretStoreError(
+                "failed to decrypt secret – key mismatch or corrupt data"
+            ) from exc

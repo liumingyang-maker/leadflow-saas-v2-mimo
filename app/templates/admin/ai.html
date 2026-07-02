@@ -1,0 +1,93 @@
+{% from "components/_shell.html" import shell %}
+{% from "components/_buttons.html" import button %}
+{% from "components/_forms.html" import csrf_input %}
+
+{% call shell(t("AI control plane")) %}
+<header class="lf-page-header">
+  <div>
+    <span class="lf-eyebrow">{{ t("Admin") }}</span>
+    <h1 class="lf-page-title">{{ t("AI control plane") }}</h1>
+    <p>{{ t("Manage provider access, quotas, and safe AI usage.") }}</p>
+  </div>
+  <a href="/admin" class="lf-button">{{ t("Back to admin console") }}</a>
+</header>
+
+{% if message %}<div class="lf-alert lf-alert-success" role="status">{{ message }}</div>{% endif %}
+{% if error %}<div class="lf-alert lf-alert-error" role="alert">{{ error }}</div>{% endif %}
+
+<section class="lf-panel lf-form-stack">
+  <h2>{{ t("Provider settings") }}</h2>
+  <form method="post" action="/admin/ai">
+    {{ csrf_input() }}
+    <input type="hidden" name="action" value="save">
+    <div class="lf-field-group">
+      <label class="lf-label" for="enabled">{{ t("AI enabled") }}</label>
+      <input id="enabled" name="enabled" type="checkbox" value="1"{% if settings.enabled %} checked{% endif %}>
+    </div>
+    <div class="lf-field-group">
+      <label class="lf-label" for="provider">{{ t("Provider") }}</label>
+      <select class="lf-field" id="provider" name="provider">
+        {% for item in ["disabled", "fake", "openai_compatible"] %}
+        <option value="{{ item }}"{% if settings.provider == item %} selected{% endif %}>{{ item }}</option>
+        {% endfor %}
+      </select>
+    </div>
+    <div class="lf-field-group">
+      <label class="lf-label" for="base_url">{{ t("Base URL") }}</label>
+      <input class="lf-field" id="base_url" name="base_url" value="{{ settings.base_url }}">
+    </div>
+    <div class="lf-field-group">
+      <label class="lf-label" for="model">{{ t("Model") }}</label>
+      <input class="lf-field" id="model" name="model" value="{{ settings.model }}">
+    </div>
+    <div class="lf-field-group">
+      <label class="lf-label" for="api_key">{{ t("API key") }}</label>
+      <input class="lf-field" id="api_key" name="api_key" type="password" value="" autocomplete="off">
+      {% if settings.api_key_masked %}<span class="lf-help">{{ t("Configured key") }}: {{ settings.api_key_masked }}</span>{% endif %}
+    </div>
+    <div class="lf-grid">
+      <div class="lf-field-group">
+        <label class="lf-label" for="timeout_seconds">{{ t("Timeout seconds") }}</label>
+        <input class="lf-field" id="timeout_seconds" name="timeout_seconds" type="number" min="1" max="60" value="{{ settings.timeout_seconds }}">
+      </div>
+      <div class="lf-field-group">
+        <label class="lf-label" for="max_output_tokens">{{ t("Max output tokens") }}</label>
+        <input class="lf-field" id="max_output_tokens" name="max_output_tokens" type="number" min="64" max="4000" value="{{ settings.max_output_tokens }}">
+      </div>
+    </div>
+    {{ button(t("Save"), "primary", "submit") }}
+  </form>
+  <form method="post" action="/admin/ai">
+    {{ csrf_input() }}
+    <input type="hidden" name="action" value="test">
+    {{ button(t("Test connection"), "secondary", "submit") }}
+  </form>
+</section>
+
+<section class="lf-grid lf-section">
+  <article class="lf-panel">
+    <h2>{{ t("Usage summary") }}</h2>
+    <dl class="lf-dl">
+      <dt>{{ t("Total calls") }}</dt><dd>{{ usage.total_calls }}</dd>
+      <dt>{{ t("Credits used") }}</dt><dd>{{ usage.credits }}</dd>
+      <dt>{{ t("Failed") }}</dt><dd>{{ usage.failed }}</dd>
+      <dt>{{ t("Blocked quota") }}</dt><dd>{{ usage.blocked }}</dd>
+    </dl>
+  </article>
+  <article class="lf-panel">
+    <h2>{{ t("Tenant quotas") }}</h2>
+    {% if quotas %}
+      <table class="lf-table">
+        <thead><tr><th>{{ t("Tenant") }}</th><th>{{ t("Enabled") }}</th><th>{{ t("Credits") }}</th></tr></thead>
+        <tbody>
+          {% for quota in quotas %}
+          <tr><td>{{ quota.tenant_id }}</td><td>{{ quota.enabled }}</td><td>{{ quota.monthly_included_credits }}</td></tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    {% else %}
+      <p class="lf-muted">{{ t("No tenant quotas yet") }}</p>
+    {% endif %}
+  </article>
+</section>
+{% endcall %}

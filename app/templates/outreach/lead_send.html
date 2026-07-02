@@ -18,6 +18,26 @@
 {% endif %}
 
 <section class="lf-panel lf-form-stack">
+  <h2>{{ t("AI draft") }}</h2>
+  {% if ai_quota %}
+  <p class="lf-muted">
+    {{ t("AI credits remaining") }}: {{ ai_quota.remaining }} / {{ ai_quota.included }}.
+    {{ t("This action costs {credits} credits", credits=ai_draft_credits) }}
+  </p>
+  {% endif %}
+  <form method="post" action="/leads/{{ lead.id }}/outreach/ai-draft">
+    {{ csrf_input() }}
+    <input type="hidden" name="subject" value="{{ draft_subject or '' }}">
+    <input type="hidden" name="body_text" value="{{ draft_body_text or '' }}">
+    <div class="lf-field-group">
+      <label class="lf-label" for="ai_notes">{{ t("AI draft instructions") }}</label>
+      <input class="lf-field" id="ai_notes" name="ai_notes" placeholder="{{ t('Optional context for the draft') }}">
+    </div>
+    {{ button(t("Generate AI draft"), "primary", "submit") }}
+  </form>
+</section>
+
+<section class="lf-panel lf-form-stack">
   <h2>{{ t("Compose email") }}</h2>
   <form method="post" action="/leads/{{ lead.id }}/outreach/send">
     {{ csrf_input() }}
@@ -36,11 +56,11 @@
     </div>
     <div class="lf-field-group">
       <label class="lf-label" for="subject">{{ t("Subject") }}</label>
-      <input class="lf-field" id="subject" name="subject" required>
+      <input class="lf-field" id="subject" name="subject" value="{{ draft_subject or '' }}" required>
     </div>
     <div class="lf-field-group">
       <label class="lf-label" for="body_text">{{ t("Body (text)") }}</label>
-      <textarea class="lf-field" id="body_text" name="body_text" rows="8"></textarea>
+      <textarea class="lf-field" id="body_text" name="body_text" rows="8">{{ draft_body_text or '' }}</textarea>
     </div>
     {{ button(t("Send (fake)"), "primary", "submit") }}
   </form>
