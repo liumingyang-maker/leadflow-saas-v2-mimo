@@ -92,6 +92,8 @@ _BASE_TRANSLATIONS = {
     "Database": "数据库",
     "Date": "日期",
     "Deliverability overview": "送达概览",
+    "Didn't receive the email? Resend verification email": "没收到邮件？重新发送验证邮件",
+    "Didn't receive the verification email? Resend it": "没有收到验证邮件？重新发送",
     "Discover businesses by type and location.": "按类型和地点发现企业。",
     "Email": "邮箱",
     "Email Templates": "邮件模板",
@@ -101,6 +103,7 @@ _BASE_TRANSLATIONS = {
     "Email verification required": "需要先完成邮箱验证",
     "Email verified": "邮箱已验证",
     "Environment": "环境",
+    "Enter your email to receive a new verification link.": "输入邮箱以接收新的验证链接。",
     "Failed": "失败",
     "Fake mailer": "模拟邮件发送器",
     "Fake mailer - no real email sent": "模拟邮件发送器 - 不会发送真实邮件",
@@ -119,6 +122,10 @@ _BASE_TRANSLATIONS = {
     "Google Maps collection": "Google Maps 采集",
     "Google Search collection": "Google 搜索采集",
     "If the email exists, a reset link has been prepared.": "如果邮箱存在，系统已准备好重置链接。",
+    (
+        "If the email exists and is not verified, we will resend the verification email. "
+        "Please check your inbox or spam folder."
+    ): ("如果该邮箱存在且尚未验证，我们会重新发送验证邮件。请检查收件箱或垃圾邮件。"),
     "Import": "导入",
     "Import leads": "导入线索",
     "Import leads to start building your pipeline.": "导入线索以开始构建销售管道。",
@@ -206,6 +213,7 @@ _BASE_TRANSLATIONS = {
     "Remove": "移除",
     "Request a fresh verification link from the account flow.": "请从账户流程重新请求验证链接。",
     "Request reset link": "请求重置链接",
+    "Resend verification email": "重新发送验证邮件",
     "Reset link is invalid": "重置链接无效",
     "Reset your LeadFlow password": "重置你的 LeadFlow 密码",
     "Reset your password": "重置密码",
@@ -320,7 +328,7 @@ _BASE_TRANSLATIONS = {
     "valid": "有效",
     "verification_email_body": (
         "欢迎使用 LeadFlow。\n\n请使用以下链接验证你的邮箱地址：\n{link}\n\n"
-        "此链接将在 30 分钟后过期。"
+        "此链接将在 24 小时后过期。"
     ),
 }
 

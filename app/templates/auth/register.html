@@ -16,7 +16,10 @@
     {{ field("email", t("Owner email"), "email") }}
     {{ field("password", t("Password"), "password", "", t("Use at least 8 characters.")) }}
     {{ button(t("Create tenant"), "primary", "submit") }}
-    <p class="lf-muted">{{ t("Already verified?") }} <a href="/login">{{ t("Sign in") }}</a>.</p>
+    <p class="lf-muted">
+      {{ t("Already verified?") }} <a href="/login">{{ t("Sign in") }}</a>.
+      <a href="/resend-verification">{{ t("Didn't receive the verification email? Resend it") }}</a>
+    </p>
   </form>
 </section>
 {% endcall %}

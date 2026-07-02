@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 
@@ -11,6 +12,9 @@ from app.i18n import get_locale, localized_email_text
 from app.modules.accounts.models import EmailToken, Tenant, TenantMembership, User
 from app.modules.accounts.repository import session_scope
 from app.modules.outreach.mailer import get_mailer
+
+LOGGER = logging.getLogger(__name__)
+VERIFY_TOKEN_TTL = timedelta(hours=24)
 
 
 class AccountError(ValueError):
@@ -39,7 +43,12 @@ def register_account(app: Flask, *, email: str, password: str, company_name: str
         tenant = Tenant(company_name=clean_company)
         user = User(email=clean_email, password_hash=generate_password_hash(password))
         session.add(TenantMembership(tenant=tenant, user=user, role="owner"))
-        token = EmailToken(tenant=tenant, email=clean_email, token_type="verify")
+        token = EmailToken(
+            tenant=tenant,
+            email=clean_email,
+            token_type="verify",
+            expires_at=_verification_token_expires_at(),
+        )
         session.add(token)
         session.flush()
         session.expunge(token)
@@ -86,6 +95,51 @@ def request_password_reset(app: Flask, *, email: str) -> EmailToken | None:
         session.flush()
         session.expunge(token)
     _send_password_reset_email(app, email=clean_email, token=token.token)
+    return token
+
+
+def resend_verification_email(app: Flask, *, email: str) -> EmailToken | None:
+    clean_email = _normalize_email(email)
+    if not clean_email:
+        return None
+
+    with session_scope(app) as session:
+        user = session.scalar(select(User).where(User.email == clean_email))
+        if user is None or user.email_verified_at is not None:
+            return None
+        membership = session.scalar(
+            select(TenantMembership).where(TenantMembership.user_id == user.id)
+        )
+        if membership is None:
+            return None
+
+        now = _now()
+        old_tokens = session.scalars(
+            select(EmailToken).where(
+                EmailToken.email == clean_email,
+                EmailToken.token_type == "verify",
+                EmailToken.used_at.is_(None),
+            )
+        ).all()
+        for old_token in old_tokens:
+            old_token.used_at = now
+            old_token.expires_at = now
+
+        token = EmailToken(
+            tenant_id=membership.tenant_id,
+            email=clean_email,
+            token_type="verify",
+            expires_at=_verification_token_expires_at(),
+        )
+        session.add(token)
+        session.flush()
+        session.expunge(token)
+
+    try:
+        _send_verification_email(app, email=clean_email, token=token.token)
+    except AccountError:
+        LOGGER.warning("Verification email resend failed")
+        raise
     return token
 
 
@@ -202,6 +256,10 @@ def _account_url(app: Flask, path: str) -> str:
 
 def _now() -> datetime:
     return datetime.now(UTC)
+
+
+def _verification_token_expires_at() -> datetime:
+    return _now() + VERIFY_TOKEN_TTL
 
 
 def _is_expired(value: datetime) -> bool:

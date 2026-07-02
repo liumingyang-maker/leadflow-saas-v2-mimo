@@ -12,7 +12,10 @@
   <form class="lf-panel lf-form-stack" method="post" action="/login">
     {{ csrf_input() }}
     {% if request.args.get("registered") %}
-      <div class="lf-alert lf-alert-success" role="status">{{ t("Account created. Check your email for the verification link.") }}</div>
+      <div class="lf-alert lf-alert-success" role="status">
+        {{ t("Account created. Check your email for the verification link.") }}
+        <a href="/resend-verification">{{ t("Didn't receive the email? Resend verification email") }}</a>
+      </div>
     {% endif %}
     {% if error %}<div class="lf-alert lf-alert-error" role="alert">{{ error }}</div>{% endif %}
     {{ field("email", t("Email"), "email") }}
@@ -21,6 +24,7 @@
     <p class="lf-muted">
       {{ t("New workspace?") }} <a href="/register">{{ t("Create a tenant") }}</a>.
       <a href="/forgot-password">{{ t("Forgot password?") }}</a>
+      <a href="/resend-verification">{{ t("Didn't receive the verification email? Resend it") }}</a>
     </p>
   </form>
 </section>

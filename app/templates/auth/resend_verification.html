@@ -1,0 +1,24 @@
+{% from "components/_shell.html" import shell %}
+{% from "components/_buttons.html" import button %}
+{% from "components/_forms.html" import field, csrf_input %}
+
+{% call shell(t("Resend verification email")) %}
+<section class="lf-auth">
+  <div>
+    <span class="lf-eyebrow">{{ t("Email verification") }}</span>
+    <h1 class="lf-page-title">{{ t("Resend verification email") }}</h1>
+    <p>{{ t("Enter your email to receive a new verification link.") }}</p>
+  </div>
+  <form class="lf-panel lf-form-stack" method="post" action="/resend-verification">
+    {{ csrf_input() }}
+    {% if sent %}
+      <div class="lf-alert lf-alert-success" role="status">
+        {{ t("If the email exists and is not verified, we will resend the verification email. Please check your inbox or spam folder.") }}
+      </div>
+    {% endif %}
+    {{ field("email", t("Email"), "email") }}
+    {{ button(t("Resend verification email"), "primary", "submit") }}
+    <p class="lf-muted"><a href="/login">{{ t("Back to sign in") }}</a></p>
+  </form>
+</section>
+{% endcall %}

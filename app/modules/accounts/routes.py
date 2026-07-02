@@ -11,6 +11,7 @@ from app.modules.accounts.service import (
     authenticate,
     register_account,
     request_password_reset,
+    resend_verification_email,
     reset_password,
     verify_email,
 )
@@ -73,6 +74,20 @@ def register_account_routes(app: Flask) -> None:
         except AccountError as error:
             return render_template("auth/verification_error.html", error=t(error.message)), 400
         return redirect("/login")
+
+    @app.get("/resend-verification")
+    def resend_verification_form():
+        return render_template("auth/resend_verification.html", sent=False)
+
+    @app.post("/resend-verification")
+    def resend_verification_submit():
+        email = request.form.get("email", "")
+        if not _resend_verification_rate_limited(app, email):
+            try:
+                resend_verification_email(app, email=email)
+            except AccountError:
+                pass
+        return render_template("auth/resend_verification.html", sent=True)
 
     @app.post("/logout")
     def logout():
@@ -141,3 +156,32 @@ def _request_rate_limited(app: Flask, namespace: str, identifiers: list[str]) ->
         window_seconds=15 * 60,
     )
     return not decision.allowed
+
+
+def _resend_verification_rate_limited(app: Flask, email: str) -> bool:
+    remote_addr = request.remote_addr or "unknown"
+    clean_email = (email or "").strip().lower()[:320]
+    checks = [
+        rate_limit_hit(
+            app,
+            namespace="auth:resend-verify:email-cooldown",
+            identifiers=[clean_email],
+            limit=1,
+            window_seconds=60,
+        ),
+        rate_limit_hit(
+            app,
+            namespace="auth:resend-verify:email-hour",
+            identifiers=[clean_email],
+            limit=5,
+            window_seconds=60 * 60,
+        ),
+        rate_limit_hit(
+            app,
+            namespace="auth:resend-verify:ip-hour",
+            identifiers=[remote_addr],
+            limit=20,
+            window_seconds=60 * 60,
+        ),
+    ]
+    return any(not decision.allowed for decision in checks)
