@@ -6,6 +6,7 @@
 set -Eeuo pipefail
 
 BASE_URL="http://127.0.0.1:8000"
+HOST_HEADER="Host: huokeradar.com"
 WEB_SERVICE="leadflow-saas-v2-web.service"
 WORKER_SERVICE="leadflow-saas-v2-worker.service"
 
@@ -44,7 +45,7 @@ fi
 
 # 4. Health live
 echo -n "  /health/live ... "
-if curl -fsS "${BASE_URL}/health/live" >/dev/null 2>&1; then
+if curl -fsS -H "$HOST_HEADER" "${BASE_URL}/health/live" >/dev/null 2>&1; then
   echo "PASS"
 else
   echo "FAIL"
@@ -53,7 +54,7 @@ fi
 
 # 5. Health ready
 echo -n "  /health/ready ... "
-READY=$(curl -fsS "${BASE_URL}/health/ready" 2>/dev/null || echo '{"ok":false}')
+READY=$(curl -fsS -H "$HOST_HEADER" "${BASE_URL}/health/ready" 2>/dev/null || echo '{"ok":false}')
 if echo "$READY" | grep -q '"ok":true'; then
   echo "PASS"
 else

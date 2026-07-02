@@ -1,4 +1,4 @@
 {% from "components/_shell.html" import shell %}{% from "components/_buttons.html" import button %}
 {% call shell(t("Page not found")) %}
-<section class="lf-panel"><span class="lf-eyebrow">404</span><h1 class="lf-page-title">{{ t("Page not found") }}</h1><p>{{ t("The page you requested does not exist.") }}</p><a href="/" class="lf-button lf-button-primary">{{ t("Go home") }}</a></section>
+<section class="lf-panel"><span class="lf-eyebrow">404</span><h1 class="lf-page-title">{{ t("Page not found") }}</h1><p>{{ t("The page you requested does not exist.") }}</p>{% if session.get('admin_user_id') %}<a href="/admin" class="lf-button lf-button-primary">{{ t("Back to admin") }}</a>{% elif session.get('tenant_id') %}<a href="/workbench" class="lf-button lf-button-primary">{{ t("Back to workbench") }}</a>{% else %}<a href="/login" class="lf-button lf-button-primary">{{ t("Back to sign in") }}</a>{% endif %}</section>
 {% endcall %}

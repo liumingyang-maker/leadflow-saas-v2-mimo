@@ -445,11 +445,13 @@ body {
 .lf-drawer-closed .lf-drawer-backdrop,
 .lf-drawer-closed .lf-drawer {
   pointer-events: none;
+  opacity: 0;
 }
 
 .lf-drawer-open .lf-drawer-backdrop,
 .lf-drawer-open .lf-drawer {
   pointer-events: auto;
+  opacity: 1;
 }
 
 .lf-drawer-backdrop {

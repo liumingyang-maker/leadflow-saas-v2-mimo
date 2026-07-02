@@ -97,4 +97,13 @@ def test_404_page_has_go_home_link(monkeypatch: pytest.MonkeyPatch) -> None:
     response = client.get("/nonexistent-page-xyz")
     assert response.status_code == 404
     html = response.get_data(as_text=True)
-    assert 'href="/"' in html
+    assert 'href="/login"' in html
+
+
+def test_404_page_logged_in_links_to_workbench(monkeypatch: pytest.MonkeyPatch) -> None:
+    client = _client(monkeypatch)
+    _login(client)
+    response = client.get("/nonexistent-page-xyz")
+    assert response.status_code == 404
+    html = response.get_data(as_text=True)
+    assert 'href="/workbench"' in html

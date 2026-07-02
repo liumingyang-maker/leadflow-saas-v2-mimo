@@ -46,9 +46,15 @@ def _get_adapter(job_type: str) -> Any:
 
 
 def _is_allowed_env() -> bool:
-    """Fake adapters are only allowed in development and testing."""
+    """Fake adapters are allowed in dev/test, or when provider is explicitly 'fake'."""
     env = os.environ.get("APP_ENV", "development").lower()
-    return env in ("development", "dev", "testing", "test")
+    if env in ("development", "dev", "testing", "test"):
+        return True
+    if os.environ.get("GOOGLE_SEARCH_PROVIDER", "").lower() == "fake":
+        return True
+    if os.environ.get("GOOGLE_MAPS_PROVIDER", "").lower() == "fake":
+        return True
+    return False
 
 
 # Register adapters based on environment and available API keys
