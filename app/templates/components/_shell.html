@@ -1,6 +1,7 @@
 {% macro shell(title) -%}
 <!doctype html>
-<html lang="en">
+{% set current_locale = get_locale() %}
+<html lang="{{ current_locale }}">
   <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
@@ -11,11 +12,16 @@
     <script src="{{ url_for('static', filename='js/lead-drawer.js') }}" defer></script>
   </head>
   <body>
-    <a class="lf-skip-link" href="#main">Skip to content</a>
+    <a class="lf-skip-link" href="#main">{{ t("Skip to content") }}</a>
     <div class="lf-shell">
-      <aside class="lf-sidebar" aria-label="Design system sections">
+      <aside class="lf-sidebar" aria-label="{{ t('Navigation') }}">
         <strong>LeadFlow V2</strong>
-        <p>Signal Workspace</p>
+        <p>{{ t("Signal Workspace") }}</p>
+        <nav class="lf-language-toggle" aria-label="{{ t('Language') }}">
+          {% for item in supported_locales %}
+            <a class="lf-badge{% if item == current_locale %} lf-badge-success{% endif %}" href="{{ url_for('switch_locale', locale=item, next=request.full_path) }}" {% if item == current_locale %}aria-current="true"{% endif %}>{{ locale_labels[item] }}</a>
+          {% endfor %}
+        </nav>
       </aside>
       <main class="lf-main" id="main">
         {{ caller() }}

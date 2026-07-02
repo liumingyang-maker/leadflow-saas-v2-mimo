@@ -6,44 +6,44 @@
 {% from "components/_jobs.html" import job_progress %}
 {% from "components/_alerts.html" import inline_notice %}
 
-{% call shell("Workbench") %}
+{% call shell(t("Workbench")) %}
 <header class="lf-page-header">
   <div>
-    <span class="lf-eyebrow">Workbench</span>
-    <h1 class="lf-page-title">LeadFlow command center</h1>
-    <p>Review today&apos;s lead signals, blocked setup, and follow-up work.</p>
+    <span class="lf-eyebrow">{{ t("Workbench") }}</span>
+    <h1 class="lf-page-title">{{ t("LeadFlow command center") }}</h1>
+    <p>{{ t("Review today's lead signals, blocked setup, and follow-up work.") }}</p>
   </div>
-  {{ button("Find customers", "primary") }}
+  {{ button(t("Find customers"), "primary") }}
 </header>
 
-<nav class="lf-top-nav" aria-label="Primary navigation">
-  <a href="/workbench" aria-current="page">Workbench</a>
-  <a href="/collect">Find customers</a>
-  <a href="/leads">Lead review</a>
+<nav class="lf-top-nav" aria-label="{{ t('Primary navigation') }}">
+  <a href="/workbench" aria-current="page">{{ t("Workbench") }}</a>
+  <a href="/collect">{{ t("Find customers") }}</a>
+  <a href="/leads">{{ t("Lead review") }}</a>
   <a href="/crm">CRM</a>
-  <a href="/outreach">Outreach</a>
-  <a href="/settings">Settings</a>
+  <a href="/outreach">{{ t("Outreach") }}</a>
+  <a href="/settings">{{ t("Settings") }}</a>
 </nav>
 
-<section class="lf-grid" aria-label="Key metrics">
-  {{ stat("Accepted leads", "0", "Waiting for first review") }}
-  {{ stat("Tasks running", "0", "Loading current tasks") }}
-  {{ stat("Follow-ups due", "0", "No overdue work") }}
+<section class="lf-grid" aria-label="{{ t('Key metrics') }}">
+  {{ stat(t("Accepted leads"), "0", t("Waiting for first review")) }}
+  {{ stat(t("Tasks running"), "0", t("Loading current tasks")) }}
+  {{ stat(t("Follow-ups due"), "0", t("No overdue work")) }}
 </section>
 
 <section class="lf-grid lf-section">
   <article class="lf-panel">
-    <h2>Current task</h2>
-    {{ job_progress("Loading current tasks", 35) }}
+    <h2>{{ t("Current task") }}</h2>
+    {{ job_progress(t("Loading current tasks"), 35) }}
   </article>
   <article class="lf-panel">
-    <h2>Review queue</h2>
-    {{ empty_state("No reviewed leads yet", "Imported and collected leads will wait here for review.", "Import leads") }}
+    <h2>{{ t("Review queue") }}</h2>
+    {{ empty_state(t("No reviewed leads yet"), t("Imported and collected leads will wait here for review."), t("Import leads")) }}
   </article>
   <article class="lf-panel">
-    <h2>Pipeline</h2>
-    {{ inline_notice("Unable to load pipeline", "Connect the data layer in the next milestone.") }}
-    {{ badge("Setup required") }}
+    <h2>{{ t("Pipeline") }}</h2>
+    {{ inline_notice(t("Unable to load pipeline"), t("Connect the data layer in the next milestone.")) }}
+    {{ badge(t("Setup required")) }}
   </article>
 </section>
 {% endcall %}

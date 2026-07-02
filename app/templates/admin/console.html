@@ -2,53 +2,53 @@
 {% from "components/_badges.html" import badge %}
 {% from "components/_empty_states.html" import empty_state %}
 
-{% call shell("Admin console") %}
+{% call shell(t("Admin console")) %}
 <header class="lf-page-header">
   <div>
-    <span class="lf-eyebrow">Admin</span>
-    <h1 class="lf-page-title">Admin console</h1>
-    <p>Tenant lifecycle and launch controls.</p>
+    <span class="lf-eyebrow">{{ t("Admin") }}</span>
+    <h1 class="lf-page-title">{{ t("Admin console") }}</h1>
+    <p>{{ t("Tenant lifecycle and launch controls.") }}</p>
   </div>
-  {{ badge("Console") }}
+  {{ badge(t("Console")) }}
 </header>
 
 <section class="lf-section">
-  <h2>Tenants ({{ tenants|length }})</h2>
+  <h2>{{ t("Tenants") }} ({{ tenants|length }})</h2>
   {% if tenants %}
     <div class="lf-table-wrap">
       <table class="lf-table">
         <thead>
           <tr>
-            <th>Company</th>
-            <th>Industry</th>
-            <th>Status</th>
-            <th>Plan</th>
-            <th>Onboarded</th>
-            <th>Created</th>
+            <th>{{ t("Company") }}</th>
+            <th>{{ t("Industry") }}</th>
+            <th>{{ t("Status") }}</th>
+            <th>{{ t("Plan") }}</th>
+            <th>{{ t("Onboarded") }}</th>
+            <th>{{ t("Created") }}</th>
           </tr>
         </thead>
         <tbody>
-          {% for t in tenants %}
+          {% for tenant in tenants %}
           <tr>
-            <td>{{ t.company_name or "(unnamed)" }}</td>
-            <td>{{ t.industry or "N/A" }}</td>
-            <td><span class="lf-badge">{{ t.status or "N/A" }}</span></td>
-            <td>{{ t.plan or "N/A" }}</td>
+            <td>{{ tenant.company_name or t("(unnamed)") }}</td>
+            <td>{{ tenant.industry or "N/A" }}</td>
+            <td><span class="lf-badge">{{ tenant.status or "N/A" }}</span></td>
+            <td>{{ tenant.plan or "N/A" }}</td>
             <td>
-              {% if t.onboarding_done %}
-                <span class="lf-badge lf-badge-success">Complete</span>
+              {% if tenant.onboarding_done %}
+                <span class="lf-badge lf-badge-success">{{ t("Complete") }}</span>
               {% else %}
-                <span class="lf-badge">Pending</span>
+                <span class="lf-badge">{{ t("Pending") }}</span>
               {% endif %}
             </td>
-            <td>{{ t.created_at[:10] if t.created_at else "N/A" }}</td>
+            <td>{{ tenant.created_at[:10] if tenant.created_at else "N/A" }}</td>
           </tr>
           {% endfor %}
         </tbody>
       </table>
     </div>
   {% else %}
-    {{ empty_state("No tenants yet", "Tenants will appear here after registration.") }}
+    {{ empty_state(t("No tenants yet"), t("Tenants will appear here after registration.")) }}
   {% endif %}
 </section>
 {% endcall %}

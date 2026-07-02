@@ -1,8 +1,8 @@
 {% from "components/_shell.html" import shell %}{% from "components/_badges.html" import badge %}{% from "components/_buttons.html" import button %}
-{% call shell("Settings") %}
-<header class="lf-page-header"><div><span class="lf-eyebrow">Settings</span><h1 class="lf-page-title">Workspace settings</h1></div></header>
-{% if tenant %}<section class="lf-panel"><h2>Profile</h2>
-<dl class="lf-dl"><dt>Company</dt><dd>{{ tenant.company_name }}</dd><dt>Industry</dt><dd>{{ tenant.industry }}</dd><dt>Status</dt><dd><span class="lf-badge">{{ tenant.status }}</span></dd><dt>Plan</dt><dd>{{ tenant.plan }}</dd></dl></section>{% endif %}
-{% if env_status %}<section class="lf-panel"><h2>Environment</h2>
-<dl class="lf-dl"><dt>Environment</dt><dd>{{ env_status.env }}</dd><dt>CSRF enabled</dt><dd>{{ env_status.csrf_enabled }}</dd><dt>Cookie secure</dt><dd>{{ env_status.cookie_secure }}</dd><dt>Fake mailer</dt><dd>{{ env_status.fake_mailer }}</dd></dl></section>{% endif %}
+{% call shell(t("Settings")) %}
+<header class="lf-page-header"><div><span class="lf-eyebrow">{{ t("Settings") }}</span><h1 class="lf-page-title">{{ t("Workspace settings") }}</h1></div></header>
+{% if tenant %}<section class="lf-panel"><h2>{{ t("Profile") }}</h2>
+<dl class="lf-dl"><dt>{{ t("Company") }}</dt><dd>{{ tenant.company_name }}</dd><dt>{{ t("Industry") }}</dt><dd>{{ tenant.industry }}</dd><dt>{{ t("Status") }}</dt><dd><span class="lf-badge">{{ tenant.status }}</span></dd><dt>{{ t("Plan") }}</dt><dd>{{ tenant.plan }}</dd></dl></section>{% endif %}
+{% if env_status %}<section class="lf-panel"><h2>{{ t("Environment") }}</h2>
+<dl class="lf-dl"><dt>{{ t("Environment") }}</dt><dd>{{ env_status.env }}</dd><dt>{{ t("CSRF enabled") }}</dt><dd>{{ env_status.csrf_enabled }}</dd><dt>{{ t("Cookie secure") }}</dt><dd>{{ env_status.cookie_secure }}</dd><dt>{{ t("Fake mailer") }}</dt><dd>{{ env_status.fake_mailer }}</dd></dl></section>{% endif %}
 {% endcall %}

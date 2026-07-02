@@ -6,7 +6,7 @@
 
 <section class="lf-drawer-inner">
   <header class="lf-drawer-header">
-    <span class="lf-eyebrow">Lead</span>
+    <span class="lf-eyebrow">{{ t("Lead") }}</span>
     <h2 class="lf-page-title">{{ lead.email }}</h2>
     <p>{{ lead.first_name }} {{ lead.last_name }}{% if lead.title %} &mdash; {{ lead.title }}{% endif %}</p>
   </header>
@@ -14,92 +14,92 @@
   <div class="lf-drawer-body">
     <!-- Contact info -->
     <section class="lf-panel">
-      <h3>Contact</h3>
+      <h3>{{ t("Contact") }}</h3>
       <dl class="lf-dl">
-        <dt>Email</dt><dd>{{ lead.email }}</dd>
-        <dt>Phone</dt><dd>{{ lead.phone or "N/A" }}</dd>
-        <dt>Website</dt><dd>{% set website_url = lead.website|external_url_href %}{% if website_url %}<a href="{{ website_url }}" rel="noopener noreferrer">{{ lead.website }}</a>{% elif lead.website %}{{ lead.website }}{% else %}N/A{% endif %}</dd>
+        <dt>{{ t("Email") }}</dt><dd>{{ lead.email }}</dd>
+        <dt>{{ t("Phone") }}</dt><dd>{{ lead.phone or "N/A" }}</dd>
+        <dt>{{ t("Website") }}</dt><dd>{% set website_url = lead.website|external_url_href %}{% if website_url %}<a href="{{ website_url }}" rel="noopener noreferrer">{{ lead.website }}</a>{% elif lead.website %}{{ lead.website }}{% else %}N/A{% endif %}</dd>
       </dl>
     </section>
 
     <!-- Pipeline -->
     <section class="lf-panel">
-      <h3>Pipeline</h3>
+      <h3>{{ t("Pipeline") }}</h3>
       <dl class="lf-dl">
-        <dt>Status</dt><dd><span class="lf-badge">{{ lead.status }}</span></dd>
-        <dt>Stage</dt>
+        <dt>{{ t("Status") }}</dt><dd><span class="lf-badge">{{ lead.status }}</span></dd>
+        <dt>{{ t("Stage") }}</dt>
         <dd>
           <form method="post" action="/leads/{{ lead.id }}/stage" hx-post="/leads/{{ lead.id }}/stage" hx-target="#drawer-message" hx-swap="innerHTML">
             {{ csrf_input() }}
             <select class="lf-field" name="stage">
-              <option value="new" {% if lead.stage == 'new' %}selected{% endif %}>New</option>
-              <option value="contacted" {% if lead.stage == 'contacted' %}selected{% endif %}>Contacted</option>
-              <option value="qualified" {% if lead.stage == 'qualified' %}selected{% endif %}>Qualified</option>
-              <option value="proposal" {% if lead.stage == 'proposal' %}selected{% endif %}>Proposal</option>
-              <option value="negotiation" {% if lead.stage == 'negotiation' %}selected{% endif %}>Negotiation</option>
-              <option value="won" {% if lead.stage == 'won' %}selected{% endif %}>Won</option>
-              <option value="lost" {% if lead.stage == 'lost' %}selected{% endif %}>Lost</option>
+              <option value="new" {% if lead.stage == 'new' %}selected{% endif %}>{{ t("New") }}</option>
+              <option value="contacted" {% if lead.stage == 'contacted' %}selected{% endif %}>{{ t("Contacted") }}</option>
+              <option value="qualified" {% if lead.stage == 'qualified' %}selected{% endif %}>{{ t("Qualified") }}</option>
+              <option value="proposal" {% if lead.stage == 'proposal' %}selected{% endif %}>{{ t("Proposal") }}</option>
+              <option value="negotiation" {% if lead.stage == 'negotiation' %}selected{% endif %}>{{ t("Negotiation") }}</option>
+              <option value="won" {% if lead.stage == 'won' %}selected{% endif %}>{{ t("Won") }}</option>
+              <option value="lost" {% if lead.stage == 'lost' %}selected{% endif %}>{{ t("Lost") }}</option>
             </select>
-            <button class="lf-button" type="submit">Update stage</button>
+            <button class="lf-button" type="submit">{{ t("Update stage") }}</button>
           </form>
         </dd>
-        <dt>Source</dt><dd>{{ lead.source }}</dd>
+        <dt>{{ t("Source") }}</dt><dd>{{ lead.source }}</dd>
       </dl>
       <div class="lf-status-row">
         <form method="post" action="/leads/{{ lead.id }}/review" hx-post="/leads/{{ lead.id }}/review" hx-target="#drawer-message" hx-swap="innerHTML">
           {{ csrf_input() }}
           <input type="hidden" name="decision" value="accepted">
-          <button class="lf-button lf-button-primary" type="submit">Accept</button>
+          <button class="lf-button lf-button-primary" type="submit">{{ t("Accept") }}</button>
         </form>
         <form method="post" action="/leads/{{ lead.id }}/review" hx-post="/leads/{{ lead.id }}/review" hx-target="#drawer-message" hx-swap="innerHTML">
           {{ csrf_input() }}
           <input type="hidden" name="decision" value="rejected">
-          <button class="lf-button" type="submit">Reject</button>
+          <button class="lf-button" type="submit">{{ t("Reject") }}</button>
         </form>
       </div>
     </section>
 
     <!-- Tags -->
     <section class="lf-panel">
-      <h3>Tags</h3>
+      <h3>{{ t("Tags") }}</h3>
       <div class="lf-status-row">
-        {% for t in tags %}
-        <span class="lf-badge" style="border-color: {{ t.color|tag_border_color }}">{{ t.name }}</span>
+        {% for tag in tags %}
+        <span class="lf-badge" style="border-color: {{ tag.color|tag_border_color }}">{{ tag.name }}</span>
         {% else %}
-        <p class="lf-muted">No tags yet</p>
+        <p class="lf-muted">{{ t("No tags yet") }}</p>
         {% endfor %}
       </div>
       <form class="lf-form-stack" method="post" action="/leads/{{ lead.id }}/tag" hx-post="/leads/{{ lead.id }}/tag" hx-target="#drawer-message" hx-swap="innerHTML">
         {{ csrf_input() }}
         <div class="lf-field-group">
-          <label class="lf-label" for="drawer-tag-name">Add tag</label>
-          <input class="lf-field" id="drawer-tag-name" name="tag_name" placeholder="e.g. VIP">
+          <label class="lf-label" for="drawer-tag-name">{{ t("Add tag") }}</label>
+          <input class="lf-field" id="drawer-tag-name" name="tag_name" placeholder="{{ t('e.g. VIP') }}">
         </div>
-        {{ button("Add", "primary", "submit") }}
+        {{ button(t("Add"), "primary", "submit") }}
       </form>
     </section>
 
     <!-- Notes -->
     <section class="lf-panel">
-      <h3>Notes</h3>
+      <h3>{{ t("Notes") }}</h3>
       {% if lead.notes %}
       <pre class="lf-notes">{{ lead.notes }}</pre>
       {% else %}
-      <p class="lf-muted">No notes yet.</p>
+      <p class="lf-muted">{{ t("No notes yet.") }}</p>
       {% endif %}
       <form class="lf-form-stack" method="post" action="/leads/{{ lead.id }}/note" hx-post="/leads/{{ lead.id }}/note" hx-target="#drawer-message" hx-swap="innerHTML">
         {{ csrf_input() }}
         <div class="lf-field-group">
-          <label class="lf-label" for="drawer-note">Add note</label>
+          <label class="lf-label" for="drawer-note">{{ t("Add note") }}</label>
           <textarea class="lf-field" id="drawer-note" name="note" rows="3"></textarea>
         </div>
-        {{ button("Save note", "primary", "submit") }}
+        {{ button(t("Save note"), "primary", "submit") }}
       </form>
     </section>
 
     <!-- Activity timeline -->
     <section class="lf-panel">
-      <h3>Activity timeline</h3>
+      <h3>{{ t("Activity timeline") }}</h3>
       <div id="drawer-message"></div>
       {% if timeline %}
       <ol class="lf-timeline">
@@ -112,12 +112,12 @@
         {% endfor %}
       </ol>
       {% else %}
-      {{ empty_state("No activity yet", "Lead actions will appear here.") }}
+      {{ empty_state(t("No activity yet"), t("Lead actions will appear here.")) }}
       {% endif %}
     </section>
   </div>
 
   <footer class="lf-drawer-footer">
-    <a href="/leads/{{ lead.id }}" class="lf-button">Open full page</a>
+    <a href="/leads/{{ lead.id }}" class="lf-button">{{ t("Open full page") }}</a>
   </footer>
 </section>

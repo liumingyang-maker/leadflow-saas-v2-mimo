@@ -2,19 +2,19 @@
 {% from "components/_buttons.html" import button %}
 {% from "components/_forms.html" import field, csrf_input %}
 
-{% call shell("Admin sign in") %}
+{% call shell(t("Admin sign in")) %}
 <section class="lf-auth">
   <div>
-    <span class="lf-eyebrow">Admin</span>
-    <h1 class="lf-page-title">Admin sign in</h1>
-    <p>Use a CLI-created administrator account.</p>
+    <span class="lf-eyebrow">{{ t("Admin") }}</span>
+    <h1 class="lf-page-title">{{ t("Admin sign in") }}</h1>
+    <p>{{ t("Use a CLI-created administrator account.") }}</p>
   </div>
   <form class="lf-panel lf-form-stack" method="post" action="/admin/login">
     {{ csrf_input() }}
     {% if error %}<div class="lf-alert" role="alert">{{ error }}</div>{% endif %}
-    {{ field("email", "Email", "email") }}
-    {{ field("password", "Password", "password") }}
-    {{ button("Sign in", "primary", "submit") }}
+    {{ field("email", t("Email"), "email") }}
+    {{ field("password", t("Password"), "password") }}
+    {{ button(t("Sign in"), "primary", "submit") }}
   </form>
 </section>
 {% endcall %}

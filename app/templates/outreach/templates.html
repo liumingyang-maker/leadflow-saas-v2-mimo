@@ -1,16 +1,16 @@
 {% from "components/_shell.html" import shell %}{% from "components/_buttons.html" import button %}{% from "components/_forms.html" import csrf_input %}{% from "components/_empty_states.html" import empty_state %}
-{% call shell("Templates") %}
-<header class="lf-page-header"><div><span class="lf-eyebrow">Outreach</span><h1 class="lf-page-title">Email Templates</h1></div><a href="/outreach" class="lf-button">Back</a></header>
+{% call shell(t("Templates")) %}
+<header class="lf-page-header"><div><span class="lf-eyebrow">{{ t("Outreach") }}</span><h1 class="lf-page-title">{{ t("Email Templates") }}</h1></div><a href="/outreach" class="lf-button">{{ t("Back") }}</a></header>
 {% if error %}<div class="lf-alert" role="alert">{{ error }}</div>{% endif %}
 <form class="lf-panel lf-form-stack" method="post" action="/outreach/templates">
 {{ csrf_input() }}
-<div class="lf-field-group"><label class="lf-label" for="name">Name</label><input class="lf-field" id="name" name="name"></div>
-<div class="lf-field-group"><label class="lf-label" for="subject">Subject</label><input class="lf-field" id="subject" name="subject"></div>
-<div class="lf-field-group"><label class="lf-label" for="body_text">Body (text)</label><textarea class="lf-field" id="body_text" name="body_text" rows="5"></textarea></div>
-{{ button("Create template", "primary", "submit") }}
+<div class="lf-field-group"><label class="lf-label" for="name">{{ t("Name") }}</label><input class="lf-field" id="name" name="name"></div>
+<div class="lf-field-group"><label class="lf-label" for="subject">{{ t("Subject") }}</label><input class="lf-field" id="subject" name="subject"></div>
+<div class="lf-field-group"><label class="lf-label" for="body_text">{{ t("Body (text)") }}</label><textarea class="lf-field" id="body_text" name="body_text" rows="5"></textarea></div>
+{{ button(t("Create template"), "primary", "submit") }}
 </form>
-<section class="lf-section"><h2>Saved templates</h2>
-{% if templates %}{% for t in templates %}<div class="lf-panel"><strong>{{ t.name }}</strong><p>{{ t.subject }}</p></div>{% endfor %}
-{% else %}{{ empty_state("No templates yet", "Create your first email template.") }}{% endif %}
+<section class="lf-section"><h2>{{ t("Saved templates") }}</h2>
+{% if templates %}{% for template in templates %}<div class="lf-panel"><strong>{{ template.name }}</strong><p>{{ template.subject }}</p></div>{% endfor %}
+{% else %}{{ empty_state(t("No templates yet"), t("Create your first email template.")) }}{% endif %}
 </section>
 {% endcall %}

@@ -3,35 +3,35 @@
 {% from "components/_forms.html" import csrf_input %}
 {% from "components/_empty_states.html" import empty_state %}
 
-{% call shell("Leads") %}
+{% call shell(t("Leads")) %}
 <header class="lf-page-header">
   <div>
     <span class="lf-eyebrow">CRM</span>
-    <h1 class="lf-page-title">Leads ({{ leads|length }})</h1>
+    <h1 class="lf-page-title">{{ t("Leads") }} ({{ leads|length }})</h1>
   </div>
-  <a href="/leads/import" class="lf-button lf-button-primary">Import</a>
+  <a href="/leads/import" class="lf-button lf-button-primary">{{ t("Import") }}</a>
 </header>
 
 <form class="lf-status-row" method="get" action="/leads">
-  <input class="lf-field" name="search" placeholder="Search email or name" value="{{ current_search }}">
+  <input class="lf-field" name="search" placeholder="{{ t('Search email or name') }}" value="{{ current_search }}">
   <select class="lf-field" name="status">
-    <option value="">All statuses</option>
-    <option value="raw" {% if current_status == 'raw' %}selected{% endif %}>Raw</option>
-    <option value="pending_review" {% if current_status == 'pending_review' %}selected{% endif %}>Pending review</option>
-    <option value="accepted" {% if current_status == 'accepted' %}selected{% endif %}>Accepted</option>
-    <option value="rejected" {% if current_status == 'rejected' %}selected{% endif %}>Rejected</option>
+    <option value="">{{ t("All statuses") }}</option>
+    <option value="raw" {% if current_status == 'raw' %}selected{% endif %}>{{ t("Raw") }}</option>
+    <option value="pending_review" {% if current_status == 'pending_review' %}selected{% endif %}>{{ t("Pending review") }}</option>
+    <option value="accepted" {% if current_status == 'accepted' %}selected{% endif %}>{{ t("Accepted") }}</option>
+    <option value="rejected" {% if current_status == 'rejected' %}selected{% endif %}>{{ t("Rejected") }}</option>
   </select>
   <select class="lf-field" name="stage">
-    <option value="">All stages</option>
-    <option value="new" {% if current_stage == 'new' %}selected{% endif %}>New</option>
-    <option value="contacted" {% if current_stage == 'contacted' %}selected{% endif %}>Contacted</option>
-    <option value="qualified" {% if current_stage == 'qualified' %}selected{% endif %}>Qualified</option>
-    <option value="proposal" {% if current_stage == 'proposal' %}selected{% endif %}>Proposal</option>
-    <option value="negotiation" {% if current_stage == 'negotiation' %}selected{% endif %}>Negotiation</option>
-    <option value="won" {% if current_stage == 'won' %}selected{% endif %}>Won</option>
-    <option value="lost" {% if current_stage == 'lost' %}selected{% endif %}>Lost</option>
+    <option value="">{{ t("All stages") }}</option>
+    <option value="new" {% if current_stage == 'new' %}selected{% endif %}>{{ t("New") }}</option>
+    <option value="contacted" {% if current_stage == 'contacted' %}selected{% endif %}>{{ t("Contacted") }}</option>
+    <option value="qualified" {% if current_stage == 'qualified' %}selected{% endif %}>{{ t("Qualified") }}</option>
+    <option value="proposal" {% if current_stage == 'proposal' %}selected{% endif %}>{{ t("Proposal") }}</option>
+    <option value="negotiation" {% if current_stage == 'negotiation' %}selected{% endif %}>{{ t("Negotiation") }}</option>
+    <option value="won" {% if current_stage == 'won' %}selected{% endif %}>{{ t("Won") }}</option>
+    <option value="lost" {% if current_stage == 'lost' %}selected{% endif %}>{{ t("Lost") }}</option>
   </select>
-  <button class="lf-button" type="submit">Filter</button>
+  <button class="lf-button" type="submit">{{ t("Filter") }}</button>
 </form>
 
 {% if leads %}
@@ -39,11 +39,11 @@
   <table class="lf-table">
     <thead>
       <tr>
-        <th>Email</th>
-        <th>Name</th>
-        <th>Status</th>
-        <th>Stage</th>
-        <th>Source</th>
+        <th>{{ t("Email") }}</th>
+        <th>{{ t("Name") }}</th>
+        <th>{{ t("Status") }}</th>
+        <th>{{ t("Stage") }}</th>
+        <th>{{ t("Source") }}</th>
       </tr>
     </thead>
     <tbody>
@@ -66,17 +66,17 @@
   </table>
 </div>
 {% else %}
-  {{ empty_state("No leads yet", "Import leads to start building your pipeline.", "Import leads") }}
+  {{ empty_state(t("No leads yet"), t("Import leads to start building your pipeline."), t("Import leads")) }}
 {% endif %}
 
 <!-- Drawer container: initially hidden -->
 <div id="lead-drawer" class="lf-drawer-container lf-drawer-closed" aria-hidden="true">
   <div class="lf-drawer-backdrop"></div>
-  <aside class="lf-drawer" role="dialog" aria-modal="true" aria-label="Lead detail"
+  <aside class="lf-drawer" role="dialog" aria-modal="true" aria-label="{{ t('Lead detail') }}"
          style="transform: translateX(100%);">
-    <button class="lf-drawer-close" aria-label="Close drawer">&times;</button>
+    <button class="lf-drawer-close" aria-label="{{ t('Close drawer') }}">&times;</button>
     <div id="lead-drawer-content" class="lf-drawer-content" tabindex="-1">
-      <div class="lf-loading">Loading lead details...</div>
+      <div class="lf-loading">{{ t("Loading lead details...") }}</div>
     </div>
   </aside>
 </div>

@@ -7,6 +7,7 @@ from flask import Flask
 from sqlalchemy import select
 from werkzeug.security import check_password_hash, generate_password_hash
 
+from app.i18n import get_locale, localized_email_text
 from app.modules.accounts.models import EmailToken, Tenant, TenantMembership, User
 from app.modules.accounts.repository import session_scope
 from app.modules.outreach.mailer import get_mailer
@@ -159,14 +160,14 @@ def _validate_registration(email: str, password: str) -> None:
 
 def _send_verification_email(app: Flask, *, email: str, token: str) -> None:
     link = _account_url(app, f"/verify-email/{token}")
+    locale = get_locale()
     result = get_mailer().send(
         to_email=email,
-        subject="Verify your LeadFlow email",
-        body_text=(
-            "Welcome to LeadFlow.\n\n"
-            "Verify your email address with this link:\n"
-            f"{link}\n\n"
-            "This link expires in 30 minutes."
+        subject=localized_email_text("Verify your LeadFlow email", locale),
+        body_text=localized_email_text(
+            "verification_email_body",
+            locale,
+            link=link,
         ),
         body_html="",
     )
@@ -176,13 +177,14 @@ def _send_verification_email(app: Flask, *, email: str, token: str) -> None:
 
 def _send_password_reset_email(app: Flask, *, email: str, token: str) -> None:
     link = _account_url(app, f"/reset-password/{token}")
+    locale = get_locale()
     result = get_mailer().send(
         to_email=email,
-        subject="Reset your LeadFlow password",
-        body_text=(
-            "Reset your LeadFlow password with this link:\n"
-            f"{link}\n\n"
-            "This link expires in 30 minutes. If you did not request this, ignore this email."
+        subject=localized_email_text("Reset your LeadFlow password", locale),
+        body_text=localized_email_text(
+            "password_reset_email_body",
+            locale,
+            link=link,
         ),
         body_html="",
     )

@@ -2,48 +2,48 @@
 {% from "components/_buttons.html" import button %}
 {% from "components/_forms.html" import field, csrf_input %}
 
-{% call shell("Import leads") %}
+{% call shell(t("Import leads")) %}
 <header class="lf-page-header">
   <div>
-    <span class="lf-eyebrow">Import</span>
-    <h1 class="lf-page-title">Import leads</h1>
-    <p>Upload a CSV or XLSX file. Max 5 MB and 5,000 rows.</p>
+    <span class="lf-eyebrow">{{ t("Import") }}</span>
+    <h1 class="lf-page-title">{{ t("Import leads") }}</h1>
+    <p>{{ t("Upload a CSV or XLSX file. Max 5 MB and 5,000 rows.") }}</p>
   </div>
 </header>
 
 {% if success %}
 <div class="lf-alert lf-alert-success" role="status">{{ success }}</div>
-<p class="lf-muted"><a href="/leads">Back to lead list</a></p>
+<p class="lf-muted"><a href="/leads">{{ t("Back to lead list") }}</a></p>
 {% elif batch %}
 <div class="lf-panel">
-  <h2>Preview: {{ batch.filename }}</h2>
+  <h2>{{ t("Preview") }}: {{ batch.filename }}</h2>
   <div class="lf-status-row">
-    <span><strong>{{ batch.valid_rows }}</strong> valid</span>
-    <span><strong>{{ batch.duplicate_rows }}</strong> duplicates</span>
-    <span><strong>{{ batch.invalid_rows }}</strong> invalid</span>
+    <span><strong>{{ batch.valid_rows }}</strong> {{ t("valid") }}</span>
+    <span><strong>{{ batch.duplicate_rows }}</strong> {{ t("duplicates") }}</span>
+    <span><strong>{{ batch.invalid_rows }}</strong> {{ t("invalid") }}</span>
   </div>
   {% if batch.unmapped_columns %}
-  <p class="lf-muted">Unrecognised columns: {{ batch.unmapped_columns }}</p>
+  <p class="lf-muted">{{ t("Unrecognised columns") }}: {{ batch.unmapped_columns }}</p>
   {% endif %}
   <form method="post" action="/leads/import">
     {{ csrf_input() }}
     <input type="hidden" name="action" value="confirm">
     <input type="hidden" name="batch_id" value="{{ batch.id }}">
-    {{ button("Confirm import", "primary", "submit") }}
+    {{ button(t("Confirm import"), "primary", "submit") }}
   </form>
-  <p><a href="/leads/import">Cancel</a></p>
+  <p><a href="/leads/import">{{ t("Cancel") }}</a></p>
 </div>
 {% else %}
 <form class="lf-panel lf-form-stack" method="post" action="/leads/import" enctype="multipart/form-data">
   {{ csrf_input() }}
   {% if error %}<div class="lf-alert" role="alert">{{ error }}</div>{% endif %}
   <div class="lf-field-group">
-    <label class="lf-label" for="file">CSV or XLSX file</label>
+    <label class="lf-label" for="file">{{ t("CSV or XLSX file") }}</label>
     <input class="lf-field" id="file" name="file" type="file" accept=".csv,.xlsx">
   </div>
   <input type="hidden" name="action" value="preview">
-  {{ button("Preview import", "primary", "submit") }}
-  <p class="lf-muted"><a href="/leads">Back to lead list</a></p>
+  {{ button(t("Preview import"), "primary", "submit") }}
+  <p class="lf-muted"><a href="/leads">{{ t("Back to lead list") }}</a></p>
 </form>
 {% endif %}
 {% endcall %}

@@ -3,14 +3,14 @@
 {% from "components/_badges.html" import badge %}
 {% from "components/_empty_states.html" import empty_state %}
 
-{% call shell("Job: " ~ job.job_type) %}
+{% call shell(t("Job") ~ ": " ~ job.job_type) %}
 <header class="lf-page-header">
   <div>
-    <span class="lf-eyebrow">Collection job</span>
+    <span class="lf-eyebrow">{{ t("Collection job") }}</span>
     <h1 class="lf-page-title">{{ job.job_type }}</h1>
-    <p>{{ job.progress_message or "Job created" }}</p>
+    <p>{{ job.progress_message or t("Job created") }}</p>
   </div>
-  <a href="/collection" class="lf-button">Back</a>
+  <a href="/collection" class="lf-button">{{ t("Back") }}</a>
 </header>
 
 <div id="job-status-container"
@@ -23,7 +23,7 @@
 
 {% if job.status == "succeeded" %}
 <div class="lf-section">
-  <a href="/leads" class="lf-button lf-button-primary">View leads</a>
+  <a href="/leads" class="lf-button lf-button-primary">{{ t("View leads") }}</a>
 </div>
 {% endif %}
 

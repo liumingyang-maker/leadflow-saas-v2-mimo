@@ -2,25 +2,25 @@
 {% from "components/_buttons.html" import button %}
 {% from "components/_forms.html" import field, csrf_input %}
 
-{% call shell("Sign in to LeadFlow") %}
+{% call shell(t("Sign in to LeadFlow")) %}
 <section class="lf-auth">
   <div>
     <span class="lf-eyebrow">LeadFlow V2</span>
-    <h1 class="lf-page-title">Sign in to LeadFlow</h1>
-    <p>Access your tenant workspace after email verification.</p>
+    <h1 class="lf-page-title">{{ t("Sign in to LeadFlow") }}</h1>
+    <p>{{ t("Access your tenant workspace after email verification.") }}</p>
   </div>
   <form class="lf-panel lf-form-stack" method="post" action="/login">
     {{ csrf_input() }}
     {% if request.args.get("registered") %}
-      <div class="lf-alert lf-alert-success" role="status">Account created. Check your email for the verification link.</div>
+      <div class="lf-alert lf-alert-success" role="status">{{ t("Account created. Check your email for the verification link.") }}</div>
     {% endif %}
     {% if error %}<div class="lf-alert lf-alert-error" role="alert">{{ error }}</div>{% endif %}
-    {{ field("email", "Email", "email") }}
-    {{ field("password", "Password", "password") }}
-    {{ button("Continue", "primary", "submit") }}
+    {{ field("email", t("Email"), "email") }}
+    {{ field("password", t("Password"), "password") }}
+    {{ button(t("Continue"), "primary", "submit") }}
     <p class="lf-muted">
-      New workspace? <a href="/register">Create a tenant</a>.
-      <a href="/forgot-password">Forgot password?</a>
+      {{ t("New workspace?") }} <a href="/register">{{ t("Create a tenant") }}</a>.
+      <a href="/forgot-password">{{ t("Forgot password?") }}</a>
     </p>
   </form>
 </section>

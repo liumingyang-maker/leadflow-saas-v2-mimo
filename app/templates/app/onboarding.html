@@ -2,26 +2,26 @@
 {% from "components/_buttons.html" import button %}
 {% from "components/_forms.html" import field, csrf_input %}
 
-{% call shell("Set up your workspace") %}
+{% call shell(t("Set up your workspace")) %}
 <section class="lf-auth">
   <div>
-    <span class="lf-eyebrow">Onboarding</span>
-    <h1 class="lf-page-title">Set up your workspace</h1>
-    <p>Choose an industry so LeadFlow can tailor its collection and enrichment signals.</p>
+    <span class="lf-eyebrow">{{ t("Onboarding") }}</span>
+    <h1 class="lf-page-title">{{ t("Set up your workspace") }}</h1>
+    <p>{{ t("Choose an industry so LeadFlow can tailor its collection and enrichment signals.") }}</p>
     <ul class="lf-checklist">
-      <li class="lf-checked">Email verified</li>
-      <li class="lf-current">Workspace setup</li>
-      <li>Start finding leads</li>
+      <li class="lf-checked">{{ t("Email verified") }}</li>
+      <li class="lf-current">{{ t("Workspace setup") }}</li>
+      <li>{{ t("Start finding leads") }}</li>
     </ul>
   </div>
   <form class="lf-panel lf-form-stack" method="post" action="/onboarding">
     {{ csrf_input() }}
     {% if error %}<div class="lf-alert" role="alert">{{ error }}</div>{% endif %}
-    {{ field("industry", "Industry", "text", "", "e.g. Real Estate, SaaS, Healthcare, E‑commerce") }}
+    {{ field("industry", t("Industry"), "text", "", t("e.g. Real Estate, SaaS, Healthcare, E-commerce")) }}
     <div class="lf-status-row">
-      {{ button("Complete setup", "primary", "submit") }}
+      {{ button(t("Complete setup"), "primary", "submit") }}
     </div>
-    <p class="lf-muted">You can change these later from Settings.</p>
+    <p class="lf-muted">{{ t("You can change these later from Settings.") }}</p>
   </form>
 </section>
 {% endcall %}

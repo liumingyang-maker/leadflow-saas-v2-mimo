@@ -42,7 +42,9 @@ def _client(monkeypatch):
     engine = get_engine(flask_app)
     Base.metadata.create_all(engine)
 
-    return flask_app.test_client(), engine
+    client = flask_app.test_client()
+    client.get("/locale/en-US?next=/login")
+    return client, engine
 
 
 def test_register_sends_verification_email(monkeypatch) -> None:

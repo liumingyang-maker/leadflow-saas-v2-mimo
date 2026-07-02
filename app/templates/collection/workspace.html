@@ -2,43 +2,43 @@
 {% from "components/_buttons.html" import button %}
 {% from "components/_empty_states.html" import empty_state %}
 
-{% call shell("Collection workspace") %}
+{% call shell(t("Collection workspace")) %}
 <header class="lf-page-header">
   <div>
-    <span class="lf-eyebrow">Collection</span>
-    <h1 class="lf-page-title">Collection workspace</h1>
-    <p>Find new leads from search, maps, or file uploads.</p>
+    <span class="lf-eyebrow">{{ t("Collection") }}</span>
+    <h1 class="lf-page-title">{{ t("Collection workspace") }}</h1>
+    <p>{{ t("Find new leads from search, maps, or file uploads.") }}</p>
   </div>
 </header>
 
-<nav class="lf-top-nav" aria-label="Collection sources">
-  <a href="/workbench">Workbench</a>
-  <a href="/collection" aria-current="page">Collection</a>
+<nav class="lf-top-nav" aria-label="{{ t('Collection sources') }}">
+  <a href="/workbench">{{ t("Workbench") }}</a>
+  <a href="/collection" aria-current="page">{{ t("Collection") }}</a>
   <a href="/leads">CRM</a>
 </nav>
 
 <div class="lf-grid lf-section">
   <a href="/collection/search" class="lf-panel" style="text-decoration:none;color:inherit;">
     <h2>Google Search</h2>
-    <p>Find leads by keyword across the web.</p>
+    <p>{{ t("Find leads by keyword across the web.") }}</p>
   </a>
   <a href="/collection/maps" class="lf-panel" style="text-decoration:none;color:inherit;">
     <h2>Google Maps</h2>
-    <p>Discover businesses by type and location.</p>
+    <p>{{ t("Discover businesses by type and location.") }}</p>
   </a>
   <a href="/leads/import" class="lf-panel" style="text-decoration:none;color:inherit;">
-    <h2>CSV / XLSX Import</h2>
-    <p>Upload a file of leads for review.</p>
+    <h2>{{ t("CSV / XLSX Import") }}</h2>
+    <p>{{ t("Upload a file of leads for review.") }}</p>
   </a>
 </div>
 
 <section class="lf-section">
-  <h2>Recent jobs</h2>
+  <h2>{{ t("Recent jobs") }}</h2>
   {% if jobs %}
   <div class="lf-table-wrap">
     <table class="lf-table">
       <thead>
-        <tr><th>Type</th><th>Status</th><th>Progress</th><th>Created</th></tr>
+        <tr><th>{{ t("Type") }}</th><th>{{ t("Status") }}</th><th>{{ t("Progress") }}</th><th>{{ t("Created") }}</th></tr>
       </thead>
       <tbody>
         {% for j in jobs %}
@@ -53,7 +53,7 @@
     </table>
   </div>
   {% else %}
-  {{ empty_state("No jobs yet", "Start a collection from one of the sources above.", "Start collecting") }}
+  {{ empty_state(t("No jobs yet"), t("Start a collection from one of the sources above."), t("Start collecting")) }}
   {% endif %}
 </section>
 {% endcall %}

@@ -1,16 +1,16 @@
 {% from "components/_shell.html" import shell %}{% from "components/_buttons.html" import button %}{% from "components/_forms.html" import csrf_input %}{% from "components/_empty_states.html" import empty_state %}
-{% call shell("Inbound settings") %}
-<header class="lf-page-header"><div><span class="lf-eyebrow">Inbound</span><h1 class="lf-page-title">Inbound API</h1></div></header>
+{% call shell(t("Inbound settings")) %}
+<header class="lf-page-header"><div><span class="lf-eyebrow">{{ t("Inbound") }}</span><h1 class="lf-page-title">{{ t("Inbound API") }}</h1></div></header>
 {% if error %}<div class="lf-alert" role="alert">{{ error }}</div>{% endif %}
 <section class="lf-panel lf-form-stack">
-  <h2>API Token</h2>
-  {% if token_info %}<p>Status: <span class="lf-badge lf-badge-success">Active</span></p>{% endif %}
-  {% if new_token %}<div class="lf-alert lf-alert-success" role="status">New token: <code>{{ new_token }}</code><br><strong>Save this — it won't be shown again.</strong></div>{% endif %}
-  <form method="post" action="/inbound/regenerate">{{ csrf_input() }}{{ button("Generate / Regenerate token", "primary", "submit") }}</form>
+  <h2>{{ t("API Token") }}</h2>
+  {% if token_info %}<p>{{ t("Status") }}: <span class="lf-badge lf-badge-success">{{ t("Active") }}</span></p>{% endif %}
+  {% if new_token %}<div class="lf-alert lf-alert-success" role="status">{{ t("New token") }}: <code>{{ new_token }}</code><br><strong>{{ t("Save this - it won't be shown again.") }}</strong></div>{% endif %}
+  <form method="post" action="/inbound/regenerate">{{ csrf_input() }}{{ button(t("Generate / Regenerate token"), "primary", "submit") }}</form>
 </section>
 <section class="lf-panel lf-form-stack">
-  <h2>Allowed Origins</h2>
-  {% if origins %}<ul>{% for o in origins %}<li>{{ o.origin }} <form method="post" action="/inbound/origins/{{ o.id }}/delete" style="display:inline">{{ csrf_input() }}<button class="lf-button" type="submit">Remove</button></form></li>{% endfor %}</ul>{% else %}{{ empty_state("No origins configured", "Add allowed origins for browser cross-origin requests.") }}{% endif %}
-  <form method="post" action="/inbound/origins">{{ csrf_input() }}<div class="lf-field-group"><label class="lf-label" for="origin">Origin</label><input class="lf-field" id="origin" name="origin" placeholder="https://example.com"></div>{{ button("Add origin", "primary", "submit") }}</form>
+  <h2>{{ t("Allowed Origins") }}</h2>
+  {% if origins %}<ul>{% for o in origins %}<li>{{ o.origin }} <form method="post" action="/inbound/origins/{{ o.id }}/delete" style="display:inline">{{ csrf_input() }}<button class="lf-button" type="submit">{{ t("Remove") }}</button></form></li>{% endfor %}</ul>{% else %}{{ empty_state(t("No origins configured"), t("Add allowed origins for browser cross-origin requests.")) }}{% endif %}
+  <form method="post" action="/inbound/origins">{{ csrf_input() }}<div class="lf-field-group"><label class="lf-label" for="origin">{{ t("Origin") }}</label><input class="lf-field" id="origin" name="origin" placeholder="https://example.com"></div>{{ button(t("Add origin"), "primary", "submit") }}</form>
 </section>
 {% endcall %}

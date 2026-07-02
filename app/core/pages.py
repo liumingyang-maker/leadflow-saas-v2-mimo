@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from flask import Flask, redirect, render_template, request, session
 
+from app.i18n import translate as t
 from app.modules.accounts.guards import tenant_required
 from app.modules.accounts.service import AccountError, complete_onboarding
 
@@ -28,7 +29,7 @@ def register_page_routes(app: Flask) -> None:
                     industry=request.form.get("industry", ""),
                 )
             except AccountError as error:
-                return render_template("app/onboarding.html", error=error.message), 400
+                return render_template("app/onboarding.html", error=t(error.message)), 400
             return redirect("/workbench")
         return render_template("app/onboarding.html", error="")
 

@@ -1,10 +1,10 @@
 {% from "components/_shell.html" import shell %}
-{% call shell("Unsubscribed") %}
+{% call shell(t("Unsubscribed")) %}
 <main class="lf-main" id="main">
   <div class="lf-empty-state">
-    <h1>Unsubscribed</h1>
-    <p>You have been unsubscribed. You will not receive further emails.</p>
-    <a href="/" class="lf-button">Go to homepage</a>
+    <h1>{{ t("Unsubscribed") }}</h1>
+    <p>{{ t("You have been unsubscribed. You will not receive further emails.") }}</p>
+    <a href="/" class="lf-button">{{ t("Go to homepage") }}</a>
   </div>
 </main>
 {% endcall %}

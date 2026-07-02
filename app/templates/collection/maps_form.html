@@ -2,22 +2,22 @@
 {% from "components/_buttons.html" import button %}
 {% from "components/_forms.html" import field, csrf_input %}
 
-{% call shell("Google Maps collection") %}
+{% call shell(t("Google Maps collection")) %}
 <header class="lf-page-header">
   <div>
-    <span class="lf-eyebrow">Collection</span>
+    <span class="lf-eyebrow">{{ t("Collection") }}</span>
     <h1 class="lf-page-title">Google Maps</h1>
-    <p>Discover businesses by type and location.</p>
+    <p>{{ t("Discover businesses by type and location.") }}</p>
   </div>
 </header>
 
 <form class="lf-panel lf-form-stack" method="post" action="/collection/maps">
   {{ csrf_input() }}
   {% if error %}<div class="lf-alert" role="alert">{{ error }}</div>{% endif %}
-  {{ field("query", "Business type", "text", "", "e.g. coffee shops, dentists") }}
-  {{ field("location", "Location", "text", "", "e.g. San Francisco, CA") }}
-  {{ field("max_results", "Max results", "number", "20", "Up to 100") }}
-  {{ button("Start collection", "primary", "submit") }}
-  <p class="lf-muted"><a href="/collection">Back to workspace</a></p>
+  {{ field("query", t("Business type"), "text", "", t("e.g. coffee shops, dentists")) }}
+  {{ field("location", t("Location"), "text", "", t("e.g. San Francisco, CA")) }}
+  {{ field("max_results", t("Max results"), "number", "20", t("Up to 100")) }}
+  {{ button(t("Start collection"), "primary", "submit") }}
+  <p class="lf-muted"><a href="/collection">{{ t("Back to workspace") }}</a></p>
 </form>
 {% endcall %}

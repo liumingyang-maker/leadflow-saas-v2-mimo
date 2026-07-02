@@ -35,6 +35,7 @@ def _safe_text(response) -> str:
 def test_core_saas_user_journey_via_flask_client(monkeypatch) -> None:
     flask_app, engine = _app(monkeypatch)
     client = flask_app.test_client()
+    client.get("/locale/en-US?next=/login")
 
     from app.modules.accounts.models import EmailToken, Tenant
     from app.modules.leads.models import Activity, Lead

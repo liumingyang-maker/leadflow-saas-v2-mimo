@@ -1,8 +1,8 @@
 <div class="lf-panel"{% if job.status in ('succeeded', 'failed', 'cancelled') %} data-terminal{% endif %}>
   <div class="lf-status-row">
-    <span><strong>Status:</strong> <span class="lf-badge {% if job.status == 'succeeded' %}lf-badge-success{% endif %}">{{ job.status }}</span></span>
-    <span><strong>Progress:</strong> {{ job.progress }}%</span>
-    <span><strong>Attempt:</strong> {{ job.attempt }}/{{ job.max_attempts }}</span>
+    <span><strong>{{ t("Status") }}:</strong> <span class="lf-badge {% if job.status == 'succeeded' %}lf-badge-success{% endif %}">{{ job.status }}</span></span>
+    <span><strong>{{ t("Progress") }}:</strong> {{ job.progress }}%</span>
+    <span><strong>{{ t("Attempt") }}:</strong> {{ job.attempt }}/{{ job.max_attempts }}</span>
   </div>
 
   {% if job.status == "running" %}
@@ -16,16 +16,16 @@
   {% if job.result_summary_json and job.result_summary_json != "{}" %}
   <div class="lf-status-row">
     {% set rs = job.result_summary_json | from_json %}
-    <span>Found: <strong>{{ rs.get("found", 0) }}</strong></span>
-    <span>Created: <strong>{{ rs.get("created", 0) }}</strong></span>
+    <span>{{ t("Found") }}: <strong>{{ rs.get("found", 0) }}</strong></span>
+    <span>{{ t("Created") }}: <strong>{{ rs.get("created", 0) }}</strong></span>
   </div>
   {% endif %}
 
   {% if job.status == "queued" %}
-  <div class="lf-loading">Job queued and waiting for worker...</div>
+  <div class="lf-loading">{{ t("Job queued and waiting for worker...") }}</div>
   {% endif %}
 
   {% if job.status == "retrying" %}
-  <div class="lf-alert" role="status">Retrying (attempt {{ job.attempt }}/{{ job.max_attempts }})</div>
+  <div class="lf-alert" role="status">{{ t("Retrying") }} ({{ t("attempt") }} {{ job.attempt }}/{{ job.max_attempts }})</div>
   {% endif %}
 </div>

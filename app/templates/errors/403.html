@@ -1,4 +1,4 @@
 {% from "components/_shell.html" import shell %}{% from "components/_buttons.html" import button %}
-{% call shell("Forbidden") %}
-<section class="lf-panel"><span class="lf-eyebrow">403</span><h1 class="lf-page-title">Access denied</h1><p>You do not have permission to view this page.</p><a href="/" class="lf-button lf-button-primary">Go home</a></section>
+{% call shell(t("Forbidden")) %}
+<section class="lf-panel"><span class="lf-eyebrow">403</span><h1 class="lf-page-title">{{ t("Access denied") }}</h1><p>{{ t("You do not have permission to view this page.") }}</p><a href="/" class="lf-button lf-button-primary">{{ t("Go home") }}</a></section>
 {% endcall %}

@@ -6,6 +6,7 @@ from typing import Any
 from flask import Flask, redirect, render_template, request, session
 
 from app.core.abuse import rate_limit_clear, rate_limit_exceeded, rate_limit_hit
+from app.i18n import translate as t
 from app.modules.accounts.admin_service import (
     AdminAccountError,
     authenticate_admin,
@@ -24,7 +25,9 @@ def register_admin_routes(app: Flask) -> None:
         email = request.form.get("email", "")
         identifiers = [request.remote_addr or "unknown", email]
         if _admin_login_blocked(app, identifiers):
-            return render_template("admin/login.html", error="Too many attempts. Try later."), 429
+            return render_template(
+                "admin/login.html", error=t("Too many attempts. Try later.")
+            ), 429
         try:
             identity = authenticate_admin(
                 app,
@@ -33,7 +36,7 @@ def register_admin_routes(app: Flask) -> None:
             )
         except AdminAccountError as error:
             _record_admin_login_failure(app, identifiers)
-            return render_template("admin/login.html", error=error.message), 200
+            return render_template("admin/login.html", error=t(error.message)), 200
         rate_limit_clear(app, namespace="auth:admin-login", identifiers=identifiers)
         session.clear()
         session.permanent = True
@@ -60,7 +63,7 @@ def register_admin_routes(app: Flask) -> None:
                 password=request.form.get("password", ""),
             )
         except AdminAccountError as error:
-            return render_template("admin/change_password.html", error=error.message), 400
+            return render_template("admin/change_password.html", error=t(error.message)), 400
         session["admin_must_change_password"] = False
         return redirect("/admin")
 

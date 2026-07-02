@@ -2,21 +2,21 @@
 {% from "components/_buttons.html" import button %}
 {% from "components/_forms.html" import field, csrf_input %}
 
-{% call shell("Create a LeadFlow tenant") %}
+{% call shell(t("Create a LeadFlow tenant")) %}
 <section class="lf-auth">
   <div>
     <span class="lf-eyebrow">LeadFlow V2</span>
-    <h1 class="lf-page-title">Create a LeadFlow tenant</h1>
-    <p>Start with a verified owner account and a trial workspace.</p>
+    <h1 class="lf-page-title">{{ t("Create a LeadFlow tenant") }}</h1>
+    <p>{{ t("Start with a verified owner account and a trial workspace.") }}</p>
   </div>
   <form class="lf-panel lf-form-stack" method="post" action="/register">
     {{ csrf_input() }}
     {% if error %}<div class="lf-alert" role="alert">{{ error }}</div>{% endif %}
-    {{ field("company_name", "Company name") }}
-    {{ field("email", "Owner email", "email") }}
-    {{ field("password", "Password", "password", "", "Use at least 8 characters.") }}
-    {{ button("Create tenant", "primary", "submit") }}
-    <p class="lf-muted">Already verified? <a href="/login">Sign in</a>.</p>
+    {{ field("company_name", t("Company name")) }}
+    {{ field("email", t("Owner email"), "email") }}
+    {{ field("password", t("Password"), "password", "", t("Use at least 8 characters.")) }}
+    {{ button(t("Create tenant"), "primary", "submit") }}
+    <p class="lf-muted">{{ t("Already verified?") }} <a href="/login">{{ t("Sign in") }}</a>.</p>
   </form>
 </section>
 {% endcall %}

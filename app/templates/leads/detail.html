@@ -5,108 +5,108 @@
 {% from "components/_empty_states.html" import empty_state %}
 {% from "components/_alerts.html" import inline_notice %}
 
-{% call shell("Lead: " ~ lead.email) %}
+{% call shell(t("Lead") ~ ": " ~ lead.email) %}
 <header class="lf-page-header">
   <div>
     <span class="lf-eyebrow">CRM</span>
     <h1 class="lf-page-title">{{ lead.email }}</h1>
     <p>{{ lead.first_name }} {{ lead.last_name }}{% if lead.title %} &mdash; {{ lead.title }}{% endif %}</p>
   </div>
-  <a href="/leads" class="lf-button">Back to leads</a>
+  <a href="/leads" class="lf-button">{{ t("Back to leads") }}</a>
 </header>
 
 <div class="lf-grid lf-section">
   <!-- Contact info -->
   <section class="lf-panel">
-    <h2>Contact</h2>
+    <h2>{{ t("Contact") }}</h2>
     <dl class="lf-dl">
-      <dt>Email</dt><dd>{{ lead.email }}</dd>
-      <dt>Phone</dt><dd>{{ lead.phone or "N/A" }}</dd>
-      <dt>Website</dt><dd>{% set website_url = lead.website|external_url_href %}{% if website_url %}<a href="{{ website_url }}" rel="noopener noreferrer">{{ lead.website }}</a>{% elif lead.website %}{{ lead.website }}{% else %}N/A{% endif %}</dd>
+      <dt>{{ t("Email") }}</dt><dd>{{ lead.email }}</dd>
+      <dt>{{ t("Phone") }}</dt><dd>{{ lead.phone or "N/A" }}</dd>
+      <dt>{{ t("Website") }}</dt><dd>{% set website_url = lead.website|external_url_href %}{% if website_url %}<a href="{{ website_url }}" rel="noopener noreferrer">{{ lead.website }}</a>{% elif lead.website %}{{ lead.website }}{% else %}N/A{% endif %}</dd>
       <dt>LinkedIn</dt><dd>{% set linkedin_url = lead.linkedin_url|external_url_href %}{% if linkedin_url %}<a href="{{ linkedin_url }}" rel="noopener noreferrer">{{ lead.linkedin_url }}</a>{% elif lead.linkedin_url %}{{ lead.linkedin_url }}{% else %}N/A{% endif %}</dd>
     </dl>
   </section>
 
   <!-- Status & stage -->
   <section class="lf-panel">
-    <h2>Pipeline</h2>
+    <h2>{{ t("Pipeline") }}</h2>
     <dl class="lf-dl">
-      <dt>Status</dt><dd><span class="lf-badge">{{ lead.status }}</span></dd>
-      <dt>Stage</dt>
+      <dt>{{ t("Status") }}</dt><dd><span class="lf-badge">{{ lead.status }}</span></dd>
+      <dt>{{ t("Stage") }}</dt>
       <dd>
         <form method="post" action="/leads/{{ lead.id }}/stage">
           {{ csrf_input() }}
           <select class="lf-field" name="stage">
-              <option value="new" {% if lead.stage == 'new' %}selected{% endif %}>New</option>
-              <option value="contacted" {% if lead.stage == 'contacted' %}selected{% endif %}>Contacted</option>
-              <option value="qualified" {% if lead.stage == 'qualified' %}selected{% endif %}>Qualified</option>
-              <option value="proposal" {% if lead.stage == 'proposal' %}selected{% endif %}>Proposal</option>
-              <option value="negotiation" {% if lead.stage == 'negotiation' %}selected{% endif %}>Negotiation</option>
-              <option value="won" {% if lead.stage == 'won' %}selected{% endif %}>Won</option>
-              <option value="lost" {% if lead.stage == 'lost' %}selected{% endif %}>Lost</option>
+              <option value="new" {% if lead.stage == 'new' %}selected{% endif %}>{{ t("New") }}</option>
+              <option value="contacted" {% if lead.stage == 'contacted' %}selected{% endif %}>{{ t("Contacted") }}</option>
+              <option value="qualified" {% if lead.stage == 'qualified' %}selected{% endif %}>{{ t("Qualified") }}</option>
+              <option value="proposal" {% if lead.stage == 'proposal' %}selected{% endif %}>{{ t("Proposal") }}</option>
+              <option value="negotiation" {% if lead.stage == 'negotiation' %}selected{% endif %}>{{ t("Negotiation") }}</option>
+              <option value="won" {% if lead.stage == 'won' %}selected{% endif %}>{{ t("Won") }}</option>
+              <option value="lost" {% if lead.stage == 'lost' %}selected{% endif %}>{{ t("Lost") }}</option>
             </select>
-            <button class="lf-button" type="submit">Update stage</button>
+            <button class="lf-button" type="submit">{{ t("Update stage") }}</button>
           </form>
         </dd>
-      <dt>Source</dt><dd>{{ lead.source }}</dd>
+      <dt>{{ t("Source") }}</dt><dd>{{ lead.source }}</dd>
     </dl>
 
     <div class="lf-status-row">
       <form method="post" action="/leads/{{ lead.id }}/review">
         {{ csrf_input() }}
         <input type="hidden" name="decision" value="accepted">
-        <button class="lf-button lf-button-primary" type="submit">Accept</button>
+        <button class="lf-button lf-button-primary" type="submit">{{ t("Accept") }}</button>
       </form>
       <form method="post" action="/leads/{{ lead.id }}/review">
         {{ csrf_input() }}
         <input type="hidden" name="decision" value="rejected">
-        <button class="lf-button" type="submit">Reject</button>
+        <button class="lf-button" type="submit">{{ t("Reject") }}</button>
       </form>
     </div>
   </section>
 
   <!-- Tags -->
   <section class="lf-panel">
-    <h2>Tags</h2>
+    <h2>{{ t("Tags") }}</h2>
     <div class="lf-status-row">
-      {% for t in tags %}
-      <span class="lf-badge" style="border-color: {{ t.color|tag_border_color }}">{{ t.name }}</span>
+      {% for tag in tags %}
+      <span class="lf-badge" style="border-color: {{ tag.color|tag_border_color }}">{{ tag.name }}</span>
       {% else %}
-      <p class="lf-muted">No tags yet</p>
+      <p class="lf-muted">{{ t("No tags yet") }}</p>
       {% endfor %}
     </div>
     <form class="lf-form-stack" method="post" action="/leads/{{ lead.id }}/tag">
       {{ csrf_input() }}
       <div class="lf-field-group">
-        <label class="lf-label" for="tag_name">Add tag</label>
-        <input class="lf-field" id="tag_name" name="tag_name" placeholder="e.g. VIP">
+        <label class="lf-label" for="tag_name">{{ t("Add tag") }}</label>
+        <input class="lf-field" id="tag_name" name="tag_name" placeholder="{{ t('e.g. VIP') }}">
       </div>
-      {{ button("Add", "primary", "submit") }}
+      {{ button(t("Add"), "primary", "submit") }}
     </form>
   </section>
 </div>
 
 <!-- Notes -->
 <section class="lf-panel lf-section">
-  <h2>Notes</h2>
+  <h2>{{ t("Notes") }}</h2>
   {% if lead.notes %}
   <pre class="lf-notes">{{ lead.notes }}</pre>
   {% else %}
-  <p class="lf-muted">No notes yet.</p>
+  <p class="lf-muted">{{ t("No notes yet.") }}</p>
   {% endif %}
   <form class="lf-form-stack" method="post" action="/leads/{{ lead.id }}/note">
     {{ csrf_input() }}
     <div class="lf-field-group">
-      <label class="lf-label" for="note">Add note</label>
+      <label class="lf-label" for="note">{{ t("Add note") }}</label>
       <textarea class="lf-field" id="note" name="note" rows="3"></textarea>
     </div>
-    {{ button("Save note", "primary", "submit") }}
+    {{ button(t("Save note"), "primary", "submit") }}
   </form>
 </section>
 
 <!-- Activity timeline -->
 <section class="lf-panel lf-section">
-  <h2>Activity timeline</h2>
+  <h2>{{ t("Activity timeline") }}</h2>
   {% if timeline %}
   <ol class="lf-timeline">
     {% for a in timeline %}
@@ -118,7 +118,7 @@
     {% endfor %}
   </ol>
   {% else %}
-  {{ empty_state("No activity yet", "Lead actions will appear here.") }}
+  {{ empty_state(t("No activity yet"), t("Lead actions will appear here.")) }}
   {% endif %}
 </section>
 {% endcall %}

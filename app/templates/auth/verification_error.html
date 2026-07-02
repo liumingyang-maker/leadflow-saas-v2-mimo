@@ -1,12 +1,12 @@
 {% from "components/_shell.html" import shell %}
 {% from "components/_buttons.html" import button %}
 
-{% call shell("Verification link unavailable") %}
+{% call shell(t("Verification link unavailable")) %}
 <section class="lf-panel">
-  <span class="lf-eyebrow">Email verification</span>
-  <h1 class="lf-page-title">Verification link unavailable</h1>
+  <span class="lf-eyebrow">{{ t("Email verification") }}</span>
+  <h1 class="lf-page-title">{{ t("Verification link unavailable") }}</h1>
   <div class="lf-alert" role="alert">{{ error }}</div>
-  <p class="lf-muted">Request a fresh verification link from the account flow.</p>
-  <a href="/login" class="lf-button lf-button-primary">Back to sign in</a>
+  <p class="lf-muted">{{ t("Request a fresh verification link from the account flow.") }}</p>
+  <a href="/login" class="lf-button lf-button-primary">{{ t("Back to sign in") }}</a>
 </section>
 {% endcall %}

@@ -5,6 +5,7 @@ import uuid
 from flask import Flask, redirect, render_template, request, session
 
 from app.core.abuse import rate_limit_clear, rate_limit_exceeded, rate_limit_hit
+from app.i18n import translate as t
 from app.modules.accounts.service import (
     AccountError,
     authenticate,
@@ -24,7 +25,9 @@ def register_account_routes(app: Flask) -> None:
     def register_submit():
         email = request.form.get("email", "")
         if _request_rate_limited(app, "auth:register", [request.remote_addr or "unknown", email]):
-            return render_template("auth/register.html", error="Too many attempts. Try later."), 429
+            return render_template(
+                "auth/register.html", error=t("Too many attempts. Try later.")
+            ), 429
         try:
             register_account(
                 app,
@@ -33,7 +36,7 @@ def register_account_routes(app: Flask) -> None:
                 company_name=request.form.get("company_name", ""),
             )
         except AccountError as error:
-            return render_template("auth/register.html", error=error.message), 400
+            return render_template("auth/register.html", error=t(error.message)), 400
         return redirect("/login?registered=1")
 
     @app.route("/login", methods=["GET", "POST"])
@@ -43,7 +46,7 @@ def register_account_routes(app: Flask) -> None:
         email = request.form.get("email", "")
         identifiers = [request.remote_addr or "unknown", email]
         if _login_blocked(app, "auth:login", identifiers):
-            return render_template("auth/login.html", error="Too many attempts. Try later."), 429
+            return render_template("auth/login.html", error=t("Too many attempts. Try later.")), 429
         try:
             identity = authenticate(
                 app,
@@ -52,7 +55,7 @@ def register_account_routes(app: Flask) -> None:
             )
         except AccountError as error:
             _record_login_failure(app, "auth:login", identifiers)
-            return render_template("auth/login.html", error=error.message), 200
+            return render_template("auth/login.html", error=t(error.message)), 200
 
         rate_limit_clear(app, namespace="auth:login", identifiers=identifiers)
         session.clear()
@@ -68,7 +71,7 @@ def register_account_routes(app: Flask) -> None:
         try:
             verify_email(app, token)
         except AccountError as error:
-            return render_template("auth/verification_error.html", error=error.message), 400
+            return render_template("auth/verification_error.html", error=t(error.message)), 400
         return redirect("/login")
 
     @app.post("/logout")
@@ -103,7 +106,7 @@ def register_account_routes(app: Flask) -> None:
             reset_password(app, token=token, password=request.form.get("password", ""))
         except AccountError as error:
             return (
-                render_template("auth/reset_password.html", token=token, error=error.message),
+                render_template("auth/reset_password.html", token=token, error=t(error.message)),
                 400,
             )
         session.clear()

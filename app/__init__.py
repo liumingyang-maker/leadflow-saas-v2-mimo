@@ -13,6 +13,7 @@ from app.core.proxy import register_proxy_middleware
 from app.core.request_id import register_request_id_hooks
 from app.core.security import register_security_hooks
 from app.extensions import init_extensions
+from app.i18n import register_i18n
 from app.modules.accounts.admin_routes import register_admin_routes
 from app.modules.accounts.routes import register_account_routes
 from app.modules.admin.routes import register_admin_dashboard_routes
@@ -28,6 +29,7 @@ def create_app(config_name: str | None = None) -> Flask:
     flask_app = Flask(__name__)
     flask_app.config.from_object(resolve_config(config_name))
     init_extensions(flask_app)
+    register_i18n(flask_app)
     register_proxy_middleware(flask_app)
     register_request_id_hooks(flask_app)
     register_security_hooks(flask_app)
