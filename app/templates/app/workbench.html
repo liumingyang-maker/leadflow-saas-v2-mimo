@@ -13,14 +13,14 @@
     <h1 class="lf-page-title">{{ t("LeadFlow command center") }}</h1>
     <p>{{ t("Review today's lead signals, blocked setup, and follow-up work.") }}</p>
   </div>
-  {{ button(t("Find customers"), "primary") }}
+  <a href="/collection" class="lf-button lf-button-primary">{{ t("Find customers") }}</a>
 </header>
 
 <nav class="lf-top-nav" aria-label="{{ t('Primary navigation') }}">
   <a href="/workbench" aria-current="page">{{ t("Workbench") }}</a>
-  <a href="/collect">{{ t("Find customers") }}</a>
+  <a href="/collection">{{ t("Find customers") }}</a>
   <a href="/leads">{{ t("Lead review") }}</a>
-  <a href="/crm">CRM</a>
+  <a href="/leads">CRM</a>
   <a href="/outreach">{{ t("Outreach") }}</a>
   <a href="/settings">{{ t("Settings") }}</a>
 </nav>

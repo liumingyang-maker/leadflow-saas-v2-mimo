@@ -10,6 +10,8 @@ from app.modules.accounts.service import AccountError, complete_onboarding
 def register_page_routes(app: Flask) -> None:
     @app.get("/")
     def index():
+        if session.get("tenant_id"):
+            return redirect("/workbench")
         return redirect("/login")
 
     @app.get("/workbench")
