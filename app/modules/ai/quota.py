@@ -16,6 +16,8 @@ PLAN_DEFAULT_CREDITS = {
     "ultra": 5000,
     "trial": 100,
 }
+DEFAULT_DISABLED_CREDITS = 100
+EXPLICIT_AI_QUOTA_PLAN = "manual"
 
 
 @dataclass(frozen=True)
@@ -47,15 +49,11 @@ def ensure_quota(session: Session, *, tenant_id: str) -> TenantAIQuota:
             quota.current_period_end = end
         return quota
 
-    tenant = session.get(Tenant, tenant_id)
-    plan = "trial" if tenant is not None and tenant.status == "trial" else "basic"
-    if tenant is not None and tenant.status != "trial":
-        plan = tenant.plan
     quota = TenantAIQuota(
         tenant_id=tenant_id,
-        enabled=True,
-        plan_name=plan,
-        monthly_included_credits=PLAN_DEFAULT_CREDITS.get(plan, 100),
+        enabled=False,
+        plan_name="auto",
+        monthly_included_credits=DEFAULT_DISABLED_CREDITS,
         current_period_start=start,
         current_period_end=end,
     )
@@ -74,7 +72,7 @@ def summarize_quota(session: Session, *, tenant_id: str) -> QuotaSummary:
     )
     remaining = max(0, quota.monthly_included_credits - used)
     return QuotaSummary(
-        enabled=quota.enabled,
+        enabled=quota_is_explicitly_enabled(quota),
         included=quota.monthly_included_credits,
         used=used,
         remaining=remaining,
@@ -86,6 +84,27 @@ def summarize_quota(session: Session, *, tenant_id: str) -> QuotaSummary:
 def has_credits(session: Session, *, tenant_id: str, required: int) -> bool:
     summary = summarize_quota(session, tenant_id=tenant_id)
     return summary.enabled and summary.remaining >= required
+
+
+def save_tenant_quota(
+    session: Session,
+    *,
+    tenant_id: str,
+    enabled: bool,
+    monthly_included_credits: int,
+) -> TenantAIQuota:
+    tenant = session.get(Tenant, tenant_id)
+    if tenant is None:
+        raise ValueError("Tenant not found")
+    quota = ensure_quota(session, tenant_id=tenant_id)
+    quota.enabled = bool(enabled)
+    quota.plan_name = EXPLICIT_AI_QUOTA_PLAN
+    quota.monthly_included_credits = max(0, min(int(monthly_included_credits), 1_000_000))
+    return quota
+
+
+def quota_is_explicitly_enabled(quota: TenantAIQuota) -> bool:
+    return quota.enabled and quota.plan_name == EXPLICIT_AI_QUOTA_PLAN
 
 
 def _as_utc(value: datetime) -> datetime:

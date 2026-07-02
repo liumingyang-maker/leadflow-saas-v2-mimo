@@ -26,9 +26,9 @@ class OpenAICompatibleProvider:
     def test_connection(self) -> AIProviderTestResult:
         result = self.generate_text(
             AIGenerationRequest(
-                system_prompt="Reply with ok.",
+                system_prompt="You are a helpful assistant. Reply with exactly: ok",
                 user_prompt="healthcheck",
-                max_output_tokens=16,
+                max_output_tokens=128,
             )
         )
         if result.success:
@@ -65,7 +65,13 @@ class OpenAICompatibleProvider:
         }
         try:
             data = self._post_json("chat/completions", payload)
-            text = data.get("choices", [{}])[0].get("message", {}).get("content", "").strip()
+            message = data.get("choices", [{}])[0].get("message", {})
+            text = (message.get("content") or "").strip()
+            # Support reasoning models (MiMo, DeepSeek R1) where
+            # the final answer may be in reasoning_content when
+            # max_tokens is insufficient for both reasoning and output.
+            if not text:
+                text = (message.get("reasoning_content") or "").strip()
             usage = data.get("usage", {})
             if not text:
                 return AIGenerationResult(

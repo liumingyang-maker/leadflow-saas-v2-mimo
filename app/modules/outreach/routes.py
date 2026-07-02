@@ -314,6 +314,6 @@ def _lead_outreach_context(app: Flask, *, tenant_id: str, lead_id: str) -> dict[
 def _draft_error_message(error_code: str) -> str:
     if error_code == "insufficient_credits":
         return "This workspace does not have enough AI credits."
-    if error_code == "ai_disabled":
-        return "AI is not enabled for this workspace."
+    if error_code in {"ai_disabled", "tenant_ai_disabled"}:
+        return "AI is not enabled for this workspace. Please contact the administrator."
     return "AI draft could not be generated"

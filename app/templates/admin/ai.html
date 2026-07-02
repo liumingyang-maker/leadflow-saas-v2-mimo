@@ -75,13 +75,34 @@
     </dl>
   </article>
   <article class="lf-panel">
-    <h2>{{ t("Tenant quotas") }}</h2>
+    <h2>{{ t("Tenant AI access") }}</h2>
     {% if quotas %}
+      <form method="post" action="/admin/ai" class="lf-form-stack">
+        {{ csrf_input() }}
+        <input type="hidden" name="action" value="save_tenant_quota">
+        <div class="lf-field-group">
+          <label class="lf-label" for="tenant_id">{{ t("Tenant") }}</label>
+          <select class="lf-field" id="tenant_id" name="tenant_id">
+            {% for quota in quotas %}
+            <option value="{{ quota.tenant_id }}">{{ quota.company_name }} - {{ quota.tenant_id }}</option>
+            {% endfor %}
+          </select>
+        </div>
+        <div class="lf-field-group">
+          <label class="lf-label" for="tenant_ai_enabled">{{ t("Enable AI for tenant") }}</label>
+          <input id="tenant_ai_enabled" name="tenant_ai_enabled" type="checkbox" value="1">
+        </div>
+        <div class="lf-field-group">
+          <label class="lf-label" for="monthly_included_credits">{{ t("Monthly AI credits") }}</label>
+          <input class="lf-field" id="monthly_included_credits" name="monthly_included_credits" type="number" min="0" max="1000000" value="100">
+        </div>
+        {{ button(t("Save tenant quota"), "primary", "submit") }}
+      </form>
       <table class="lf-table">
-        <thead><tr><th>{{ t("Tenant") }}</th><th>{{ t("Enabled") }}</th><th>{{ t("Credits") }}</th></tr></thead>
+        <thead><tr><th>{{ t("Tenant") }}</th><th>{{ t("Enabled") }}</th><th>{{ t("Credits") }}</th><th>{{ t("Credits used") }}</th></tr></thead>
         <tbody>
           {% for quota in quotas %}
-          <tr><td>{{ quota.tenant_id }}</td><td>{{ quota.enabled }}</td><td>{{ quota.monthly_included_credits }}</td></tr>
+          <tr><td>{{ quota.company_name }}</td><td>{{ quota.enabled }}</td><td>{{ quota.included }}</td><td>{{ quota.used }}</td></tr>
           {% endfor %}
         </tbody>
       </table>

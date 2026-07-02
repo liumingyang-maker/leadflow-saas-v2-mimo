@@ -14,9 +14,14 @@ from app.integrations.ai.disabled import DisabledProvider
 from app.integrations.ai.fake import FakeAIProvider
 from app.integrations.ai.openai_compatible import OpenAICompatibleProvider
 from app.integrations.ai.prompts import build_outreach_draft_prompt
+from app.modules.accounts.models import Tenant
 from app.modules.ai.ledger import record_ai_usage, usage_summary
-from app.modules.ai.models import AIProviderSettings, TenantAIQuota
-from app.modules.ai.quota import has_credits, summarize_quota
+from app.modules.ai.models import AIProviderSettings
+from app.modules.ai.quota import (
+    DEFAULT_DISABLED_CREDITS,
+    save_tenant_quota,
+    summarize_quota,
+)
 from app.modules.leads.models import Lead
 
 OUTREACH_DRAFT_FEATURE = "outreach_draft"
@@ -45,6 +50,16 @@ class OutreachDraftResult:
     body_text: str = ""
     error_code: str = ""
     quota_remaining: int = 0
+
+
+@dataclass(frozen=True)
+class TenantQuotaAdminView:
+    tenant_id: str
+    company_name: str
+    enabled: bool
+    included: int
+    used: int
+    remaining: int
 
 
 def get_provider_settings(app: Flask) -> ProviderSettingsView:
@@ -100,9 +115,26 @@ def quota_summary(app: Flask, *, tenant_id: str):
 def admin_ai_overview(app: Flask) -> dict[str, object]:
     with _session(app) as session:
         settings = _get_or_create_settings(session)
-        quotas = list(session.scalars(select(TenantAIQuota).order_by(TenantAIQuota.created_at)))
+        quota_rows = _tenant_quota_admin_rows(session)
         usage = usage_summary(session)
-        return {"settings": _settings_view(settings), "quotas": quotas, "usage": usage}
+        return {"settings": _settings_view(settings), "quotas": quota_rows, "usage": usage}
+
+
+def save_tenant_ai_settings(
+    app: Flask,
+    *,
+    tenant_id: str,
+    enabled: bool,
+    monthly_included_credits: int,
+) -> None:
+    with _session(app) as session:
+        save_tenant_quota(
+            session,
+            tenant_id=tenant_id,
+            enabled=enabled,
+            monthly_included_credits=monthly_included_credits,
+        )
+        session.commit()
 
 
 def generate_outreach_draft(
@@ -136,7 +168,28 @@ def generate_outreach_draft(
             return OutreachDraftResult(success=False, error_code="ai_disabled")
 
         summary = summarize_quota(session, tenant_id=tenant_id)
-        if not has_credits(session, tenant_id=tenant_id, required=OUTREACH_DRAFT_CREDITS):
+        if not summary.enabled:
+            record_ai_usage(
+                session,
+                tenant_id=tenant_id,
+                user_id=user_id,
+                feature_name=OUTREACH_DRAFT_FEATURE,
+                provider=provider_name,
+                model=model,
+                credits_charged=0,
+                input_tokens=0,
+                output_tokens=0,
+                status="disabled",
+                error_code="tenant_ai_disabled",
+            )
+            session.commit()
+            return OutreachDraftResult(
+                success=False,
+                error_code="tenant_ai_disabled",
+                quota_remaining=summary.remaining,
+            )
+
+        if summary.remaining < OUTREACH_DRAFT_CREDITS:
             record_ai_usage(
                 session,
                 tenant_id=tenant_id,
@@ -255,6 +308,24 @@ def _settings_view(settings: AIProviderSettings) -> ProviderSettingsView:
         timeout_seconds=settings.timeout_seconds,
         max_output_tokens=settings.max_output_tokens,
     )
+
+
+def _tenant_quota_admin_rows(session: Session) -> list[TenantQuotaAdminView]:
+    tenants = list(session.scalars(select(Tenant).order_by(Tenant.company_name, Tenant.created_at)))
+    rows: list[TenantQuotaAdminView] = []
+    for tenant in tenants:
+        summary = summarize_quota(session, tenant_id=tenant.id)
+        rows.append(
+            TenantQuotaAdminView(
+                tenant_id=tenant.id,
+                company_name=tenant.company_name or tenant.id,
+                enabled=summary.enabled,
+                included=summary.included or DEFAULT_DISABLED_CREDITS,
+                used=summary.used,
+                remaining=summary.remaining,
+            )
+        )
+    return rows
 
 
 def _provider_from_settings(settings: AIProviderSettings) -> AIProvider:

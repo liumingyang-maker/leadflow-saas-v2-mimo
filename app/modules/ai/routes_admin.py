@@ -8,6 +8,7 @@ from app.modules.ai.service import (
     AIServiceError,
     admin_ai_overview,
     save_provider_settings,
+    save_tenant_ai_settings,
     test_provider_connection,
 )
 
@@ -26,6 +27,20 @@ def register_ai_admin_routes(app: Flask) -> None:
                 error = "" if ok else t("AI provider connection failed")
                 if reason and not ok:
                     error = f"{error}: {reason}"
+            elif action == "save_tenant_quota":
+                try:
+                    save_tenant_ai_settings(
+                        app,
+                        tenant_id=request.form.get("tenant_id", ""),
+                        enabled=bool(request.form.get("tenant_ai_enabled")),
+                        monthly_included_credits=int(
+                            request.form.get("monthly_included_credits", "100") or 100
+                        ),
+                    )
+                except (AIServiceError, ValueError) as exc:
+                    error = str(exc)
+                else:
+                    message = t("Tenant AI settings saved")
             else:
                 try:
                     save_provider_settings(
