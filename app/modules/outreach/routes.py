@@ -9,7 +9,15 @@ from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from app.extensions import get_engine
+from app.i18n import get_locale
+from app.i18n import translate as t
 from app.modules.accounts.guards import tenant_required
+from app.modules.ai.service import (
+    OUTREACH_DRAFT_CREDITS,
+    AIServiceError,
+    generate_outreach_draft,
+    quota_summary,
+)
 from app.modules.leads.repository import LeadRepository
 from app.modules.outreach.models import EmailTracking, OutreachMessage
 from app.modules.outreach.service import (
@@ -123,7 +131,58 @@ def register_outreach_routes(app: Flask) -> None:
                 )
             )
         return render_template(
-            "outreach/lead_send.html", lead=lead, templates=templates, messages=messages, error=""
+            "outreach/lead_send.html",
+            lead=lead,
+            templates=templates,
+            messages=messages,
+            error="",
+            draft_subject="",
+            draft_body_text="",
+            ai_quota=quota_summary(app, tenant_id=tenant_id),
+            ai_draft_credits=OUTREACH_DRAFT_CREDITS,
+        )
+
+    @app.post("/leads/<lead_id>/outreach/ai-draft")
+    @tenant_required(app)
+    def lead_outreach_ai_draft(lead_id: str):
+        tenant_id = session.get("tenant_id", "")
+        user_id = session.get("user_id", "")
+        context = _lead_outreach_context(app, tenant_id=tenant_id, lead_id=lead_id)
+        if context is None:
+            return redirect("/leads")
+        try:
+            draft = generate_outreach_draft(
+                app,
+                tenant_id=tenant_id,
+                user_id=user_id,
+                lead_id=lead_id,
+                locale=get_locale(),
+                notes=request.form.get("ai_notes", ""),
+            )
+        except AIServiceError:
+            draft = None
+
+        if draft is None:
+            error = t("AI draft could not be generated")
+            subject = request.form.get("subject", "")
+            body_text = request.form.get("body_text", "")
+        elif draft.success:
+            error = ""
+            subject = draft.subject
+            body_text = draft.body_text
+        else:
+            error = t(_draft_error_message(draft.error_code))
+            subject = request.form.get("subject", "")
+            body_text = request.form.get("body_text", "")
+
+        return render_template(
+            "outreach/lead_send.html",
+            **context,
+            error=error,
+            draft_subject=subject,
+            draft_body_text=body_text,
+            ai_quota=quota_summary(app, tenant_id=tenant_id),
+            ai_draft_credits=OUTREACH_DRAFT_CREDITS,
         )
 
     @app.post("/leads/<lead_id>/outreach/send")
@@ -170,6 +229,10 @@ def register_outreach_routes(app: Flask) -> None:
                 templates=templates,
                 messages=messages,
                 error=str(e),
+                draft_subject=subject,
+                draft_body_text=body_text,
+                ai_quota=quota_summary(app, tenant_id=tenant_id),
+                ai_draft_credits=OUTREACH_DRAFT_CREDITS,
             )
         return redirect(f"/leads/{lead_id}/outreach")
 
@@ -226,3 +289,31 @@ def register_outreach_routes(app: Flask) -> None:
             unsubscribe(app, tenant_id=tracking.tenant_id, email=email)
             return render_template("outreach/unsubscribed.html")
         return render_template("outreach/unsubscribe_confirm.html", email=email, token=token)
+
+
+def _lead_outreach_context(app: Flask, *, tenant_id: str, lead_id: str) -> dict[str, object] | None:
+    engine = get_engine(app)
+    with Session(engine) as db_session:
+        lead = LeadRepository(db_session).get(lead_id, tenant_id=tenant_id)
+        if lead is None:
+            return None
+        templates = list_templates(app, tenant_id=tenant_id)
+        messages = list(
+            db_session.scalars(
+                select(OutreachMessage)
+                .where(
+                    OutreachMessage.tenant_id == tenant_id,
+                    OutreachMessage.lead_id == lead_id,
+                )
+                .order_by(OutreachMessage.created_at.desc())
+            )
+        )
+    return {"lead": lead, "templates": templates, "messages": messages}
+
+
+def _draft_error_message(error_code: str) -> str:
+    if error_code == "insufficient_credits":
+        return "This workspace does not have enough AI credits."
+    if error_code == "ai_disabled":
+        return "AI is not enabled for this workspace."
+    return "AI draft could not be generated"
