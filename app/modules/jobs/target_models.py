@@ -11,6 +11,7 @@ from app.extensions import Base
 DISCOVERY_RUN_STATUSES = ("draft", "planned", "matched", "failed")
 CANDIDATE_STATUSES = ("pending_review", "added_to_crm", "dismissed", "duplicate", "failed")
 RESEARCH_REPORT_STATUSES = ("pending", "completed", "failed")
+OUTREACH_DRAFT_STATUSES = ("completed", "failed")
 
 
 def _uuid() -> str:
@@ -121,6 +122,48 @@ class CandidateResearchReport(Base):
     suggested_outreach_angle: Mapped[str] = mapped_column(Text, default="", nullable=False)
     sources_json: Mapped[str] = mapped_column(Text, default="[]", nullable=False)
     ai_model: Mapped[str] = mapped_column(String(120), default="", nullable=False)
+    ai_usage_ledger_id: Mapped[str | None] = mapped_column(
+        ForeignKey("ai_usage_ledger.id"), nullable=True
+    )
+    error_code: Mapped[str] = mapped_column(String(80), default="", nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=_now, nullable=False, index=True
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=_now, onupdate=_now, nullable=False
+    )
+
+
+class CandidateOutreachDraft(Base):
+    __tablename__ = "candidate_outreach_drafts"
+    __table_args__ = (
+        CheckConstraint(
+            "status in ('completed', 'failed')",
+            name="candidate_outreach_drafts_status",
+        ),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid)
+    tenant_id: Mapped[str] = mapped_column(ForeignKey("tenants.id"), nullable=False, index=True)
+    candidate_id: Mapped[str] = mapped_column(
+        ForeignKey("target_customer_candidates.id"), nullable=False, index=True
+    )
+    research_report_id: Mapped[str | None] = mapped_column(
+        ForeignKey("candidate_research_reports.id"), nullable=True, index=True
+    )
+    status: Mapped[str] = mapped_column(String(24), default="completed", nullable=False, index=True)
+    provider: Mapped[str] = mapped_column(String(32), default="", nullable=False)
+    ai_model: Mapped[str] = mapped_column(String(120), default="", nullable=False)
+    language: Mapped[str] = mapped_column(String(16), default="en", nullable=False)
+    tone: Mapped[str] = mapped_column(String(40), default="professional_concise", nullable=False)
+    subject: Mapped[str] = mapped_column(String(500), default="", nullable=False)
+    body: Mapped[str] = mapped_column(Text, default="", nullable=False)
+    short_body: Mapped[str] = mapped_column(Text, default="", nullable=False)
+    follow_up_angle: Mapped[str] = mapped_column(Text, default="", nullable=False)
+    personalization_notes_json: Mapped[str] = mapped_column(Text, default="[]", nullable=False)
+    sources_json: Mapped[str] = mapped_column(Text, default="[]", nullable=False)
+    confidence_note: Mapped[str] = mapped_column(Text, default="", nullable=False)
+    disclaimer: Mapped[str] = mapped_column(Text, default="", nullable=False)
     ai_usage_ledger_id: Mapped[str | None] = mapped_column(
         ForeignKey("ai_usage_ledger.id"), nullable=True
     )

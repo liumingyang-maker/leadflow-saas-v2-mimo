@@ -277,6 +277,55 @@ class FakeAIProvider:
                 output_tokens=_rough_tokens(text),
             )
 
+        if "candidate_outreach_draft" in request.system_prompt:
+            text = json.dumps(
+                {
+                    "subject": "Possible fit for your outdoor retail range",
+                    "body": (
+                        "Hi,\n\n"
+                        "I noticed your public company information may be related to outdoor "
+                        "retail and distribution. We manufacture insulated drinkware for "
+                        "buyers who need steady supply, clear packaging options, and small "
+                        "trial-order support.\n\n"
+                        "Based on the limited research available, there could be a fit if "
+                        "you are reviewing drinkware or outdoor accessory suppliers. Would "
+                        "it be useful if I shared a short catalog and sample options for "
+                        "your team to review?\n\n"
+                        "Best regards"
+                    ),
+                    "short_body": (
+                        "Hi, based on limited public information, our insulated drinkware "
+                        "line may be relevant to your outdoor retail range. Would a short "
+                        "catalog and sample options be useful for review?"
+                    ),
+                    "follow_up_angle": (
+                        "Follow up with a concise catalog offer and ask whether drinkware "
+                        "is a relevant category this season."
+                    ),
+                    "personalization_notes": [
+                        "Reference outdoor retail or distribution only as an unverified fit.",
+                        "Lead with trial-order support and stable supply.",
+                    ],
+                    "confidence_note": (
+                        "This draft is based on limited public candidate metadata and an "
+                        "unverified research report. Please confirm fit before sending."
+                    ),
+                    "disclaimer": (
+                        "Draft only. Not sent. AI result is for reference and needs manual "
+                        "confirmation."
+                    ),
+                },
+                ensure_ascii=False,
+            )
+            return AIGenerationResult(
+                success=True,
+                text=text,
+                provider="fake",
+                model=self._model,
+                input_tokens=_rough_tokens(request.system_prompt + request.user_prompt),
+                output_tokens=_rough_tokens(text),
+            )
+
         if request.locale == "en-US":
             text = (
                 "Subject: Quick idea for your growth pipeline\n\n"

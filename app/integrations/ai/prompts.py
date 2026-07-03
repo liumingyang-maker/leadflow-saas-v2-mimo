@@ -280,6 +280,56 @@ def build_candidate_company_research_prompt(
     return OutreachDraftPrompt(system_prompt=system, user_prompt=user)
 
 
+def build_candidate_outreach_draft_prompt(
+    *,
+    locale: str,
+    candidate_context_json: str,
+    research_report_json: str,
+    product_profile_json: str,
+    sources_json: str,
+    language: str = "en",
+    tone: str = "professional_concise",
+) -> OutreachDraftPrompt:
+    keys = (
+        "subject",
+        "body",
+        "short_body",
+        "follow_up_angle",
+        "personalization_notes",
+        "confidence_note",
+        "disclaimer",
+    )
+    system = (
+        "feature: candidate_outreach_draft\n"
+        "Write one draft-only B2B cold outreach email from supplied product memory, "
+        "candidate metadata, completed unverified research report, and source summaries "
+        "only. Return strict JSON only. Do not send email, create a campaign, mention "
+        "private emails or phone numbers, invent facts, claim the company is verified, "
+        "claim current buying intent, claim a confirmed contact person, or imply "
+        "scraping or hidden sources. Write in English by default. Keep it professional, "
+        "concise, not spammy, and use uncertainty where evidence is weak. JSON keys must "
+        f"be exactly: {', '.join(keys)}."
+    )
+    if locale == "zh-CN":
+        system += " UI language is Simplified Chinese, but the draft email must be English."
+    user = (
+        f"Requested draft language: {_clean(language) or 'en'}\n"
+        f"Requested tone: {_clean(tone) or 'professional_concise'}\n\n"
+        "Confirmed tenant product memory JSON:\n"
+        f"{_clean_jsonish(product_profile_json)}\n\n"
+        "Candidate metadata JSON, already sanitized and not fetched from the website:\n"
+        f"{_clean_jsonish(candidate_context_json)}\n\n"
+        "Completed company research report JSON, unverified and human-review required:\n"
+        f"{_clean_jsonish(research_report_json)}\n\n"
+        "Allowed source summaries JSON:\n"
+        f"{_clean_jsonish(sources_json)}\n\n"
+        "Create a subject, concise body, shorter version, follow-up angle, "
+        "personalization notes, confidence note, and draft-only disclaimer. Include a "
+        "soft CTA. Do not write as if the recipient is already buying."
+    )
+    return OutreachDraftPrompt(system_prompt=system, user_prompt=user)
+
+
 def _clean(value: str) -> str:
     return (value or "").strip()[:500]
 

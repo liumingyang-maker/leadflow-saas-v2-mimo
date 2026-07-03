@@ -9,6 +9,10 @@ from app.i18n import translate as t
 from app.integrations.acquisition.registry import acquisition_channels
 from app.modules.accounts.guards import tenant_required
 from app.modules.acquisition.service import advanced_search_available, get_acquisition_settings
+from app.modules.jobs.candidate_outreach import (
+    candidate_outreach_context,
+    generate_candidate_outreach_draft_for_candidate,
+)
 from app.modules.jobs.candidate_research import (
     candidate_research_context,
     generate_candidate_research_report,
@@ -155,16 +159,10 @@ def register_collection_routes(app: Flask) -> None:
     @tenant_required(app)
     def collection_candidate_detail(candidate_id: str):
         tenant_id = session.get("tenant_id", "")
-        context = candidate_research_context(app, tenant_id=tenant_id, candidate_id=candidate_id)
-        if context is None:
-            abort(404)
-        return render_template(
-            "collection/candidate_detail.html",
-            candidate=context.candidate,
-            candidate_extra=context.candidate_extra,
-            candidate_view=context.candidate_view,
-            latest_report=context.latest_report,
-            report_view=context.report_view,
+        return _render_candidate_detail(
+            app,
+            tenant_id=tenant_id,
+            candidate_id=candidate_id,
             error="",
             notice=request.args.get("notice", ""),
         )
@@ -185,16 +183,10 @@ def register_collection_routes(app: Flask) -> None:
             abort(404)
         if result.success:
             return redirect(f"/collection/candidates/{candidate_id}?notice=research_ready#research")
-        context = candidate_research_context(app, tenant_id=tenant_id, candidate_id=candidate_id)
-        if context is None:
-            abort(404)
-        return render_template(
-            "collection/candidate_detail.html",
-            candidate=context.candidate,
-            candidate_extra=context.candidate_extra,
-            candidate_view=context.candidate_view,
-            latest_report=context.latest_report,
-            report_view=context.report_view,
+        return _render_candidate_detail(
+            app,
+            tenant_id=tenant_id,
+            candidate_id=candidate_id,
             error=_candidate_research_error_message(result.error_code),
             notice="",
         )
@@ -207,6 +199,41 @@ def register_collection_routes(app: Flask) -> None:
         if context is None:
             abort(404)
         return redirect(f"/collection/candidates/{candidate_id}#research")
+
+    @app.post("/collection/candidates/<candidate_id>/outreach-draft")
+    @tenant_required(app)
+    def collection_candidate_outreach_draft(candidate_id: str):
+        tenant_id = session.get("tenant_id", "")
+        user_id = session.get("user_id", "")
+        result = generate_candidate_outreach_draft_for_candidate(
+            app,
+            tenant_id=tenant_id,
+            user_id=user_id,
+            candidate_id=candidate_id,
+            locale=get_locale(),
+        )
+        if result.error_code == "candidate_not_found":
+            abort(404)
+        if result.success:
+            return redirect(
+                f"/collection/candidates/{candidate_id}?notice=outreach_draft_ready#outreach-draft"
+            )
+        return _render_candidate_detail(
+            app,
+            tenant_id=tenant_id,
+            candidate_id=candidate_id,
+            error=_candidate_outreach_error_message(result.error_code),
+            notice="",
+        )
+
+    @app.get("/collection/candidates/<candidate_id>/outreach-draft")
+    @tenant_required(app)
+    def collection_candidate_outreach_draft_view(candidate_id: str):
+        tenant_id = session.get("tenant_id", "")
+        context = candidate_research_context(app, tenant_id=tenant_id, candidate_id=candidate_id)
+        if context is None:
+            abort(404)
+        return redirect(f"/collection/candidates/{candidate_id}#outreach-draft")
 
     # ------------------------------------------------------------------
     # Create Google Search job
@@ -312,6 +339,36 @@ def _render_collection_workspace(app: Flask, *, target_error: str = "", target_n
     )
 
 
+def _render_candidate_detail(
+    app: Flask,
+    *,
+    tenant_id: str,
+    candidate_id: str,
+    error: str,
+    notice: str,
+):
+    context = candidate_research_context(app, tenant_id=tenant_id, candidate_id=candidate_id)
+    if context is None:
+        abort(404)
+    outreach_context = candidate_outreach_context(
+        app,
+        tenant_id=tenant_id,
+        candidate_id=candidate_id,
+    )
+    return render_template(
+        "collection/candidate_detail.html",
+        candidate=context.candidate,
+        candidate_extra=context.candidate_extra,
+        candidate_view=context.candidate_view,
+        latest_report=context.latest_report,
+        report_view=context.report_view,
+        latest_draft=outreach_context.latest_draft,
+        draft_view=outreach_context.draft_view,
+        error=error,
+        notice=notice,
+    )
+
+
 def _target_error_message(error_code: str) -> str:
     if error_code == "missing_product_profile":
         return t("Please train your AI foreign trade operator first")
@@ -337,4 +394,14 @@ def _candidate_research_error_message(error_code: str) -> str:
         return t("AI feature is not enabled")
     if error_code == "insufficient_credits":
         return t("Not enough credits")
+    return t("System is busy, please try again later")
+
+
+def _candidate_outreach_error_message(error_code: str) -> str:
+    if error_code in {"ai_disabled", "tenant_ai_disabled"}:
+        return t("AI feature is not enabled")
+    if error_code == "insufficient_credits":
+        return t("Not enough credits")
+    if error_code == "missing_research_report":
+        return t("Please generate AI company research first")
     return t("System is busy, please try again later")

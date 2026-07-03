@@ -19,6 +19,7 @@
 
 {% if error %}<div class="lf-alert lf-alert-danger" role="alert">{{ error }}</div>{% endif %}
 {% if notice == "research_ready" %}<div class="lf-alert lf-alert-success" role="status">{{ t("Research report is ready") }}</div>{% endif %}
+{% if notice == "outreach_draft_ready" %}<div class="lf-alert lf-alert-success" role="status">{{ t("AI outreach draft is ready") }}</div>{% endif %}
 
 <section class="lf-grid lf-section">
   <article class="lf-panel">
@@ -69,6 +70,7 @@
       <li>{{ t("No email will be sent automatically.") }}</li>
       <li>{{ t("Private emails and phone numbers are not saved as trusted fields.") }}</li>
       <li>{{ t("The system will not create outreach messages from this report.") }}</li>
+      <li>{{ t("This is a draft and will not be sent automatically.") }}</li>
     </ul>
   </article>
 </section>
@@ -175,5 +177,92 @@
       </form>
     </article>
   {% endif %}
+</section>
+
+<section id="outreach-draft" class="lf-section">
+  <article class="lf-panel">
+    <header class="lf-section-header">
+      <div>
+        <span class="lf-eyebrow">{{ t("Draft only") }}</span>
+        <h2>{{ t("AI outreach draft") }}</h2>
+        <p>{{ t("Generate an English draft from product memory and the completed research report.") }}</p>
+      </div>
+      {% if latest_report and latest_report.status == "completed" and not latest_draft %}
+        <form method="post" action="/collection/candidates/{{ candidate.id }}/outreach-draft">
+          {{ csrf_input() }}
+          <button class="lf-button lf-button-primary" type="submit">{{ t("Generate AI outreach draft") }}</button>
+        </form>
+      {% endif %}
+    </header>
+
+    <div class="lf-alert lf-alert-info" role="status">
+      {{ t("This is a draft and will not be sent automatically.") }}
+      {{ t("Please manually confirm before sending.") }}
+      {{ t("AI will not save or generate private emails or phone numbers.") }}
+      {{ t("Do not claim the buyer has purchase intent unless you have confirmed it manually.") }}
+    </div>
+
+    {% if latest_draft and latest_draft.status == "completed" %}
+      <div class="lf-grid">
+        <section>
+          <h3>{{ t("Subject") }}</h3>
+          <p>{{ latest_draft.subject }}</p>
+        </section>
+        <section>
+          <h3>{{ t("Confidence note") }}</h3>
+          <p>{{ latest_draft.confidence_note }}</p>
+        </section>
+      </div>
+
+      <section>
+        <h3>{{ t("Body") }}</h3>
+        <pre class="lf-notes">{{ latest_draft.body }}</pre>
+      </section>
+
+      {% if latest_draft.short_body %}
+        <section>
+          <h3>{{ t("Short version") }}</h3>
+          <pre class="lf-notes">{{ latest_draft.short_body }}</pre>
+        </section>
+      {% endif %}
+
+      {% if latest_draft.follow_up_angle %}
+        <section>
+          <h3>{{ t("Follow-up angle") }}</h3>
+          <p>{{ latest_draft.follow_up_angle }}</p>
+        </section>
+      {% endif %}
+
+      {% if draft_view.personalization_notes %}
+        <section>
+          <h3>{{ t("Personalization notes") }}</h3>
+          <ul class="lf-list">
+            {% for note in draft_view.personalization_notes %}<li>{{ note }}</li>{% endfor %}
+          </ul>
+        </section>
+      {% endif %}
+
+      <section>
+        <h3>{{ t("Source links") }}</h3>
+        <ul class="lf-list">
+          {% for source in draft_view.sources %}
+            <li>
+              {% if source.url %}<a href="{{ source.url }}" rel="noopener noreferrer">{{ source.title }}</a>{% else %}{{ source.title }}{% endif %}
+              <span class="lf-muted">· {{ source.source_provider }} · {{ source.snippet }}</span>
+            </li>
+          {% endfor %}
+        </ul>
+      </section>
+
+      <div class="lf-alert lf-alert-info" role="status">
+        <strong>{{ t("Disclaimer") }}</strong>
+        <span>{{ latest_draft.disclaimer }} {{ t("No email will be sent automatically.") }}</span>
+      </div>
+    {% elif latest_report and latest_report.status == "completed" %}
+      <p>{{ t("No outreach draft has been generated yet.") }}</p>
+    {% else %}
+      <div class="lf-alert lf-alert-info" role="status">{{ t("Please generate AI company research first") }}</div>
+    {% endif %}
+  </article>
 </section>
 {% endcall %}

@@ -18,6 +18,7 @@ from app.integrations.ai.openai_compatible import OpenAICompatibleProvider
 from app.integrations.ai.prompts import (
     build_basic_search_strategy_prompt,
     build_candidate_company_research_prompt,
+    build_candidate_outreach_draft_prompt,
     build_outreach_draft_prompt,
     build_pasted_search_results_prompt,
     build_product_profile_extraction_prompt,
@@ -74,6 +75,9 @@ PASTED_SEARCH_PARSE_CREDITS = 0
 CANDIDATE_COMPANY_RESEARCH_FEATURE = "candidate_company_research"
 CANDIDATE_COMPANY_RESEARCH_REQUIRED_CREDITS = 5
 CANDIDATE_COMPANY_RESEARCH_CREDITS = 0
+CANDIDATE_OUTREACH_DRAFT_FEATURE = "candidate_outreach_draft"
+CANDIDATE_OUTREACH_DRAFT_REQUIRED_CREDITS = 3
+CANDIDATE_OUTREACH_DRAFT_CREDITS = 0
 TARGET_CUSTOMER_PLAN_ARRAY_FIELDS = (
     "ideal_buyer_types",
     "target_industries",
@@ -110,6 +114,7 @@ CANDIDATE_COMPANY_RESEARCH_ARRAY_FIELDS = (
     "positive_signals",
     "risk_signals",
 )
+CANDIDATE_OUTREACH_DRAFT_ARRAY_FIELDS = ("personalization_notes",)
 
 
 class AIServiceError(ValueError):
@@ -180,6 +185,17 @@ class PastedSearchResultParseResult:
 class CandidateCompanyResearchResult:
     success: bool
     report: dict[str, object] | None = None
+    error_code: str = ""
+    quota_remaining: int = 0
+    ledger_id: str = ""
+    provider: str = ""
+    model: str = ""
+
+
+@dataclass(frozen=True)
+class CandidateOutreachDraftResult:
+    success: bool
+    draft: dict[str, object] | None = None
     error_code: str = ""
     quota_remaining: int = 0
     ledger_id: str = ""
@@ -1272,6 +1288,205 @@ def generate_candidate_company_research(
         )
 
 
+def generate_candidate_outreach_draft(
+    app: Flask,
+    *,
+    tenant_id: str,
+    user_id: str,
+    locale: str,
+    candidate_context_json: str,
+    research_report_json: str,
+    product_profile_json: str,
+    sources_json: str,
+    language: str = "en",
+    tone: str = "professional_concise",
+) -> CandidateOutreachDraftResult:
+    with _session(app) as session:
+        settings = _get_or_create_settings(session)
+        provider_name = settings.provider
+        model = settings.model
+        if not settings.enabled or settings.provider == "disabled":
+            ledger = record_ai_usage(
+                session,
+                tenant_id=tenant_id,
+                user_id=user_id,
+                feature_name=CANDIDATE_OUTREACH_DRAFT_FEATURE,
+                provider=provider_name,
+                model=model,
+                credits_charged=0,
+                input_tokens=0,
+                output_tokens=0,
+                status="disabled",
+                error_code="ai_disabled",
+            )
+            session.flush()
+            ledger_id = ledger.id
+            session.commit()
+            return CandidateOutreachDraftResult(
+                success=False,
+                error_code="ai_disabled",
+                ledger_id=ledger_id,
+                provider=provider_name,
+                model=model,
+            )
+
+        summary = summarize_quota(session, tenant_id=tenant_id)
+        if not summary.enabled:
+            ledger = record_ai_usage(
+                session,
+                tenant_id=tenant_id,
+                user_id=user_id,
+                feature_name=CANDIDATE_OUTREACH_DRAFT_FEATURE,
+                provider=provider_name,
+                model=model,
+                credits_charged=0,
+                input_tokens=0,
+                output_tokens=0,
+                status="disabled",
+                error_code="tenant_ai_disabled",
+            )
+            session.flush()
+            ledger_id = ledger.id
+            session.commit()
+            return CandidateOutreachDraftResult(
+                success=False,
+                error_code="tenant_ai_disabled",
+                quota_remaining=summary.remaining,
+                ledger_id=ledger_id,
+                provider=provider_name,
+                model=model,
+            )
+
+        if summary.remaining < CANDIDATE_OUTREACH_DRAFT_REQUIRED_CREDITS:
+            ledger = record_ai_usage(
+                session,
+                tenant_id=tenant_id,
+                user_id=user_id,
+                feature_name=CANDIDATE_OUTREACH_DRAFT_FEATURE,
+                provider=provider_name,
+                model=model,
+                credits_charged=0,
+                input_tokens=0,
+                output_tokens=0,
+                status="blocked_quota",
+                error_code="insufficient_credits",
+            )
+            session.flush()
+            ledger_id = ledger.id
+            session.commit()
+            return CandidateOutreachDraftResult(
+                success=False,
+                error_code="insufficient_credits",
+                quota_remaining=summary.remaining,
+                ledger_id=ledger_id,
+                provider=provider_name,
+                model=model,
+            )
+
+        prompt = build_candidate_outreach_draft_prompt(
+            locale=locale,
+            candidate_context_json=candidate_context_json,
+            research_report_json=research_report_json,
+            product_profile_json=product_profile_json,
+            sources_json=sources_json,
+            language=language,
+            tone=tone,
+        )
+        provider = _provider_from_settings(settings)
+
+    start = time.monotonic()
+    result = provider.generate_text(
+        AIGenerationRequest(
+            system_prompt=prompt.system_prompt,
+            user_prompt=prompt.user_prompt,
+            locale=locale,
+            max_output_tokens=max(512, settings.max_output_tokens),
+        )
+    )
+    latency_ms = int((time.monotonic() - start) * 1000)
+
+    with _session(app) as session:
+        if result.success:
+            try:
+                draft = _parse_candidate_outreach_draft_json(result.text)
+            except AIServiceError:
+                ledger = record_ai_usage(
+                    session,
+                    tenant_id=tenant_id,
+                    user_id=user_id,
+                    feature_name=CANDIDATE_OUTREACH_DRAFT_FEATURE,
+                    provider=result.provider or provider_name,
+                    model=result.model or model,
+                    credits_charged=0,
+                    input_tokens=result.input_tokens,
+                    output_tokens=result.output_tokens,
+                    status="failed",
+                    error_code="malformed_json",
+                    latency_ms=latency_ms,
+                )
+                session.flush()
+                ledger_id = ledger.id
+                session.commit()
+                return CandidateOutreachDraftResult(
+                    success=False,
+                    error_code="malformed_json",
+                    ledger_id=ledger_id,
+                    provider=result.provider or provider_name,
+                    model=result.model or model,
+                )
+
+            ledger = record_ai_usage(
+                session,
+                tenant_id=tenant_id,
+                user_id=user_id,
+                feature_name=CANDIDATE_OUTREACH_DRAFT_FEATURE,
+                provider=result.provider or provider_name,
+                model=result.model or model,
+                credits_charged=CANDIDATE_OUTREACH_DRAFT_CREDITS,
+                input_tokens=result.input_tokens,
+                output_tokens=result.output_tokens,
+                status="success",
+                latency_ms=latency_ms,
+            )
+            session.flush()
+            ledger_id = ledger.id
+            remaining = summarize_quota(session, tenant_id=tenant_id).remaining
+            session.commit()
+            return CandidateOutreachDraftResult(
+                success=True,
+                draft=draft,
+                quota_remaining=remaining,
+                ledger_id=ledger_id,
+                provider=result.provider or provider_name,
+                model=result.model or model,
+            )
+
+        ledger = record_ai_usage(
+            session,
+            tenant_id=tenant_id,
+            user_id=user_id,
+            feature_name=CANDIDATE_OUTREACH_DRAFT_FEATURE,
+            provider=result.provider or provider_name,
+            model=result.model or model,
+            credits_charged=0,
+            input_tokens=result.input_tokens,
+            output_tokens=result.output_tokens,
+            status="failed",
+            error_code=result.error_code or "provider_error",
+            latency_ms=latency_ms,
+        )
+        session.flush()
+        ledger_id = ledger.id
+        session.commit()
+        return CandidateOutreachDraftResult(
+            success=False,
+            error_code=result.error_code or "provider_error",
+            ledger_id=ledger_id,
+            provider=result.provider or provider_name,
+            model=result.model or model,
+        )
+
+
 def _session(app: Flask) -> Session:
     session = Session(get_engine(app))
     session.expire_on_commit = False
@@ -1456,6 +1671,36 @@ def _parse_candidate_company_research_json(text: str) -> dict[str, object]:
     if not report["summary"]:
         raise AIServiceError("Candidate research summary is required")
     return report
+
+
+def _parse_candidate_outreach_draft_json(text: str) -> dict[str, object]:
+    data = _load_json_object(text)
+    draft: dict[str, object] = {
+        "subject": _sanitize_public_text(data.get("subject", ""), max_length=500),
+        "body": _sanitize_public_text(data.get("body", ""), max_length=5000),
+        "short_body": _sanitize_public_text(data.get("short_body", ""), max_length=1500),
+        "follow_up_angle": _sanitize_public_text(
+            data.get("follow_up_angle", ""),
+            max_length=1000,
+        ),
+        "confidence_note": _sanitize_public_text(
+            data.get("confidence_note", ""),
+            max_length=1000,
+        ),
+        "disclaimer": _sanitize_public_text(
+            data.get(
+                "disclaimer",
+                "Draft only. Not sent. Please verify before sending.",
+            ),
+            max_length=500,
+        )
+        or "Draft only. Not sent. Please verify before sending.",
+    }
+    for key in CANDIDATE_OUTREACH_DRAFT_ARRAY_FIELDS:
+        draft[key] = _normalize_list(data.get(key))[:8]
+    if not draft["subject"] or not draft["body"]:
+        raise AIServiceError("Candidate outreach draft subject and body are required")
+    return draft
 
 
 def _normalize_signal_list(value: object, *, key: str) -> list[dict[str, str]]:

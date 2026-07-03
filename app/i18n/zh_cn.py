@@ -522,8 +522,13 @@ _BASE_TRANSLATIONS = {
         "AI 深度背调帮助你审核未验证的目标客户候选。"
     ),
     "AI feature is not enabled": "AI 功能暂未开启",
+    "AI outreach draft": "AI 开发信草稿",
+    "AI outreach draft is ready": "AI 开发信草稿已生成",
     "AI result is for reference only and needs manual confirmation.": (
         "AI 结果仅供参考，需要人工确认。"
+    ),
+    "AI will not save or generate private emails or phone numbers.": (
+        "AI 不会保存或生成私人邮箱/手机号。"
     ),
     (
         "AI will generate an unverified research report from candidate information and "
@@ -542,9 +547,23 @@ _BASE_TRANSLATIONS = {
     "Candidate detail": "候选详情",
     "Candidate summary": "候选公司摘要",
     "Company overview": "公司概览",
+    "Confidence note": "置信说明",
     "Disclaimer": "免责声明",
+    "Do not claim the buyer has purchase intent unless you have confirmed it manually.": (
+        "不要声称对方已有采购意向，除非你已人工确认。"
+    ),
+    "Draft only": "仅草稿",
+    "Follow-up angle": "跟进角度",
+    "Generate AI outreach draft": "生成 AI 开发信",
+    "Generate an English draft from product memory and the completed research report.": (
+        "根据产品记忆和已完成的深度背调生成英文开发信草稿。"
+    ),
     "No website provided": "未提供官网",
+    "No outreach draft has been generated yet.": "尚未生成开发信草稿。",
     "Not enough credits": "额度不足",
+    "Personalization notes": "个性化依据",
+    "Please generate AI company research first": "请先生成 AI 深度背调",
+    "Please manually confirm before sending.": "发送前请人工确认。",
     "Positive signals": "积极信号",
     "Possible use cases": "可能使用场景",
     "Private emails and phone numbers are not saved as trusted fields.": (
@@ -553,10 +572,12 @@ _BASE_TRANSLATIONS = {
     "Product fit": "产品匹配度",
     "Research report is ready": "背调报告已生成",
     "Risks and uncertainties": "风险/不确定点",
+    "Short version": "短版开发信",
     "Suggested outreach angle": "开发信切入角度",
     "The system will not create outreach messages from this report.": (
         "系统不会根据这份报告自动创建开发信。"
     ),
+    "This is a draft and will not be sent automatically.": "这是草稿，不会自动发送。",
     "Unverified": "未验证",
     "View company research": "查看背调",
     "Why it may fit you": "为什么可能适合你",
