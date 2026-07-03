@@ -1,0 +1,167 @@
+{% from "components/_forms.html" import csrf_input %}
+{% if error %}<div class="lf-alert lf-alert-danger">{{ error }}</div>{% endif %}
+{% if notice %}<div class="lf-alert lf-alert-success">{{ notice }}</div>{% endif %}
+
+<section class="lf-panel">
+  <form method="post" action="{{ extract_action }}" class="lf-form-stack">
+    {{ csrf_input() }}
+    <div class="lf-field-group">
+      <label class="lf-label" for="raw_company_intro">{{ t("Company introduction") }}</label>
+      <textarea class="lf-field" id="raw_company_intro" name="raw_company_intro" rows="5">{{ raw_fields.raw_company_intro }}</textarea>
+    </div>
+    <div class="lf-field-group">
+      <label class="lf-label" for="raw_products">{{ t("Main products") }}</label>
+      <textarea class="lf-field" id="raw_products" name="raw_products" rows="5">{{ raw_fields.raw_products }}</textarea>
+    </div>
+    <div class="lf-field-group">
+      <label class="lf-label" for="raw_website_url">{{ t("Website URL") }}</label>
+      <input class="lf-field" id="raw_website_url" name="raw_website_url" value="{{ raw_fields.raw_website_url }}">
+      <span class="lf-help">{{ t("Website URL is saved only and will not be crawled.") }}</span>
+      <span class="lf-help">{{ t("If your website has important information, copy the main company or product introduction into the fields above.") }}</span>
+      {% if website_warning %}
+        <span class="lf-help">{{ t("Website URL was saved as text. It was not fetched.") }}</span>
+      {% endif %}
+    </div>
+    <div class="lf-grid">
+      <div class="lf-field-group">
+        <label class="lf-label" for="raw_target_markets">{{ t("Target markets") }}</label>
+        <textarea class="lf-field" id="raw_target_markets" name="raw_target_markets" rows="3">{{ raw_fields.raw_target_markets }}</textarea>
+      </div>
+      <div class="lf-field-group">
+        <label class="lf-label" for="raw_advantages">{{ t("Factory advantages") }}</label>
+        <textarea class="lf-field" id="raw_advantages" name="raw_advantages" rows="3">{{ raw_fields.raw_advantages }}</textarea>
+      </div>
+      <div class="lf-field-group">
+        <label class="lf-label" for="raw_certificates">{{ t("Certificates") }}</label>
+        <textarea class="lf-field" id="raw_certificates" name="raw_certificates" rows="3">{{ raw_fields.raw_certificates }}</textarea>
+      </div>
+      <div class="lf-field-group">
+        <label class="lf-label" for="raw_moq">{{ t("MOQ") }}</label>
+        <textarea class="lf-field" id="raw_moq" name="raw_moq" rows="3">{{ raw_fields.raw_moq }}</textarea>
+      </div>
+      <div class="lf-field-group">
+        <label class="lf-label" for="raw_delivery_capacity">{{ t("Delivery capacity") }}</label>
+        <textarea class="lf-field" id="raw_delivery_capacity" name="raw_delivery_capacity" rows="3">{{ raw_fields.raw_delivery_capacity }}</textarea>
+      </div>
+      <div class="lf-field-group">
+        <label class="lf-label" for="raw_customer_countries">{{ t("Existing customer countries") }}</label>
+        <textarea class="lf-field" id="raw_customer_countries" name="raw_customer_countries" rows="3">{{ raw_fields.raw_customer_countries }}</textarea>
+      </div>
+    </div>
+    <div class="lf-actions">
+      {% if mode == "settings" %}
+        <button class="lf-button lf-button-primary" type="submit" name="action" value="regenerate">{{ t("Train AI") }}</button>
+      {% else %}
+        <button class="lf-button lf-button-primary" type="submit">{{ t("Train AI") }}</button>
+      {% endif %}
+      <a class="lf-button" href="/workbench">{{ t("Maybe later") }}</a>
+    </div>
+  </form>
+</section>
+
+<section class="lf-panel">
+  <header class="lf-section-header">
+    <div>
+      <h2>{{ t("Product memory") }}</h2>
+      <p>{{ t("AI generated suggestions may be inaccurate. Please review and confirm.") }}</p>
+    </div>
+  </header>
+  <form method="post" action="{{ confirm_action }}" class="lf-form-stack">
+    {{ csrf_input() }}
+    {% for key, value in raw_fields.items() %}
+      <input type="hidden" name="{{ key }}" value="{{ value }}">
+    {% endfor %}
+    <div class="lf-grid">
+      <div class="lf-field-group">
+        <label class="lf-label" for="product_keywords_cn">{{ t("Product keywords") }}</label>
+        <textarea class="lf-field" id="product_keywords_cn" name="product_keywords_cn" rows="4">{{ profile_field_text(extracted_profile, "product_keywords_cn") }}</textarea>
+      </div>
+      <div class="lf-field-group">
+        <label class="lf-label" for="product_keywords_en">{{ t("English keywords") }}</label>
+        <textarea class="lf-field" id="product_keywords_en" name="product_keywords_en" rows="4">{{ profile_field_text(extracted_profile, "product_keywords_en") }}</textarea>
+      </div>
+      <div class="lf-field-group">
+        <label class="lf-label" for="product_categories">{{ t("Product categories") }}</label>
+        <textarea class="lf-field" id="product_categories" name="product_categories" rows="4">{{ profile_field_text(extracted_profile, "product_categories") }}</textarea>
+      </div>
+      <div class="lf-field-group">
+        <label class="lf-label" for="selling_points_cn">{{ t("Selling points") }}</label>
+        <textarea class="lf-field" id="selling_points_cn" name="selling_points_cn" rows="4">{{ profile_field_text(extracted_profile, "selling_points_cn") }}</textarea>
+      </div>
+      <div class="lf-field-group">
+        <label class="lf-label" for="selling_points_en">{{ t("English selling points") }}</label>
+        <textarea class="lf-field" id="selling_points_en" name="selling_points_en" rows="4">{{ profile_field_text(extracted_profile, "selling_points_en") }}</textarea>
+      </div>
+      <div class="lf-field-group">
+        <label class="lf-label" for="target_industries">{{ t("Target industries") }}</label>
+        <textarea class="lf-field" id="target_industries" name="target_industries" rows="4">{{ profile_field_text(extracted_profile, "target_industries") }}</textarea>
+      </div>
+      <div class="lf-field-group">
+        <label class="lf-label" for="buyer_types">{{ t("Buyer types") }}</label>
+        <textarea class="lf-field" id="buyer_types" name="buyer_types" rows="4">{{ profile_field_text(extracted_profile, "buyer_types") }}</textarea>
+      </div>
+      <div class="lf-field-group">
+        <label class="lf-label" for="target_countries">{{ t("Target countries") }}</label>
+        <textarea class="lf-field" id="target_countries" name="target_countries" rows="4">{{ profile_field_text(extracted_profile, "target_countries") }}</textarea>
+      </div>
+      <div class="lf-field-group">
+        <label class="lf-label" for="search_keywords">{{ t("Search keywords") }}</label>
+        <textarea class="lf-field" id="search_keywords" name="search_keywords" rows="4">{{ profile_field_text(extracted_profile, "search_keywords") }}</textarea>
+      </div>
+      <div class="lf-field-group">
+        <label class="lf-label" for="negative_keywords">{{ t("Negative keywords") }}</label>
+        <textarea class="lf-field" id="negative_keywords" name="negative_keywords" rows="4">{{ profile_field_text(extracted_profile, "negative_keywords") }}</textarea>
+      </div>
+      <div class="lf-field-group">
+        <label class="lf-label" for="outreach_angles">{{ t("Outreach angles") }}</label>
+        <textarea class="lf-field" id="outreach_angles" name="outreach_angles" rows="4">{{ profile_field_text(extracted_profile, "outreach_angles") }}</textarea>
+      </div>
+      <div class="lf-field-group">
+        <label class="lf-label" for="certificates">{{ t("Certificates") }}</label>
+        <textarea class="lf-field" id="certificates" name="certificates" rows="4">{{ profile_field_text(extracted_profile, "certificates") }}</textarea>
+      </div>
+    </div>
+    <div class="lf-field-group">
+      <label class="lf-label" for="product_summary_en">{{ t("Product summary") }}</label>
+      <textarea class="lf-field" id="product_summary_en" name="product_summary_en" rows="4">{{ profile_field_text(extracted_profile, "product_summary_en") }}</textarea>
+    </div>
+    <div class="lf-grid">
+      <div class="lf-field-group">
+        <label class="lf-label" for="suggested_email_tone">{{ t("Suggested email tone") }}</label>
+        <input class="lf-field" id="suggested_email_tone" name="suggested_email_tone" value="{{ profile_field_text(extracted_profile, "suggested_email_tone") }}">
+      </div>
+      <div class="lf-field-group">
+        <label class="lf-label" for="moq_summary">{{ t("MOQ") }}</label>
+        <input class="lf-field" id="moq_summary" name="moq_summary" value="{{ profile_field_text(extracted_profile, "moq_summary") }}">
+      </div>
+      <div class="lf-field-group">
+        <label class="lf-label" for="delivery_capacity">{{ t("Delivery capacity") }}</label>
+        <input class="lf-field" id="delivery_capacity" name="delivery_capacity" value="{{ profile_field_text(extracted_profile, "delivery_capacity") }}">
+      </div>
+      <div class="lf-field-group">
+        <label class="lf-label" for="factory_type">{{ t("Factory type") }}</label>
+        <input class="lf-field" id="factory_type" name="factory_type" value="{{ profile_field_text(extracted_profile, "factory_type") }}">
+      </div>
+      <div class="lf-field-group">
+        <label class="lf-label" for="oem_odm_capability">{{ t("OEM/ODM capability") }}</label>
+        <input class="lf-field" id="oem_odm_capability" name="oem_odm_capability" value="{{ profile_field_text(extracted_profile, "oem_odm_capability") }}">
+      </div>
+      <div class="lf-field-group">
+        <label class="lf-label" for="price_positioning">{{ t("Price positioning") }}</label>
+        <input class="lf-field" id="price_positioning" name="price_positioning" value="{{ profile_field_text(extracted_profile, "price_positioning") }}">
+      </div>
+    </div>
+    <div class="lf-field-group">
+      <label class="lf-label" for="ideal_buyer_profile">{{ t("Ideal buyer profile") }}</label>
+      <textarea class="lf-field" id="ideal_buyer_profile" name="ideal_buyer_profile" rows="3">{{ profile_field_text(extracted_profile, "ideal_buyer_profile") }}</textarea>
+    </div>
+    <div class="lf-actions">
+      {% if mode == "settings" %}
+        <button class="lf-button" type="submit" name="action" value="save">{{ t("Save") }}</button>
+        <button class="lf-button lf-button-primary" type="submit" name="action" value="confirm">{{ t("Save and confirm") }}</button>
+      {% else %}
+        <button class="lf-button lf-button-primary" type="submit">{{ t("Save and confirm") }}</button>
+      {% endif %}
+    </div>
+  </form>
+</section>

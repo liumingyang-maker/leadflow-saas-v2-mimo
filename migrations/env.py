@@ -7,10 +7,12 @@ from alembic import context
 from sqlalchemy import engine_from_config, pool
 
 import app.modules.accounts.models  # noqa: F401
+import app.modules.ai.models  # noqa: F401
 import app.modules.audit.models  # noqa: F401
 import app.modules.inbound.models  # noqa: F401
 import app.modules.jobs.models  # noqa: F401
 import app.modules.leads.models  # noqa: F401
+import app.modules.onboarding.models  # noqa: F401
 import app.modules.outreach.models  # noqa: F401
 from app.extensions import Base
 

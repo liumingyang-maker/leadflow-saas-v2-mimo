@@ -25,6 +25,22 @@
   <a href="/settings">{{ t("Settings") }}</a>
 </nav>
 
+{% if product_profile_missing %}
+<section class="lf-panel lf-section">
+  <div class="lf-split">
+    <div>
+      <span class="lf-eyebrow">{{ t("Product memory") }}</span>
+      <h2>{{ t("Train your AI foreign trade operator") }}</h2>
+      <p>{{ t("Tell AI what you sell") }}</p>
+    </div>
+    <div class="lf-actions">
+      <a href="/onboarding/product-profile" class="lf-button lf-button-primary">{{ t("Start training") }}</a>
+      <a href="/workbench" class="lf-button">{{ t("Maybe later") }}</a>
+    </div>
+  </div>
+</section>
+{% endif %}
+
 <section class="lf-grid" aria-label="{{ t('Key metrics') }}">
   {{ stat(t("Accepted leads"), "0", t("Waiting for first review")) }}
   {{ stat(t("Tasks running"), "0", t("Loading current tasks")) }}

@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import json
+
 from app.integrations.ai.base import AIGenerationRequest, AIGenerationResult, AIProviderTestResult
 
 
@@ -11,6 +13,41 @@ class FakeAIProvider:
         return AIProviderTestResult(success=True)
 
     def generate_text(self, request: AIGenerationRequest) -> AIGenerationResult:
+        if "product_profile_extraction" in request.system_prompt:
+            text = json.dumps(
+                {
+                    "product_keywords_cn": ["样品产品", "外贸产品"],
+                    "product_keywords_en": ["sample product", "export product"],
+                    "product_categories": ["General merchandise"],
+                    "selling_points_cn": ["交付稳定", "适合小批量试单"],
+                    "selling_points_en": ["Stable delivery", "Suitable for trial orders"],
+                    "target_industries": ["Retail", "Distribution"],
+                    "buyer_types": ["Importer", "Distributor"],
+                    "target_countries": ["United States", "Germany"],
+                    "search_keywords": ["sample product importer", "export product distributor"],
+                    "negative_keywords": ["job", "career"],
+                    "outreach_angles": ["Introduce stable supply for small trial orders"],
+                    "suggested_email_tone": "professional and concise",
+                    "product_summary_en": "A practical export product for overseas buyers.",
+                    "moq_summary": "unknown",
+                    "certificates": [],
+                    "delivery_capacity": "unknown",
+                    "factory_type": "unknown",
+                    "ideal_buyer_profile": "Importers and distributors looking for stable supply.",
+                    "oem_odm_capability": "unknown",
+                    "price_positioning": "unknown",
+                },
+                ensure_ascii=False,
+            )
+            return AIGenerationResult(
+                success=True,
+                text=text,
+                provider="fake",
+                model=self._model,
+                input_tokens=_rough_tokens(request.system_prompt + request.user_prompt),
+                output_tokens=_rough_tokens(text),
+            )
+
         if request.locale == "en-US":
             text = (
                 "Subject: Quick idea for your growth pipeline\n\n"

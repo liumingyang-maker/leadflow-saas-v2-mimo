@@ -55,5 +55,67 @@ def build_outreach_draft_prompt(
     return OutreachDraftPrompt(system_prompt=system, user_prompt=user)
 
 
+def build_product_profile_extraction_prompt(
+    *, locale: str, raw_fields: dict[str, str]
+) -> OutreachDraftPrompt:
+    keys = (
+        "product_keywords_cn",
+        "product_keywords_en",
+        "product_categories",
+        "selling_points_cn",
+        "selling_points_en",
+        "target_industries",
+        "buyer_types",
+        "target_countries",
+        "search_keywords",
+        "negative_keywords",
+        "outreach_angles",
+        "suggested_email_tone",
+        "product_summary_en",
+        "moq_summary",
+        "certificates",
+        "delivery_capacity",
+        "factory_type",
+        "ideal_buyer_profile",
+        "oem_odm_capability",
+        "price_positioning",
+    )
+    system = (
+        "feature: product_profile_extraction\n"
+        "Extract a structured foreign trade product profile from user-provided text only. "
+        "Return strict JSON only. Do not invent certificates, MOQ, delivery capacity, or "
+        'customer countries. If unknown, use an empty array for list fields or "unknown" '
+        "for text fields. Do not include markdown fences. JSON keys must be exactly: "
+        f"{', '.join(keys)}."
+    )
+    if locale == "zh-CN":
+        system += " UI language is Simplified Chinese, but JSON keys stay English."
+    user = (
+        "Company introduction:\n"
+        f"{_clean_long(raw_fields.get('raw_company_intro', ''))}\n\n"
+        "Main products:\n"
+        f"{_clean_long(raw_fields.get('raw_products', ''))}\n\n"
+        "Website URL, saved only and not crawled:\n"
+        f"{_clean_long(raw_fields.get('raw_website_url', ''))}\n\n"
+        "Target markets:\n"
+        f"{_clean_long(raw_fields.get('raw_target_markets', ''))}\n\n"
+        "Factory advantages:\n"
+        f"{_clean_long(raw_fields.get('raw_advantages', ''))}\n\n"
+        "Certificates:\n"
+        f"{_clean_long(raw_fields.get('raw_certificates', ''))}\n\n"
+        "MOQ:\n"
+        f"{_clean_long(raw_fields.get('raw_moq', ''))}\n\n"
+        "Delivery capacity:\n"
+        f"{_clean_long(raw_fields.get('raw_delivery_capacity', ''))}\n\n"
+        "Existing customer countries:\n"
+        f"{_clean_long(raw_fields.get('raw_customer_countries', ''))}"
+    )
+    return OutreachDraftPrompt(system_prompt=system, user_prompt=user)
+
+
 def _clean(value: str) -> str:
     return (value or "").strip()[:500]
+
+
+def _clean_long(value: str) -> str:
+    return (value or "").strip()[:2000]

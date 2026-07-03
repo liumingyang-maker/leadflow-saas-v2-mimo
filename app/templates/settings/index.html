@@ -2,7 +2,8 @@
 {% call shell(t("Settings")) %}
 <header class="lf-page-header"><div><span class="lf-eyebrow">{{ t("Settings") }}</span><h1 class="lf-page-title">{{ t("Workspace settings") }}</h1></div></header>
 {% if tenant %}<section class="lf-panel"><h2>{{ t("Profile") }}</h2>
-<dl class="lf-dl"><dt>{{ t("Company") }}</dt><dd>{{ tenant.company_name }}</dd><dt>{{ t("Industry") }}</dt><dd>{{ tenant.industry }}</dd><dt>{{ t("Status") }}</dt><dd><span class="lf-badge">{{ tenant.status }}</span></dd><dt>{{ t("Plan") }}</dt><dd>{{ tenant.plan }}</dd></dl></section>{% endif %}
+<dl class="lf-dl"><dt>{{ t("Company") }}</dt><dd>{{ tenant.company_name }}</dd><dt>{{ t("Industry") }}</dt><dd>{{ tenant.industry }}</dd><dt>{{ t("Status") }}</dt><dd><span class="lf-badge">{{ tenant.status }}</span></dd><dt>{{ t("Plan") }}</dt><dd>{{ tenant.plan }}</dd></dl></section>
+<section class="lf-panel"><h2>{{ t("Product memory") }}</h2><p>{{ t("AI foreign trade operator product memory") }}</p><a class="lf-button lf-button-primary" href="/settings/product-profile">{{ t("View or edit") }}</a></section>{% endif %}
 {% if env_status %}<section class="lf-panel"><h2>{{ t("Environment") }}</h2>
 <dl class="lf-dl"><dt>{{ t("Environment") }}</dt><dd>{{ env_status.env }}</dd><dt>{{ t("CSRF enabled") }}</dt><dd>{{ env_status.csrf_enabled }}</dd><dt>{{ t("Cookie secure") }}</dt><dd>{{ env_status.cookie_secure }}</dd><dt>{{ t("Fake mailer") }}</dt><dd>{{ env_status.fake_mailer }}</dd></dl></section>{% endif %}
 {% endcall %}

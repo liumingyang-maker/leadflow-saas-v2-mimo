@@ -1,0 +1,15 @@
+{% from "components/_shell.html" import shell %}
+{% call shell(t("Product memory")) %}
+<header class="lf-page-header">
+  <div>
+    <span class="lf-eyebrow">{{ t("Settings") }}</span>
+    <h1 class="lf-page-title">{{ t("AI foreign trade operator product memory") }}</h1>
+    <p>{{ t("Tell AI what you sell") }}</p>
+  </div>
+  <a class="lf-button" href="/settings">{{ t("Back to workspace") }}</a>
+</header>
+
+{% set extract_action = "/settings/product-profile/update" %}
+{% set confirm_action = "/settings/product-profile/update" %}
+{% include "onboarding/_product_profile_form.html" %}
+{% endcall %}

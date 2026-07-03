@@ -23,6 +23,7 @@ from app.modules.audit.routes import register_audit_routes
 from app.modules.inbound.routes import register_inbound_routes
 from app.modules.jobs.routes import register_collection_routes
 from app.modules.leads.routes import register_lead_routes
+from app.modules.onboarding.routes import register_onboarding_routes
 from app.modules.outreach.routes import register_outreach_routes
 from app.modules.settings.routes import register_settings_routes
 
@@ -47,6 +48,7 @@ def create_app(config_name: str | None = None) -> Flask:
     register_collection_routes(flask_app)
     register_inbound_routes(flask_app)
     register_lead_routes(flask_app)
+    register_onboarding_routes(flask_app)
     register_outreach_routes(flask_app)
     register_page_routes(flask_app)
     register_settings_routes(flask_app)

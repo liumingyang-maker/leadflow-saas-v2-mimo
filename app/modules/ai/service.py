@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import time
 from dataclasses import dataclass
 
@@ -13,7 +14,10 @@ from app.integrations.ai.base import AIGenerationRequest, AIProvider
 from app.integrations.ai.disabled import DisabledProvider
 from app.integrations.ai.fake import FakeAIProvider
 from app.integrations.ai.openai_compatible import OpenAICompatibleProvider
-from app.integrations.ai.prompts import build_outreach_draft_prompt
+from app.integrations.ai.prompts import (
+    build_outreach_draft_prompt,
+    build_product_profile_extraction_prompt,
+)
 from app.modules.accounts.models import Tenant
 from app.modules.ai.ledger import record_ai_usage, usage_summary
 from app.modules.ai.models import AIProviderSettings
@@ -26,6 +30,32 @@ from app.modules.leads.models import Lead
 
 OUTREACH_DRAFT_FEATURE = "outreach_draft"
 OUTREACH_DRAFT_CREDITS = 5
+PRODUCT_PROFILE_EXTRACTION_FEATURE = "product_profile_extraction"
+PRODUCT_PROFILE_EXTRACTION_CREDITS = 0
+PRODUCT_PROFILE_ARRAY_FIELDS = (
+    "product_keywords_cn",
+    "product_keywords_en",
+    "product_categories",
+    "selling_points_cn",
+    "selling_points_en",
+    "target_industries",
+    "buyer_types",
+    "target_countries",
+    "search_keywords",
+    "negative_keywords",
+    "outreach_angles",
+    "certificates",
+)
+PRODUCT_PROFILE_TEXT_FIELDS = (
+    "suggested_email_tone",
+    "product_summary_en",
+    "moq_summary",
+    "delivery_capacity",
+    "factory_type",
+    "ideal_buyer_profile",
+    "oem_odm_capability",
+    "price_positioning",
+)
 
 
 class AIServiceError(ValueError):
@@ -48,6 +78,14 @@ class OutreachDraftResult:
     success: bool
     subject: str = ""
     body_text: str = ""
+    error_code: str = ""
+    quota_remaining: int = 0
+
+
+@dataclass(frozen=True)
+class ProductProfileExtractionResult:
+    success: bool
+    profile: dict[str, object] | None = None
     error_code: str = ""
     quota_remaining: int = 0
 
@@ -280,6 +318,134 @@ def generate_outreach_draft(
         return OutreachDraftResult(success=False, error_code=result.error_code or "provider_error")
 
 
+def extract_product_profile(
+    app: Flask,
+    *,
+    tenant_id: str,
+    user_id: str,
+    locale: str,
+    raw_fields: dict[str, str],
+) -> ProductProfileExtractionResult:
+    with _session(app) as session:
+        settings = _get_or_create_settings(session)
+        provider_name = settings.provider
+        model = settings.model
+        if not settings.enabled or settings.provider == "disabled":
+            record_ai_usage(
+                session,
+                tenant_id=tenant_id,
+                user_id=user_id,
+                feature_name=PRODUCT_PROFILE_EXTRACTION_FEATURE,
+                provider=provider_name,
+                model=model,
+                credits_charged=0,
+                input_tokens=0,
+                output_tokens=0,
+                status="disabled",
+                error_code="ai_disabled",
+            )
+            session.commit()
+            return ProductProfileExtractionResult(success=False, error_code="ai_disabled")
+
+        summary = summarize_quota(session, tenant_id=tenant_id)
+        if not summary.enabled:
+            record_ai_usage(
+                session,
+                tenant_id=tenant_id,
+                user_id=user_id,
+                feature_name=PRODUCT_PROFILE_EXTRACTION_FEATURE,
+                provider=provider_name,
+                model=model,
+                credits_charged=0,
+                input_tokens=0,
+                output_tokens=0,
+                status="disabled",
+                error_code="tenant_ai_disabled",
+            )
+            session.commit()
+            return ProductProfileExtractionResult(
+                success=False,
+                error_code="tenant_ai_disabled",
+                quota_remaining=summary.remaining,
+            )
+
+        prompt = build_product_profile_extraction_prompt(locale=locale, raw_fields=raw_fields)
+        provider = _provider_from_settings(settings)
+
+    start = time.monotonic()
+    result = provider.generate_text(
+        AIGenerationRequest(
+            system_prompt=prompt.system_prompt,
+            user_prompt=prompt.user_prompt,
+            locale=locale,
+            max_output_tokens=max(256, settings.max_output_tokens),
+        )
+    )
+    latency_ms = int((time.monotonic() - start) * 1000)
+
+    with _session(app) as session:
+        if result.success:
+            try:
+                profile = _parse_product_profile_json(result.text)
+            except AIServiceError:
+                record_ai_usage(
+                    session,
+                    tenant_id=tenant_id,
+                    user_id=user_id,
+                    feature_name=PRODUCT_PROFILE_EXTRACTION_FEATURE,
+                    provider=result.provider or provider_name,
+                    model=result.model or model,
+                    credits_charged=0,
+                    input_tokens=result.input_tokens,
+                    output_tokens=result.output_tokens,
+                    status="failed",
+                    error_code="malformed_json",
+                    latency_ms=latency_ms,
+                )
+                session.commit()
+                return ProductProfileExtractionResult(success=False, error_code="malformed_json")
+
+            record_ai_usage(
+                session,
+                tenant_id=tenant_id,
+                user_id=user_id,
+                feature_name=PRODUCT_PROFILE_EXTRACTION_FEATURE,
+                provider=result.provider or provider_name,
+                model=result.model or model,
+                credits_charged=PRODUCT_PROFILE_EXTRACTION_CREDITS,
+                input_tokens=result.input_tokens,
+                output_tokens=result.output_tokens,
+                status="success",
+                latency_ms=latency_ms,
+            )
+            remaining = summarize_quota(session, tenant_id=tenant_id).remaining
+            session.commit()
+            return ProductProfileExtractionResult(
+                success=True,
+                profile=profile,
+                quota_remaining=remaining,
+            )
+
+        record_ai_usage(
+            session,
+            tenant_id=tenant_id,
+            user_id=user_id,
+            feature_name=PRODUCT_PROFILE_EXTRACTION_FEATURE,
+            provider=result.provider or provider_name,
+            model=result.model or model,
+            credits_charged=0,
+            input_tokens=result.input_tokens,
+            output_tokens=result.output_tokens,
+            status="failed",
+            error_code=result.error_code or "provider_error",
+            latency_ms=latency_ms,
+        )
+        session.commit()
+        return ProductProfileExtractionResult(
+            success=False, error_code=result.error_code or "provider_error"
+        )
+
+
 def _session(app: Flask) -> Session:
     session = Session(get_engine(app))
     session.expire_on_commit = False
@@ -361,3 +527,42 @@ def _split_subject_body(text: str, *, locale: str) -> tuple[str, str]:
             return remainder[:500], ""
     fallback = "AI generated outreach draft" if locale == "en-US" else "AI 生成外联草稿"
     return fallback, clean[:10000]
+
+
+def _parse_product_profile_json(text: str) -> dict[str, object]:
+    clean = (text or "").strip()
+    if clean.startswith("```"):
+        clean = clean.removeprefix("```json").removeprefix("```").strip()
+        if clean.endswith("```"):
+            clean = clean[:-3].strip()
+    try:
+        data = json.loads(clean)
+    except json.JSONDecodeError as exc:
+        raise AIServiceError("Malformed product profile JSON") from exc
+    if not isinstance(data, dict):
+        raise AIServiceError("Product profile JSON must be an object")
+
+    normalized: dict[str, object] = {}
+    for key in PRODUCT_PROFILE_ARRAY_FIELDS:
+        normalized[key] = _normalize_list(data.get(key))
+    for key in PRODUCT_PROFILE_TEXT_FIELDS:
+        normalized[key] = _normalize_text(data.get(key))
+    return normalized
+
+
+def _normalize_list(value: object) -> list[str]:
+    if value is None:
+        return []
+    if isinstance(value, str):
+        parts = [part.strip() for part in value.replace(",", "\n").splitlines()]
+        return [part[:200] for part in parts if part]
+    if isinstance(value, list):
+        return [str(item).strip()[:200] for item in value if str(item).strip()]
+    return []
+
+
+def _normalize_text(value: object) -> str:
+    if value is None:
+        return "unknown"
+    clean = str(value).strip()
+    return clean[:1000] if clean else "unknown"
