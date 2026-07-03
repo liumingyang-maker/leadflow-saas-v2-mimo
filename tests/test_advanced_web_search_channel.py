@@ -7,6 +7,8 @@ from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 from werkzeug.security import generate_password_hash
 
+from app.integrations.acquisition.search_api.base import SearchResult
+
 
 def _app(monkeypatch):
     monkeypatch.setenv("SECRET_KEY", "advanced-search-test-secret-key")
@@ -110,11 +112,11 @@ def _confirmed_product_profile(engine, *, tenant_id: str) -> str:
         return profile.id
 
 
-def _run_advanced_search(client):
+def _run_advanced_search(client, *, country: str = "United States"):
     return client.post(
         "/collection/channels/advanced-web-search/run",
         data={
-            "country": "United States",
+            "country": country,
             "buyer_type": "Importer",
             "industry": "Retail",
             "result_count": "5",
@@ -270,3 +272,186 @@ def test_add_to_crm_still_explicit_and_does_not_send_email(monkeypatch) -> None:
         )
     assert lead is not None
     assert messages == 0
+
+
+def test_advanced_query_generation_prefers_buyer_oriented_templates() -> None:
+    from app.modules.jobs.target_discovery import _advanced_search_queries
+
+    queries = _advanced_search_queries(
+        {
+            "product_keywords_en": ["eco-friendly packaging bags"],
+            "buyer_types": ["Importer", "Distributor"],
+            "target_industries": ["Retail"],
+        },
+        filters={"country": "US", "buyer_type": "", "industry": "", "result_count": 3},
+        limit=3,
+    )
+
+    joined = " ".join(queries).lower()
+    assert "buyer us" in joined
+    assert "import company us" in joined
+    assert "-manufacturer" in joined
+    assert "-factory" in joined
+    assert "-supplier" in joined
+    assert " manufacturer " not in joined.replace("-manufacturer", "")
+    assert " supplier " not in joined.replace("-supplier", "")
+
+
+def test_hardware_query_generation_uses_procurement_terms() -> None:
+    from app.modules.jobs.target_discovery import _advanced_search_queries
+
+    queries = _advanced_search_queries(
+        {
+            "product_keywords_en": ["metal fittings"],
+            "product_categories": ["OEM metal components"],
+            "buyer_types": ["Industrial distributor"],
+        },
+        filters={"country": "", "buyer_type": "", "industry": "", "result_count": 3},
+        limit=3,
+    )
+
+    joined = " ".join(queries).lower()
+    assert "procurement company" in joined
+    assert "industrial distributor" in joined
+    assert "generic metal fittings distributor" not in joined
+
+
+def test_domain_blacklist_filters_directory_and_marketplace_results(monkeypatch) -> None:
+    app, engine = _app(monkeypatch)
+    _enable_fake_ai(app)
+    _enable_fake_acquisition(app)
+    client, tenant_id, _user_id = _tenant_client(app, engine)
+    _enable_tenant_ai(app, tenant_id=tenant_id)
+    _confirmed_product_profile(engine, tenant_id=tenant_id)
+
+    def fake_results(*_args, **_kwargs):
+        return [
+            SearchResult(
+                title="Europages bottle importer directory",
+                url="https://www.europages.com/bottle-importers",
+                snippet="Directory page",
+                source_provider="fake",
+                rank=1,
+            ),
+            SearchResult(
+                title="Atlas Retail Imports",
+                url="https://atlas-retail-imports.example",
+                snippet="Importer and distributor for retail drinkware brands",
+                source_provider="fake",
+                rank=2,
+            ),
+        ]
+
+    monkeypatch.setattr(
+        "app.integrations.acquisition.search_api.fake.FakeSearchProvider.search",
+        fake_results,
+    )
+
+    response = _run_advanced_search(client)
+
+    from app.modules.jobs.target_models import TargetCustomerCandidate, TargetCustomerDiscoveryRun
+
+    assert response.status_code == 200
+    with Session(engine) as session:
+        candidates = list(
+            session.scalars(
+                select(TargetCustomerCandidate).where(
+                    TargetCustomerCandidate.tenant_id == tenant_id
+                )
+            )
+        )
+        run = session.scalar(
+            select(TargetCustomerDiscoveryRun).where(
+                TargetCustomerDiscoveryRun.tenant_id == tenant_id
+            )
+        )
+    assert [candidate.company_name for candidate in candidates] == ["Atlas Retail Imports"]
+    assert run is not None
+    summary = json.loads(run.generated_plan_json)
+    assert summary["generated_count"] == 1
+    assert summary["invalid_count"] >= 1
+    assert summary["duplicate_count"] >= 1
+
+
+def test_supplier_candidate_scores_low_but_distributor_can_score_well() -> None:
+    from app.modules.jobs.target_discovery import (
+        _candidate_from_search_result,
+        _is_filtered_advanced_search_candidate,
+    )
+
+    supplier = _candidate_from_search_result(
+        SearchResult(
+            title="Bottle Manufacturer Factory",
+            url="https://bottle-factory.example",
+            snippet="OEM manufacturer and wholesale supplier",
+            source_provider="fake",
+            rank=1,
+        ),
+        filters={"country": "United States", "buyer_type": "Importer", "industry": "Retail"},
+    )
+    distributor = _candidate_from_search_result(
+        SearchResult(
+            title="Atlas Retail Imports",
+            url="https://atlas-retail-imports.example",
+            snippet="Importer, distributor, and private label purchasing company",
+            source_provider="fake",
+            rank=2,
+        ),
+        filters={"country": "United States", "buyer_type": "Importer", "industry": "Retail"},
+    )
+
+    assert supplier["confidence_score"] <= 30
+    assert _is_filtered_advanced_search_candidate(supplier)
+    assert distributor["confidence_score"] >= 70
+    assert not _is_filtered_advanced_search_candidate(distributor)
+
+
+def test_uae_zero_result_fallback_is_limited(monkeypatch) -> None:
+    app, engine = _app(monkeypatch)
+    _enable_fake_ai(app)
+    _enable_fake_acquisition(app)
+    client, tenant_id, _user_id = _tenant_client(app, engine)
+    _enable_tenant_ai(app, tenant_id=tenant_id)
+    _confirmed_product_profile(engine, tenant_id=tenant_id)
+    calls: list[tuple[str, str | None]] = []
+
+    def fake_results(_self, query, *, country=None, language=None, limit=10):
+        del language, limit
+        calls.append((query, country))
+        if country:
+            return []
+        return [
+            SearchResult(
+                title="Gulf Retail Imports",
+                url="https://gulf-retail-imports.example",
+                snippet="Importer and distributor for retail buyers in UAE",
+                source_provider="fake",
+                rank=1,
+            )
+        ]
+
+    monkeypatch.setattr(
+        "app.integrations.acquisition.search_api.fake.FakeSearchProvider.search",
+        fake_results,
+    )
+
+    response = _run_advanced_search(client, country="AE")
+
+    from app.modules.jobs.target_models import TargetCustomerCandidate, TargetCustomerDiscoveryRun
+
+    assert response.status_code == 200
+    with Session(engine) as session:
+        run = session.scalar(
+            select(TargetCustomerDiscoveryRun).where(
+                TargetCustomerDiscoveryRun.tenant_id == tenant_id
+            )
+        )
+        candidate = session.scalar(
+            select(TargetCustomerCandidate).where(TargetCustomerCandidate.tenant_id == tenant_id)
+        )
+    assert len(calls) <= 3
+    assert any(country is None and "UAE" in query for query, country in calls)
+    assert run is not None
+    assert '"fallback_used": true' in run.generated_plan_json
+    assert candidate is not None
+    assert candidate.company_name == "Gulf Retail Imports"

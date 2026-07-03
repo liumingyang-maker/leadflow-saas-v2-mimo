@@ -40,6 +40,73 @@ DEFAULT_MATCH_COUNT = 10
 MAX_MATCH_COUNT = 25
 MAX_PASTED_RESULTS_LENGTH = 10_000
 ADVANCED_WEB_SEARCH_FEATURE = "advanced_web_search"
+ADVANCED_SEARCH_NEGATIVE_KEYWORDS = (
+    "manufacturer",
+    "factory",
+    "supplier",
+    "producer",
+    "oem manufacturer",
+    "wholesale supplier",
+    "made in china",
+    "alibaba",
+    "temu",
+    "amazon",
+    "ebay",
+    "blog",
+    "article",
+    "news",
+    "directory",
+    "marketplace",
+    "b2b directory",
+    "europages",
+    "ensun",
+)
+ADVANCED_SEARCH_STRONG_NEGATIVE_TERMS = (
+    "manufacturer",
+    "factory",
+    "supplier",
+    "producer",
+    "marketplace",
+    "directory",
+    "blog",
+    "news",
+    "article",
+)
+ADVANCED_SEARCH_POSITIVE_TERMS = (
+    "importer",
+    "distributor",
+    "reseller",
+    "retailer",
+    "brand",
+    "procurement",
+    "sourcing",
+    "purchasing",
+    "buyer",
+    "private label",
+    "wholesale buyer",
+)
+ADVANCED_SEARCH_NOISE_DOMAINS = (
+    "europages.",
+    "ensun.io",
+    "alibaba.",
+    "made-in-china.",
+    "amazon.",
+    "ebay.",
+    "temu.",
+    "pinterest.",
+    "wikipedia.",
+    "youtube.",
+    "facebook.",
+    "linkedin.",
+    "medium.",
+    "blogspot.",
+    "wordpress.",
+)
+COUNTRY_QUERY_FALLBACKS = {
+    "ae": "UAE",
+    "uae": "UAE",
+    "united arab emirates": "UAE",
+}
 
 
 @dataclass(frozen=True)
@@ -415,15 +482,35 @@ def run_advanced_web_search_for_collection(
     try:
         search_results: list[SearchResult] = []
         per_query_limit = max(1, min(result_count, 10))
+        executed_queries: list[str] = []
+        fallback_used = False
         for query in queries:
-            search_results.extend(
-                provider.search(
-                    query,
-                    country=str(filters.get("country", "")) or None,
-                    language="en",
-                    limit=per_query_limit,
-                )
+            if len(executed_queries) >= query_limit:
+                break
+            provider_results = provider.search(
+                query,
+                country=str(filters.get("country", "")) or None,
+                language="en",
+                limit=per_query_limit,
             )
+            search_results.extend(provider_results)
+            executed_queries.append(query)
+            if not provider_results and not fallback_used and len(executed_queries) < query_limit:
+                fallback_query = _country_fallback_query(
+                    query,
+                    country=str(filters.get("country", "")),
+                )
+                if fallback_query:
+                    search_results.extend(
+                        provider.search(
+                            fallback_query,
+                            country=None,
+                            language="en",
+                            limit=per_query_limit,
+                        )
+                    )
+                    executed_queries.append(fallback_query)
+                    fallback_used = True
     except SearchProviderError as exc:
         _record_advanced_search_ledger(
             app,
@@ -444,7 +531,8 @@ def run_advanced_web_search_for_collection(
                     **filters,
                     "channel_key": "advanced_web_search",
                     "provider": settings.provider,
-                    "query_count": len(queries),
+                    "query_count": len(executed_queries),
+                    "fallback_used": fallback_used,
                 },
                 ensure_ascii=False,
             ),
@@ -452,8 +540,9 @@ def run_advanced_web_search_for_collection(
                 {
                     "source_channel": "advanced_web_search",
                     "source_provider": settings.provider,
-                    "queries": queries,
-                    "query_count": len(queries),
+                    "queries": executed_queries,
+                    "query_count": len(executed_queries),
+                    "fallback_used": fallback_used,
                     "requested_count": result_count,
                     "credits_estimated": 0,
                     "credits_charged": 0,
@@ -476,6 +565,9 @@ def run_advanced_web_search_for_collection(
             if saved >= result_count:
                 break
             candidate_data = _candidate_from_search_result(result, filters=filters)
+            if _is_filtered_advanced_search_candidate(candidate_data):
+                invalid += 1
+                continue
             if not candidate_data.get("company_name") and not candidate_data.get("website"):
                 invalid += 1
                 continue
@@ -486,7 +578,7 @@ def run_advanced_web_search_for_collection(
                 data=candidate_data,
             ):
                 duplicates += 1
-                candidate_data["status"] = "duplicate"
+                continue
             session.add(_candidate_from_ai(tenant_id=tenant_id, run_id=run.id, data=candidate_data))
             saved += 1
         run.generated_count = saved
@@ -744,18 +836,57 @@ def _advanced_search_queries(
     country = str(filters.get("country", "") or "").strip()
     filtered_buyer = str(filters.get("buyer_type", "") or "").strip()
     base_keyword = keywords[0] if keywords else "product"
+    profile_terms: list[str] = []
+    for key in ("product_keywords_en", "product_categories", "target_industries", "buyer_types"):
+        profile_terms.extend(_list_values(product_profile.get(key)))
+    profile_text = " ".join(profile_terms).lower()
+    is_hardware_oem = any(
+        term in profile_text
+        for term in ("hardware", "metal", "fitting", "component", "oem", "industrial")
+    )
     buyers = [filtered_buyer] if filtered_buyer else buyer_types
     queries: list[str] = []
+    if country:
+        queries.append(f"{base_keyword} buyer {country}")
+        queries.append(f"{base_keyword} import company {country}")
     for buyer in buyers:
-        query = f"{base_keyword} {buyer}"
-        if country:
-            query = f"{query} {country}"
-        queries.append(query)
-    queries.append(f"{base_keyword} wholesaler")
-    queries.append(f"{base_keyword} procurement")
+        normalized_buyer = buyer.lower()
+        if any(term in normalized_buyer for term in ("manufacturer", "factory", "supplier")):
+            continue
+        if normalized_buyer in {"distributor", "wholesaler"}:
+            queries.append(f"{base_keyword} {normalized_buyer} company")
+        elif normalized_buyer:
+            queries.append(f"{base_keyword} {normalized_buyer} list")
+    if is_hardware_oem:
+        queries.extend(
+            [
+                f"{base_keyword} procurement company",
+                f"{base_keyword} industrial distributor",
+                f"{base_keyword} sourcing company",
+                f"{base_keyword} parts buyer",
+                f"{base_keyword} assembly company",
+                f"{base_keyword} maintenance supplies buyer",
+            ]
+        )
+    else:
+        queries.extend(
+            [
+                f"{base_keyword} importer list",
+                f"{base_keyword} wholesale buyer",
+                f"{base_keyword} purchasing company",
+                f"{base_keyword} sourcing company",
+                f"{base_keyword} private label brand",
+                f"{base_keyword} distributor company",
+                f"{base_keyword} retail chain",
+                f"{base_keyword} B2B buyer",
+                f"{base_keyword} procurement company",
+                f"{base_keyword} supplier wanted",
+            ]
+        )
+    negative_suffix = "-manufacturer -factory -supplier -alibaba -amazon -ebay"
     deduped: list[str] = []
     for query in queries:
-        clean = " ".join(query.split())[:180]
+        clean = " ".join(f"{query} {negative_suffix}".split())[:180]
         if clean and clean not in deduped:
             deduped.append(clean)
     return deduped[: max(1, min(limit, 3))]
@@ -769,6 +900,8 @@ def _candidate_from_search_result(
     country = str(filters.get("country", "") or result.country or "")
     industry = str(filters.get("industry", "") or "")
     buyer_type = str(filters.get("buyer_type", "") or "")
+    combined = f"{result.title} {result.snippet} {result.url}"
+    quality_flags = _advanced_search_quality_flags(combined=combined, domain=domain)
     data = {
         "company_name": company_name,
         "website": result.url,
@@ -780,7 +913,7 @@ def _candidate_from_search_result(
             f"Search result matched the advanced web search query. {result.snippet}",
             1000,
         ),
-        "confidence_score": _score_candidate(
+        "confidence_score": _score_advanced_search_candidate(
             {
                 "company_name": company_name,
                 "website": result.url,
@@ -788,6 +921,7 @@ def _candidate_from_search_result(
                 "industry": industry,
                 "buyer_type": buyer_type,
                 "match_reason": result.snippet,
+                "quality_flags": quality_flags,
             },
             filters=filters,
         ),
@@ -796,6 +930,7 @@ def _candidate_from_search_result(
             "source_provider": result.source_provider,
             "rank": result.rank,
             "domain": domain,
+            "quality_flags": ",".join(quality_flags),
             "unverified": True,
         },
     }
@@ -849,16 +984,18 @@ def _record_advanced_search_ledger(
 def _score_candidate(data: dict[str, object], *, filters: dict[str, object]) -> int:
     score = _int_in_range(data.get("confidence_score", 65), 0, 100)
     website = str(data.get("website", "")).lower()
-    combined = " ".join(
-        str(data.get(key, ""))
-        for key in (
-            "company_name",
-            "industry",
-            "buyer_type",
-            "match_reason",
-            "suggested_next_action",
-        )
-    ).lower()
+    combined = _strip_negated_search_terms(
+        " ".join(
+            str(data.get(key, ""))
+            for key in (
+                "company_name",
+                "industry",
+                "buyer_type",
+                "match_reason",
+                "suggested_next_action",
+            )
+        ).lower()
+    )
     if website and "." in website:
         score += 5
     for field in ("country", "buyer_type", "industry"):
@@ -869,6 +1006,118 @@ def _score_candidate(data: dict[str, object], *, filters: dict[str, object]) -> 
     if any(term in combined for term in penalty_terms):
         score -= 10
     return max(0, min(score, 100))
+
+
+def _score_advanced_search_candidate(data: dict[str, object], *, filters: dict[str, object]) -> int:
+    score = _int_in_range(data.get("confidence_score", 60), 0, 100)
+    website = str(data.get("website", "")).lower()
+    domain = _domain_from_url(website)
+    combined = " ".join(
+        str(data.get(key, ""))
+        for key in (
+            "company_name",
+            "industry",
+            "buyer_type",
+            "match_reason",
+            "suggested_next_action",
+        )
+    ).lower()
+    flags = data.get("quality_flags", [])
+    if isinstance(flags, list):
+        quality_flags = {str(flag) for flag in flags}
+    else:
+        quality_flags = set()
+
+    if website and "." in website and not _is_noise_domain(domain):
+        score += 12
+    if any(term in combined for term in ADVANCED_SEARCH_POSITIVE_TERMS):
+        score += 18
+    if "official_company_site" in quality_flags:
+        score += 10
+    for field in ("country", "buyer_type", "industry"):
+        value = str(filters.get(field, "")).strip().lower()
+        if value and value in combined:
+            score += 6
+
+    strong_negative_hits = sum(
+        1 for term in ADVANCED_SEARCH_STRONG_NEGATIVE_TERMS if term in combined
+    )
+    score -= strong_negative_hits * 18
+    if "noise_domain" in quality_flags:
+        score -= 55
+    if "marketplace_or_directory" in quality_flags:
+        score -= 35
+    if "supplier_like" in quality_flags:
+        score -= 30
+    if not website or "." not in website:
+        score -= 25
+    country_filter = str(filters.get("country", "")).strip().lower()
+    country_value = str(data.get("country", "")).strip().lower()
+    if country_filter and country_value and country_filter != country_value:
+        score -= 10
+    return max(0, min(score, 100))
+
+
+def _advanced_search_quality_flags(*, combined: str, domain: str) -> list[str]:
+    text = _strip_negated_search_terms(combined.lower())
+    flags: list[str] = []
+    if _is_noise_domain(domain):
+        flags.append("noise_domain")
+    if any(term in text for term in ("directory", "marketplace", "europages", "ensun")):
+        flags.append("marketplace_or_directory")
+    if any(term in text for term in ("manufacturer", "factory", "supplier", "producer")):
+        flags.append("supplier_like")
+    if any(term in text for term in ADVANCED_SEARCH_POSITIVE_TERMS):
+        flags.append("buyer_like")
+    if domain and not _is_noise_domain(domain):
+        flags.append("official_company_site")
+    return flags
+
+
+def _is_filtered_advanced_search_candidate(data: dict[str, object]) -> bool:
+    domain = _domain_from_url(str(data.get("website", "")))
+    if _is_noise_domain(domain):
+        return True
+    score = _int_in_range(data.get("confidence_score", 0), 0, 100)
+    raw_data = data.get("raw_data")
+    flags = ""
+    if isinstance(raw_data, dict):
+        flags = str(raw_data.get("quality_flags", ""))
+    if score <= 15 and any(
+        flag in flags for flag in ("marketplace_or_directory", "supplier_like", "noise_domain")
+    ):
+        return True
+    if score <= 35 and "supplier_like" in flags:
+        return True
+    return False
+
+
+def _is_noise_domain(domain: str) -> bool:
+    clean = domain.lower()
+    if clean.startswith("www."):
+        clean = clean[4:]
+    return any(pattern.replace("*", "") in clean for pattern in ADVANCED_SEARCH_NOISE_DOMAINS)
+
+
+def _country_fallback_query(query: str, *, country: str) -> str:
+    clean_country = country.strip().lower()
+    fallback_name = COUNTRY_QUERY_FALLBACKS.get(clean_country, "")
+    if not fallback_name:
+        return ""
+    if fallback_name.lower() in query.lower():
+        return ""
+    return " ".join(f"{query} {fallback_name}".split())[:180]
+
+
+def _strip_negated_search_terms(value: str) -> str:
+    text = value
+    for term in ADVANCED_SEARCH_NEGATIVE_KEYWORDS:
+        normalized = term.lower().replace(" ", r"\s+")
+        # Avoid penalizing candidates because our own query contained negative operators.
+        import re
+
+        text = re.sub(rf"-{normalized}", "", text)
+    return text
 
 
 def _list_values(value: object) -> list[str]:
