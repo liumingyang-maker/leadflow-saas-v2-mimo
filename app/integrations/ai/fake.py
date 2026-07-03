@@ -138,6 +138,90 @@ class FakeAIProvider:
                 output_tokens=_rough_tokens(text),
             )
 
+        if "basic_search_strategy_generation" in request.system_prompt:
+            text = json.dumps(
+                {
+                    "buyer_types": ["Importer", "Distributor", "Promotional products buyer"],
+                    "target_countries": ["United States", "Germany", "Australia"],
+                    "search_keywords": [
+                        "insulated bottle importer",
+                        "drinkware distributor",
+                        "custom bottle wholesaler",
+                        "private label water bottle buyer",
+                    ],
+                    "negative_keywords": ["job", "career", "free", "supplier"],
+                    "query_templates": [
+                        "{product_keyword} importer",
+                        "{product_keyword} distributor",
+                        "{product_keyword} private label",
+                    ],
+                    "query_rationale": [
+                        "Start from importer and distributor queries before paid channels.",
+                        "Use private label terms for OEM/ODM fit.",
+                    ],
+                    "match_scoring_hints": [
+                        "Prefer companies selling adjacent retail or promotional categories.",
+                        "Penalize suppliers, job boards, and directory-only pages.",
+                    ],
+                },
+                ensure_ascii=False,
+            )
+            return AIGenerationResult(
+                success=True,
+                text=text,
+                provider="fake",
+                model=self._model,
+                input_tokens=_rough_tokens(request.system_prompt + request.user_prompt),
+                output_tokens=_rough_tokens(text),
+            )
+
+        if "pasted_search_result_parsing" in request.system_prompt:
+            text = json.dumps(
+                {
+                    "candidates": [
+                        {
+                            "company_name": "Atlas Promo Supply",
+                            "country": "United States",
+                            "website": "https://atlas-promo.example",
+                            "industry": "Promotional products",
+                            "buyer_type": "Distributor",
+                            "source_channel": "pasted_search_results",
+                            "match_reason": (
+                                "Pasted result suggests a promotional products catalog."
+                            ),
+                            "confidence_score": 80,
+                            "suggested_next_action": (
+                                "Review catalog categories before adding to CRM."
+                            ),
+                        },
+                        {
+                            "company_name": "Nordic Outdoor Goods",
+                            "country": "Germany",
+                            "website": "https://nordic-outdoor.example",
+                            "industry": "Outdoor retail",
+                            "buyer_type": "Importer",
+                            "source_channel": "pasted_search_results",
+                            "match_reason": (
+                                "Search snippet references outdoor drinkware accessories."
+                            ),
+                            "confidence_score": 76,
+                            "suggested_next_action": (
+                                "Check whether drinkware is a current category."
+                            ),
+                        },
+                    ]
+                },
+                ensure_ascii=False,
+            )
+            return AIGenerationResult(
+                success=True,
+                text=text,
+                provider="fake",
+                model=self._model,
+                input_tokens=_rough_tokens(request.system_prompt + request.user_prompt),
+                output_tokens=_rough_tokens(text),
+            )
+
         if request.locale == "en-US":
             text = (
                 "Subject: Quick idea for your growth pipeline\n\n"

@@ -21,6 +21,40 @@
 <section class="lf-panel lf-section">
   <header class="lf-section-header">
     <div>
+      <span class="lf-eyebrow">{{ t("Acquisition channels") }}</span>
+      <h2>{{ t("Acquisition channels") }}</h2>
+      <p>{{ t("AI basic search") }} · {{ t("Test phase does not charge credits") }}</p>
+    </div>
+  </header>
+  <div class="lf-grid">
+    {% for channel in acquisition_channels %}
+      <article class="lf-panel">
+        <span class="lf-badge">
+          {% if channel.status == "enabled_basic" %}
+            {{ t("Available") }}
+          {% elif channel.status == "coming_soon" %}
+            {{ t("Coming soon") }}
+          {% elif channel.tier in ["advanced", "premium"] %}
+            {{ t("Advanced channel") }}
+          {% else %}
+            {{ t("Planned") }}
+          {% endif %}
+        </span>
+        <h3>{{ t(channel.channel_name) }}</h3>
+        <p>{{ t(channel.description) }}</p>
+        {% if channel.enabled and channel.href %}
+          <a class="lf-button lf-button-secondary" href="{{ channel.href }}">{{ t("View or edit") }}</a>
+        {% else %}
+          <span class="lf-muted">{{ t("Placeholder channel not yet available") }}</span>
+        {% endif %}
+      </article>
+    {% endfor %}
+  </div>
+</section>
+
+<section class="lf-panel lf-section">
+  <header class="lf-section-header">
+    <div>
       <span class="lf-eyebrow">{{ t("Target customers") }}</span>
       <h2>{{ t("AI helps you find target customers") }}</h2>
       <p>{{ t("Based on your product memory") }}</p>
@@ -54,9 +88,10 @@
       </article>
     </div>
 
-    <form class="lf-panel lf-form-stack" method="post" action="/collection/target-plan">
+    <form id="ai-basic-search" class="lf-panel lf-form-stack" method="post" action="/collection/channels/basic-search/strategy">
       {{ csrf_input() }}
-      <h3>{{ t("Recommended buyer profile") }}</h3>
+      <h3>{{ t("AI basic search") }}</h3>
+      <p>{{ t("Basic search does not automatically crawl websites") }}</p>
       <div class="lf-grid">
         <div class="lf-field-group">
           <label class="lf-label" for="country">{{ t("Target countries") }}</label>
@@ -76,33 +111,58 @@
         </div>
       </div>
       <div class="lf-actions">
-        <button class="lf-button lf-button-primary" type="submit">{{ t("Recommended buyer profile") }}</button>
+        <button class="lf-button lf-button-primary" type="submit">{{ t("Generate search strategy") }}</button>
       </div>
     </form>
 
     {% if target_plan %}
       <section class="lf-panel">
-        <h3>{{ t("Recommended buyer profile") }}</h3>
+        <h3>{{ t("Search strategy") }}</h3>
         <dl class="lf-dl">
           <dt>{{ t("Buyer types") }}</dt>
-          <dd>{{ ", ".join(target_plan.get("ideal_buyer_types", [])) }}</dd>
+          <dd>{{ ", ".join(target_plan.get("buyer_types", target_plan.get("ideal_buyer_types", []))) }}</dd>
           <dt>{{ t("Target industries") }}</dt>
           <dd>{{ ", ".join(target_plan.get("target_industries", [])) }}</dd>
           <dt>{{ t("Target countries") }}</dt>
-          <dd>{{ ", ".join(target_plan.get("recommended_countries", [])) }}</dd>
+          <dd>{{ ", ".join(target_plan.get("target_countries", target_plan.get("recommended_countries", []))) }}</dd>
           <dt>{{ t("Search keywords") }}</dt>
           <dd>{{ ", ".join(target_plan.get("search_keywords", [])) }}</dd>
+          {% if target_plan.get("negative_keywords") %}
+            <dt>{{ t("Negative keywords") }}</dt>
+            <dd>{{ ", ".join(target_plan.get("negative_keywords", [])) }}</dd>
+          {% endif %}
+          {% if target_plan.get("query_templates") %}
+            <dt>{{ t("Search queries") }}</dt>
+            <dd>{{ ", ".join(target_plan.get("query_templates", [])) }}</dd>
+          {% endif %}
           <dt>{{ t("Review before using") }}</dt>
-          <dd>{{ target_plan.get("first_batch_strategy", "") }}</dd>
+          <dd>{{ target_plan.get("first_batch_strategy", "") or ", ".join(target_plan.get("query_rationale", [])) }}</dd>
         </dl>
-        <form method="post" action="/collection/target-match" class="lf-actions">
+        {% if target_plan.get("search_links") %}
+          <h4>{{ t("Search links") }}</h4>
+          <div class="lf-grid">
+            {% for link in target_plan.get("search_links", []) %}
+              <a class="lf-button lf-button-secondary" href="{{ link.url }}" target="_blank" rel="noopener noreferrer">
+                {{ t("Open search link") }} · {{ link.engine }}
+              </a>
+            {% endfor %}
+          </div>
+        {% endif %}
+        <form method="post" action="/collection/channels/basic-search/parse-results" class="lf-form-stack">
           {{ csrf_input() }}
           <input type="hidden" name="run_id" value="{{ target_context.latest_run.id }}">
           <input type="hidden" name="country" value="{{ target_filters.country }}">
           <input type="hidden" name="buyer_type" value="{{ target_filters.buyer_type }}">
           <input type="hidden" name="industry" value="{{ target_filters.industry }}">
           <input type="hidden" name="result_count" value="{{ target_filters.result_count }}">
-          <button class="lf-button lf-button-primary" type="submit">{{ t("Match target customers") }}</button>
+          <div class="lf-field-group">
+            <label class="lf-label" for="pasted_results">{{ t("Paste search results") }}</label>
+            <textarea class="lf-field" id="pasted_results" name="pasted_results" rows="7" maxlength="10000" placeholder="{{ t('Paste search results') }}"></textarea>
+          </div>
+          <p>{{ t("Please review AI results before use") }}</p>
+          <div class="lf-actions">
+            <button class="lf-button lf-button-primary" type="submit">{{ t("Parse into candidates") }}</button>
+          </div>
         </form>
       </section>
     {% endif %}

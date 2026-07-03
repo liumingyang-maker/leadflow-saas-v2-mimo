@@ -9,9 +9,12 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.extensions import get_engine
+from app.integrations.acquisition.basic_ai_search import build_search_links
 from app.modules.ai.service import (
+    generate_basic_search_strategy,
     generate_target_customer_candidates,
     generate_target_customer_plan,
+    parse_pasted_search_results,
 )
 from app.modules.jobs.target_models import (
     TargetCustomerCandidate,
@@ -23,6 +26,7 @@ from app.modules.onboarding.service import parse_profile_json
 
 DEFAULT_MATCH_COUNT = 10
 MAX_MATCH_COUNT = 25
+MAX_PASTED_RESULTS_LENGTH = 10_000
 
 
 @dataclass(frozen=True)
@@ -178,6 +182,137 @@ def match_collection_target_candidates(
         )
 
 
+def generate_basic_search_strategy_for_collection(
+    app: Flask,
+    *,
+    tenant_id: str,
+    user_id: str,
+    locale: str,
+    form,
+) -> TargetDiscoveryResult:
+    filters = filters_from_form(form)
+    with Session(get_engine(app)) as session:
+        profile = _confirmed_product_profile(session, tenant_id=tenant_id)
+        if profile is None:
+            return TargetDiscoveryResult(success=False, error_code="missing_product_profile")
+        product_profile_id = profile.id
+        product_profile_json = profile.extracted_profile_json
+
+    result = generate_basic_search_strategy(
+        app,
+        tenant_id=tenant_id,
+        user_id=user_id,
+        locale=locale,
+        product_profile_json=product_profile_json,
+        filters=filters,
+        count=int(filters["result_count"]),
+    )
+
+    strategy = dict(result.strategy or {})
+    if result.success:
+        strategy["search_links"] = build_search_links(
+            keywords=[str(item) for item in strategy.get("search_keywords", [])],
+            country=str(filters.get("country", "")),
+        )
+        strategy["source_channel"] = "basic_ai_search"
+        strategy["test_phase_free"] = True
+
+    with Session(get_engine(app)) as session:
+        run = TargetCustomerDiscoveryRun(
+            tenant_id=tenant_id,
+            product_profile_id=product_profile_id,
+            filters_json=json.dumps(
+                {**filters, "channel_key": "ai_basic_search"},
+                ensure_ascii=False,
+            ),
+            generated_plan_json=json.dumps(strategy, ensure_ascii=False),
+            status="planned" if result.success else "failed",
+            requested_count=int(filters["result_count"]),
+            generated_count=0,
+            credits_estimated=0,
+            credits_charged=0,
+        )
+        session.add(run)
+        session.commit()
+        return TargetDiscoveryResult(
+            success=result.success,
+            error_code=result.error_code,
+            run_id=run.id,
+        )
+
+
+def parse_basic_search_results_for_collection(
+    app: Flask,
+    *,
+    tenant_id: str,
+    user_id: str,
+    locale: str,
+    form,
+) -> TargetDiscoveryResult:
+    filters = filters_from_form(form)
+    pasted_results = _limit(form.get("pasted_results", ""), MAX_PASTED_RESULTS_LENGTH)
+    if not pasted_results:
+        return TargetDiscoveryResult(success=False, error_code="missing_search_results")
+
+    with Session(get_engine(app)) as session:
+        run = _run_for_match(session, tenant_id=tenant_id, run_id=str(form.get("run_id", "") or ""))
+        if run is None:
+            return TargetDiscoveryResult(success=False, error_code="missing_target_plan")
+        profile = session.get(TenantProductProfile, run.product_profile_id)
+        if profile is None or profile.tenant_id != tenant_id or profile.status != "confirmed":
+            return TargetDiscoveryResult(success=False, error_code="missing_product_profile")
+        run_id = run.id
+        product_profile_json = profile.extracted_profile_json
+        strategy_json = run.generated_plan_json
+
+    result = parse_pasted_search_results(
+        app,
+        tenant_id=tenant_id,
+        user_id=user_id,
+        locale=locale,
+        product_profile_json=product_profile_json,
+        strategy_json=strategy_json,
+        pasted_results=pasted_results,
+        filters=filters,
+        count=int(filters["result_count"]),
+    )
+
+    with Session(get_engine(app)) as session:
+        run = session.get(TargetCustomerDiscoveryRun, run_id)
+        if run is None or run.tenant_id != tenant_id:
+            return TargetDiscoveryResult(success=False, error_code="missing_target_plan")
+        if result.success and result.candidates is not None:
+            _clear_pending_candidates(session, tenant_id=tenant_id, run_id=run_id)
+            saved = 0
+            for candidate in result.candidates[: int(filters["result_count"])]:
+                normalized = _normalize_basic_search_candidate(candidate, filters=filters)
+                if _candidate_duplicate_exists(
+                    session,
+                    tenant_id=tenant_id,
+                    run_id=run_id,
+                    data=normalized,
+                ):
+                    normalized["status"] = "duplicate"
+                session.add(_candidate_from_ai(tenant_id=tenant_id, run_id=run_id, data=normalized))
+                saved += 1
+            run.status = "matched"
+            run.generated_count = saved
+            run.credits_charged = 0
+            run.generated_plan_json = _mark_pasted_result_parse(
+                run.generated_plan_json,
+                pasted_length=len(pasted_results),
+            )
+        else:
+            run.status = "failed"
+            run.generated_count = 0
+        session.commit()
+        return TargetDiscoveryResult(
+            success=result.success,
+            error_code=result.error_code,
+            run_id=run_id,
+        )
+
+
 def add_candidate_to_crm(
     app: Flask, *, tenant_id: str, user_id: str, candidate_id: str
 ) -> AddCandidateResult:
@@ -298,20 +433,24 @@ def _run_for_match(
 def _candidate_from_ai(
     *, tenant_id: str, run_id: str, data: dict[str, object]
 ) -> TargetCustomerCandidate:
-    raw_data = {"suggested_next_action": str(data.get("suggested_next_action", ""))[:500]}
+    confidence_score = _int_in_range(data.get("confidence_score", 0), 0, 100)
+    raw_data = {
+        "suggested_next_action": _public_text(data.get("suggested_next_action", ""), 500),
+        "unverified": True,
+    }
     return TargetCustomerCandidate(
         tenant_id=tenant_id,
         run_id=run_id,
-        company_name=str(data.get("company_name", ""))[:300],
-        website=str(data.get("website", ""))[:500],
-        country=str(data.get("country", ""))[:120],
-        industry=str(data.get("industry", ""))[:120],
-        buyer_type=str(data.get("buyer_type", ""))[:120],
-        source_channel=str(data.get("source_channel", ""))[:80],
-        match_reason=str(data.get("match_reason", ""))[:1000],
-        confidence_score=int(data.get("confidence_score", 0) or 0),
+        company_name=_public_text(data.get("company_name", ""), 300),
+        website=_public_text(data.get("website", ""), 500),
+        country=_public_text(data.get("country", ""), 120),
+        industry=_public_text(data.get("industry", ""), 120),
+        buyer_type=_public_text(data.get("buyer_type", ""), 120),
+        source_channel=_public_text(data.get("source_channel", ""), 80),
+        match_reason=_public_text(data.get("match_reason", ""), 1000),
+        confidence_score=confidence_score,
         raw_data_json=json.dumps(raw_data, ensure_ascii=False),
-        status="pending_review",
+        status=str(data.get("status", "pending_review"))[:24] or "pending_review",
     )
 
 
@@ -336,12 +475,92 @@ def _find_duplicate(session: Session, *, tenant_id: str, domain: str, name: str)
     return session.scalar(query)
 
 
+def _candidate_duplicate_exists(
+    session: Session, *, tenant_id: str, run_id: str, data: dict[str, object]
+) -> bool:
+    domain = _domain_from_url(str(data.get("website", "")))
+    company_name = _normalize_company_name(str(data.get("company_name", "")))
+    if not domain and not company_name:
+        return False
+    candidates = session.scalars(
+        select(TargetCustomerCandidate).where(
+            TargetCustomerCandidate.tenant_id == tenant_id,
+            TargetCustomerCandidate.run_id == run_id,
+        )
+    )
+    for candidate in candidates:
+        if domain and _domain_from_url(candidate.website) == domain:
+            return True
+        if company_name and _normalize_company_name(candidate.company_name) == company_name:
+            return True
+    if _find_duplicate(
+        session,
+        tenant_id=tenant_id,
+        domain=domain,
+        name=str(data.get("company_name", "")),
+    ):
+        return True
+    return False
+
+
+def _normalize_basic_search_candidate(
+    data: dict[str, object], *, filters: dict[str, object]
+) -> dict[str, object]:
+    normalized = dict(data)
+    normalized["source_channel"] = str(normalized.get("source_channel") or "pasted_search_results")[
+        :80
+    ]
+    normalized["confidence_score"] = _score_candidate(normalized, filters=filters)
+    normalized.setdefault("suggested_next_action", "Review before adding to CRM.")
+    return normalized
+
+
+def _score_candidate(data: dict[str, object], *, filters: dict[str, object]) -> int:
+    score = _int_in_range(data.get("confidence_score", 65), 0, 100)
+    website = str(data.get("website", "")).lower()
+    combined = " ".join(
+        str(data.get(key, ""))
+        for key in (
+            "company_name",
+            "industry",
+            "buyer_type",
+            "match_reason",
+            "suggested_next_action",
+        )
+    ).lower()
+    if website and "." in website:
+        score += 5
+    for field in ("country", "buyer_type", "industry"):
+        value = str(filters.get(field, "")).strip().lower()
+        if value and value in combined:
+            score += 5
+    penalty_terms = ("supplier", "factory", "manufacturer", "job", "career", "blog", "news")
+    if any(term in combined for term in penalty_terms):
+        score -= 10
+    return max(0, min(score, 100))
+
+
+def _mark_pasted_result_parse(plan_json_text: str, *, pasted_length: int) -> str:
+    try:
+        parsed = json.loads(plan_json_text or "{}")
+        data = parsed if isinstance(parsed, dict) else {}
+    except json.JSONDecodeError:
+        data = {}
+    data["pasted_results_parsed"] = True
+    data["pasted_results_length"] = pasted_length
+    return json.dumps(data, ensure_ascii=False)
+
+
 def _domain_from_url(value: str) -> str:
     clean = (value or "").strip()
     if not clean:
         return ""
     parsed = urlsplit(clean if "://" in clean else f"https://{clean}")
     return parsed.netloc.lower()[:253]
+
+
+def _normalize_company_name(value: str) -> str:
+    return " ".join((value or "").lower().strip().split())
 
 
 def _company_notes(candidate: TargetCustomerCandidate) -> str:
@@ -376,3 +595,15 @@ def _int_in_range(value: object, minimum: int, maximum: int) -> int:
 
 def _limit(value: object, max_length: int) -> str:
     return str(value or "").strip()[:max_length]
+
+
+def _public_text(value: object, max_length: int) -> str:
+    clean = str(value or "").strip()
+    clean = clean.replace("\r", " ").replace("\n", " ")
+    clean = " ".join(clean.split())
+    # Search-result parsing must not persist private contact-like fields.
+    import re
+
+    clean = re.sub(r"[\w.+-]+@[\w-]+(?:\.[\w-]+)+", "", clean)
+    clean = re.sub(r"(?:\+?\d[\d\s().-]{7,}\d)", "", clean)
+    return clean[:max_length].strip()

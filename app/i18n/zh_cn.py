@@ -334,19 +334,34 @@ _BASE_TRANSLATIONS = {
         "AI 生成的建议可能不准确，请检查并确认。"
     ),
     "AI helps you find target customers": "AI 帮你寻找目标客户",
+    "AI basic search": "AI 普通搜索",
     "Add to CRM": "加入 CRM",
+    "Acquisition channels": "获客渠道",
+    "Advanced automatic search": "自动网页搜索",
+    "Advanced channel": "高级渠道",
     "API key": "API Key",
+    "Available": "可用",
     "Based on your product memory": (
         "基于你的产品记忆，AI 会推荐适合的买家类型、搜索关键词和首批目标客户候选。"
     ),
     "Base URL": "Base URL",
+    "Basic search does not automatically crawl websites": "普通搜索不会自动抓取网站",
+    "B2B directories": "B2B 目录",
     "Blocked quota": "额度不足拦截",
     "Candidate added to CRM": "候选客户已加入 CRM",
     "Candidate not found": "候选客户未找到",
+    "Carefully use public profiles later, without unauthorized scraping.": (
+        "后续谨慎接入公开资料，不做未授权抓取。"
+    ),
     "Confidence": "置信度",
     "Configured key": "已配置 Key",
+    "Coming soon": "即将开放",
+    "Contact enrichment": "联系方式补充",
+    "Copy keyword": "复制搜索词",
     "Credits": "额度",
     "Credits used": "已用额度",
+    "CSV import": "CSV 导入",
+    "Customs data": "海关数据",
     "Delivery capacity": "交货能力",
     "Disable AI for tenant": "为租户关闭 AI",
     "Enabled": "已启用",
@@ -361,7 +376,17 @@ _BASE_TRANSLATIONS = {
     "Future expected cost: {count} target customer credits": (
         "未来预计消耗 {count} 个目标客户额度"
     ),
+    "Find buyers with import records through compliant licensed data sources.": (
+        "后续通过合规授权数据源发现有进口记录的买家。"
+    ),
+    "Find local distributors, wholesalers, stores, and service businesses.": (
+        "适合寻找本地经销商、批发商、门店和服务商。"
+    ),
+    "Find prospects from industry trade fair and exhibitor directories.": (
+        "发现行业展会和参展商名单中的潜在客户。"
+    ),
     "Generate AI draft": "生成 AI 草稿",
+    "Generate search strategy": "生成搜索策略",
     "Ideal buyer profile": "理想买家画像",
     (
         "If your website has important information, copy the main company or product "
@@ -369,6 +394,9 @@ _BASE_TRANSLATIONS = {
     ): ("如果官网信息很重要，请复制主要公司介绍或产品介绍到上面的文本框。"),
     "Manage provider access, quotas, and safe AI usage.": "管理 Provider、额度和安全 AI 使用。",
     "Main products": "主营产品",
+    "Manual add": "手动添加",
+    "Manually add companies you already know.": "手动添加你已经知道的公司。",
+    "Map businesses": "地图商家",
     "Max output tokens": "最大输出 tokens",
     "Model": "模型",
     "Monthly AI credits": "月度 AI credits",
@@ -381,6 +409,11 @@ _BASE_TRANSLATIONS = {
     "OEM/ODM capability": "OEM/ODM 能力",
     "Optional context for the draft": "可选：补充草稿上下文",
     "Outreach angles": "开发信角度",
+    "Open search link": "打开搜索链接",
+    "Parse into candidates": "整理为候选客户",
+    "Paste search results": "粘贴搜索结果",
+    "Placeholder channel not yet available": "该渠道暂未开放",
+    "Planned": "规划中",
     "Price positioning": "价格定位",
     "Product categories": "产品分类",
     "Product keywords": "产品关键词",
@@ -393,12 +426,19 @@ _BASE_TRANSLATIONS = {
     "Recommended buyer profile": "推荐买家画像",
     "Result count": "结果数量",
     "Review before using": "请审核后使用",
+    "Please review AI results before use": "AI 结果可能不准确，请审核后使用",
     "Save": "保存",
     "Save and confirm": "保存并确认",
     "Save tenant quota": "保存租户额度",
     "Search keywords": "搜索关键词",
+    "Search links": "搜索链接",
+    "Search queries": "搜索语句",
     "Search candidates": "搜索候选，请审核后使用",
+    "Search results parsed": "搜索结果已整理为候选客户",
+    "Search strategy": "搜索策略",
+    "Search strategy generated": "搜索策略已生成",
     "Selling points": "产品卖点",
+    "Social public profiles": "社媒公开资料",
     "Start training": "开始训练",
     "Suggested email tone": "建议邮件语气",
     "Suggested next action": "建议下一步",
@@ -419,6 +459,7 @@ _BASE_TRANSLATIONS = {
     "Total calls": "调用总数",
     "Train AI": "训练 AI 外贸员",
     "Train your AI foreign trade operator": "训练你的 AI 外贸员",
+    "Trade fair directories": "展会目录",
     "Usage summary": "用量摘要",
     "View or edit": "查看或编辑",
     "Website URL": "官网 URL",
@@ -427,6 +468,22 @@ _BASE_TRANSLATIONS = {
         "官网 URL 已按文本保存，系统没有抓取网页。"
     ),
     "Duplicate candidate detected": "检测到重复候选客户",
+    "Enrich reviewed companies with public contact data in a later release.": (
+        "后续为已审核公司补充公开联系方式。"
+    ),
+    "Import trade fair lists, old customer lists, or company spreadsheets.": (
+        "导入展会名单、老客户名单或自己整理的公司表。"
+    ),
+    (
+        "Let the AI foreign trade operator create overseas buyer search terms, "
+        "search links, and organize pasted results."
+    ): ("让 AI 外贸员根据你的产品，生成海外买家搜索词、搜索链接，并帮你整理搜索结果。"),
+    "Automatically call approved search APIs to find candidate companies.": (
+        "后续自动调用已批准的搜索 API 获取候选公司。"
+    ),
+    "Plan for directories such as Europages, Kompass, and Thomasnet.": (
+        "面向 Europages、Kompass、Thomasnet 等目录。"
+    ),
     "Please train your AI foreign trade operator first": "请先训练你的 AI 外贸员",
     "target customer credits": "目标客户额度",
     "示例客户": "示例客户",

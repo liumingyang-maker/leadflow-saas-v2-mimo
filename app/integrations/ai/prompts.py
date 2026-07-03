@@ -175,6 +175,67 @@ def build_target_customer_candidate_prompt(
     return OutreachDraftPrompt(system_prompt=system, user_prompt=user)
 
 
+def build_basic_search_strategy_prompt(
+    *, locale: str, product_profile_json: str, filters: dict[str, object], count: int
+) -> OutreachDraftPrompt:
+    keys = (
+        "buyer_types",
+        "target_countries",
+        "search_keywords",
+        "negative_keywords",
+        "query_templates",
+        "query_rationale",
+        "match_scoring_hints",
+    )
+    system = (
+        "feature: basic_search_strategy_generation\n"
+        "Create a manual search strategy from confirmed product memory only. Return strict "
+        "JSON only. Do not fetch URLs. Do not claim verified buyers or purchase intent. "
+        f"JSON keys must be exactly: {', '.join(keys)}."
+    )
+    if locale == "zh-CN":
+        system += " UI language is Simplified Chinese, but JSON keys stay English."
+    user = (
+        f"Requested count: {max(1, min(count, 25))}\n"
+        f"Filters JSON: {_clean_jsonish(_json_dumps(filters))}\n\n"
+        "Confirmed tenant product memory JSON:\n"
+        f"{_clean_jsonish(product_profile_json)}"
+    )
+    return OutreachDraftPrompt(system_prompt=system, user_prompt=user)
+
+
+def build_pasted_search_results_prompt(
+    *,
+    locale: str,
+    product_profile_json: str,
+    strategy_json: str,
+    pasted_results: str,
+    filters: dict[str, object],
+    count: int,
+) -> OutreachDraftPrompt:
+    system = (
+        "feature: pasted_search_result_parsing\n"
+        "Parse user-pasted public search result text into unverified B2B company candidates. "
+        "Return strict JSON only with a top-level candidates array. Do not include private "
+        "email, phone, personal data, verified buyer claims, purchase intent claims, or "
+        "scraped data. Each candidate must include company_name, country, website, industry, "
+        "buyer_type, source_channel, match_reason, confidence_score, and suggested_next_action."
+    )
+    if locale == "zh-CN":
+        system += " UI language is Simplified Chinese, but JSON keys stay English."
+    user = (
+        f"Requested count: {max(1, min(count, 25))}\n"
+        f"Filters JSON: {_clean_jsonish(_json_dumps(filters))}\n\n"
+        "Confirmed tenant product memory JSON:\n"
+        f"{_clean_jsonish(product_profile_json)}\n\n"
+        "Basic search strategy JSON:\n"
+        f"{_clean_jsonish(strategy_json)}\n\n"
+        "User-pasted search result text:\n"
+        f"{_clean_jsonish(pasted_results)}"
+    )
+    return OutreachDraftPrompt(system_prompt=system, user_prompt=user)
+
+
 def _clean(value: str) -> str:
     return (value or "").strip()[:500]
 

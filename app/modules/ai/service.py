@@ -16,7 +16,9 @@ from app.integrations.ai.disabled import DisabledProvider
 from app.integrations.ai.fake import FakeAIProvider
 from app.integrations.ai.openai_compatible import OpenAICompatibleProvider
 from app.integrations.ai.prompts import (
+    build_basic_search_strategy_prompt,
     build_outreach_draft_prompt,
+    build_pasted_search_results_prompt,
     build_product_profile_extraction_prompt,
     build_target_customer_candidate_prompt,
     build_target_customer_plan_prompt,
@@ -63,6 +65,11 @@ TARGET_CUSTOMER_PLAN_FEATURE = "target_customer_plan_generation"
 TARGET_CUSTOMER_MATCH_FEATURE = "target_customer_candidate_matching"
 TARGET_CUSTOMER_PLAN_CREDITS = 0
 TARGET_CUSTOMER_MATCH_CREDITS = 0
+BASIC_SEARCH_STRATEGY_FEATURE = "basic_search_strategy_generation"
+PASTED_SEARCH_PARSE_FEATURE = "pasted_search_result_parsing"
+CANDIDATE_FIT_SCORING_FEATURE = "candidate_fit_scoring"
+BASIC_SEARCH_STRATEGY_CREDITS = 0
+PASTED_SEARCH_PARSE_CREDITS = 0
 TARGET_CUSTOMER_PLAN_ARRAY_FIELDS = (
     "ideal_buyer_types",
     "target_industries",
@@ -84,6 +91,15 @@ TARGET_CUSTOMER_CANDIDATE_FIELDS = (
     "source_channel",
     "match_reason",
     "suggested_next_action",
+)
+BASIC_SEARCH_STRATEGY_ARRAY_FIELDS = (
+    "buyer_types",
+    "target_countries",
+    "search_keywords",
+    "negative_keywords",
+    "query_templates",
+    "query_rationale",
+    "match_scoring_hints",
 )
 
 
@@ -129,6 +145,22 @@ class TargetCustomerPlanResult:
 
 @dataclass(frozen=True)
 class TargetCustomerCandidateResult:
+    success: bool
+    candidates: list[dict[str, object]] | None = None
+    error_code: str = ""
+    quota_remaining: int = 0
+
+
+@dataclass(frozen=True)
+class BasicSearchStrategyResult:
+    success: bool
+    strategy: dict[str, object] | None = None
+    error_code: str = ""
+    quota_remaining: int = 0
+
+
+@dataclass(frozen=True)
+class PastedSearchResultParseResult:
     success: bool
     candidates: list[dict[str, object]] | None = None
     error_code: str = ""
@@ -755,6 +787,280 @@ def generate_target_customer_candidates(
         )
 
 
+def generate_basic_search_strategy(
+    app: Flask,
+    *,
+    tenant_id: str,
+    user_id: str,
+    locale: str,
+    product_profile_json: str,
+    filters: dict[str, object],
+    count: int,
+) -> BasicSearchStrategyResult:
+    with _session(app) as session:
+        settings = _get_or_create_settings(session)
+        provider_name = settings.provider
+        model = settings.model
+        if not settings.enabled or settings.provider == "disabled":
+            record_ai_usage(
+                session,
+                tenant_id=tenant_id,
+                user_id=user_id,
+                feature_name=BASIC_SEARCH_STRATEGY_FEATURE,
+                provider=provider_name,
+                model=model,
+                credits_charged=0,
+                input_tokens=0,
+                output_tokens=0,
+                status="disabled",
+                error_code="ai_disabled",
+            )
+            session.commit()
+            return BasicSearchStrategyResult(success=False, error_code="ai_disabled")
+
+        summary = summarize_quota(session, tenant_id=tenant_id)
+        if not summary.enabled:
+            record_ai_usage(
+                session,
+                tenant_id=tenant_id,
+                user_id=user_id,
+                feature_name=BASIC_SEARCH_STRATEGY_FEATURE,
+                provider=provider_name,
+                model=model,
+                credits_charged=0,
+                input_tokens=0,
+                output_tokens=0,
+                status="disabled",
+                error_code="tenant_ai_disabled",
+            )
+            session.commit()
+            return BasicSearchStrategyResult(
+                success=False,
+                error_code="tenant_ai_disabled",
+                quota_remaining=summary.remaining,
+            )
+
+        prompt = build_basic_search_strategy_prompt(
+            locale=locale,
+            product_profile_json=product_profile_json,
+            filters=filters,
+            count=count,
+        )
+        provider = _provider_from_settings(settings)
+
+    start = time.monotonic()
+    result = provider.generate_text(
+        AIGenerationRequest(
+            system_prompt=prompt.system_prompt,
+            user_prompt=prompt.user_prompt,
+            locale=locale,
+            max_output_tokens=max(256, settings.max_output_tokens),
+        )
+    )
+    latency_ms = int((time.monotonic() - start) * 1000)
+
+    with _session(app) as session:
+        if result.success:
+            try:
+                strategy = _parse_basic_search_strategy_json(result.text)
+            except AIServiceError:
+                record_ai_usage(
+                    session,
+                    tenant_id=tenant_id,
+                    user_id=user_id,
+                    feature_name=BASIC_SEARCH_STRATEGY_FEATURE,
+                    provider=result.provider or provider_name,
+                    model=result.model or model,
+                    credits_charged=0,
+                    input_tokens=result.input_tokens,
+                    output_tokens=result.output_tokens,
+                    status="failed",
+                    error_code="malformed_json",
+                    latency_ms=latency_ms,
+                )
+                session.commit()
+                return BasicSearchStrategyResult(success=False, error_code="malformed_json")
+
+            record_ai_usage(
+                session,
+                tenant_id=tenant_id,
+                user_id=user_id,
+                feature_name=BASIC_SEARCH_STRATEGY_FEATURE,
+                provider=result.provider or provider_name,
+                model=result.model or model,
+                credits_charged=BASIC_SEARCH_STRATEGY_CREDITS,
+                input_tokens=result.input_tokens,
+                output_tokens=result.output_tokens,
+                status="success",
+                latency_ms=latency_ms,
+            )
+            remaining = summarize_quota(session, tenant_id=tenant_id).remaining
+            session.commit()
+            return BasicSearchStrategyResult(
+                success=True,
+                strategy=strategy,
+                quota_remaining=remaining,
+            )
+
+        record_ai_usage(
+            session,
+            tenant_id=tenant_id,
+            user_id=user_id,
+            feature_name=BASIC_SEARCH_STRATEGY_FEATURE,
+            provider=result.provider or provider_name,
+            model=result.model or model,
+            credits_charged=0,
+            input_tokens=result.input_tokens,
+            output_tokens=result.output_tokens,
+            status="failed",
+            error_code=result.error_code or "provider_error",
+            latency_ms=latency_ms,
+        )
+        session.commit()
+        return BasicSearchStrategyResult(
+            success=False, error_code=result.error_code or "provider_error"
+        )
+
+
+def parse_pasted_search_results(
+    app: Flask,
+    *,
+    tenant_id: str,
+    user_id: str,
+    locale: str,
+    product_profile_json: str,
+    strategy_json: str,
+    pasted_results: str,
+    filters: dict[str, object],
+    count: int,
+) -> PastedSearchResultParseResult:
+    with _session(app) as session:
+        settings = _get_or_create_settings(session)
+        provider_name = settings.provider
+        model = settings.model
+        if not settings.enabled or settings.provider == "disabled":
+            record_ai_usage(
+                session,
+                tenant_id=tenant_id,
+                user_id=user_id,
+                feature_name=PASTED_SEARCH_PARSE_FEATURE,
+                provider=provider_name,
+                model=model,
+                credits_charged=0,
+                input_tokens=0,
+                output_tokens=0,
+                status="disabled",
+                error_code="ai_disabled",
+            )
+            session.commit()
+            return PastedSearchResultParseResult(success=False, error_code="ai_disabled")
+
+        summary = summarize_quota(session, tenant_id=tenant_id)
+        if not summary.enabled:
+            record_ai_usage(
+                session,
+                tenant_id=tenant_id,
+                user_id=user_id,
+                feature_name=PASTED_SEARCH_PARSE_FEATURE,
+                provider=provider_name,
+                model=model,
+                credits_charged=0,
+                input_tokens=0,
+                output_tokens=0,
+                status="disabled",
+                error_code="tenant_ai_disabled",
+            )
+            session.commit()
+            return PastedSearchResultParseResult(
+                success=False,
+                error_code="tenant_ai_disabled",
+                quota_remaining=summary.remaining,
+            )
+
+        prompt = build_pasted_search_results_prompt(
+            locale=locale,
+            product_profile_json=product_profile_json,
+            strategy_json=strategy_json,
+            pasted_results=pasted_results[:10000],
+            filters=filters,
+            count=count,
+        )
+        provider = _provider_from_settings(settings)
+
+    start = time.monotonic()
+    result = provider.generate_text(
+        AIGenerationRequest(
+            system_prompt=prompt.system_prompt,
+            user_prompt=prompt.user_prompt,
+            locale=locale,
+            max_output_tokens=max(512, settings.max_output_tokens),
+        )
+    )
+    latency_ms = int((time.monotonic() - start) * 1000)
+
+    with _session(app) as session:
+        if result.success:
+            try:
+                candidates = _parse_target_customer_candidates_json(result.text)
+            except AIServiceError:
+                record_ai_usage(
+                    session,
+                    tenant_id=tenant_id,
+                    user_id=user_id,
+                    feature_name=PASTED_SEARCH_PARSE_FEATURE,
+                    provider=result.provider or provider_name,
+                    model=result.model or model,
+                    credits_charged=0,
+                    input_tokens=result.input_tokens,
+                    output_tokens=result.output_tokens,
+                    status="failed",
+                    error_code="malformed_json",
+                    latency_ms=latency_ms,
+                )
+                session.commit()
+                return PastedSearchResultParseResult(success=False, error_code="malformed_json")
+
+            record_ai_usage(
+                session,
+                tenant_id=tenant_id,
+                user_id=user_id,
+                feature_name=PASTED_SEARCH_PARSE_FEATURE,
+                provider=result.provider or provider_name,
+                model=result.model or model,
+                credits_charged=PASTED_SEARCH_PARSE_CREDITS,
+                input_tokens=result.input_tokens,
+                output_tokens=result.output_tokens,
+                status="success",
+                latency_ms=latency_ms,
+            )
+            remaining = summarize_quota(session, tenant_id=tenant_id).remaining
+            session.commit()
+            return PastedSearchResultParseResult(
+                success=True,
+                candidates=candidates,
+                quota_remaining=remaining,
+            )
+
+        record_ai_usage(
+            session,
+            tenant_id=tenant_id,
+            user_id=user_id,
+            feature_name=PASTED_SEARCH_PARSE_FEATURE,
+            provider=result.provider or provider_name,
+            model=result.model or model,
+            credits_charged=0,
+            input_tokens=result.input_tokens,
+            output_tokens=result.output_tokens,
+            status="failed",
+            error_code=result.error_code or "provider_error",
+            latency_ms=latency_ms,
+        )
+        session.commit()
+        return PastedSearchResultParseResult(
+            success=False, error_code=result.error_code or "provider_error"
+        )
+
+
 def _session(app: Flask) -> Session:
     session = Session(get_engine(app))
     session.expire_on_commit = False
@@ -866,6 +1172,14 @@ def _parse_target_customer_plan_json(text: str) -> dict[str, object]:
         normalized[key] = _normalize_list(data.get(key))
     for key in TARGET_CUSTOMER_PLAN_TEXT_FIELDS:
         normalized[key] = _normalize_text(data.get(key))
+    return normalized
+
+
+def _parse_basic_search_strategy_json(text: str) -> dict[str, object]:
+    data = _load_json_object(text)
+    normalized: dict[str, object] = {}
+    for key in BASIC_SEARCH_STRATEGY_ARRAY_FIELDS:
+        normalized[key] = _normalize_list(data.get(key))
     return normalized
 
 

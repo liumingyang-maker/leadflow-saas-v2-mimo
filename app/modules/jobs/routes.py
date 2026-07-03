@@ -6,6 +6,7 @@ from flask import Flask, redirect, render_template, request, session
 
 from app.i18n import get_locale
 from app.i18n import translate as t
+from app.integrations.acquisition.registry import acquisition_channels
 from app.modules.accounts.guards import tenant_required
 from app.modules.jobs.service import (
     JobServiceError,
@@ -17,8 +18,10 @@ from app.modules.jobs.target_discovery import (
     add_candidate_to_crm,
     collection_target_context,
     filters_from_form,
+    generate_basic_search_strategy_for_collection,
     generate_collection_target_plan,
     match_collection_target_candidates,
+    parse_basic_search_results_for_collection,
     plan_json,
     raw_candidate_data,
 )
@@ -68,6 +71,42 @@ def register_collection_routes(app: Flask) -> None:
             app,
             target_error=_target_error_message(result.error_code) if not result.success else "",
             target_notice=t("Example customers for testing") if result.success else "",
+        )
+
+    @app.post("/collection/channels/basic-search/strategy")
+    @tenant_required(app)
+    def collection_basic_search_strategy():
+        tenant_id = session.get("tenant_id", "")
+        user_id = session.get("user_id", "")
+        result = generate_basic_search_strategy_for_collection(
+            app,
+            tenant_id=tenant_id,
+            user_id=user_id,
+            locale=get_locale(),
+            form=request.form,
+        )
+        return _render_collection_workspace(
+            app,
+            target_error=_target_error_message(result.error_code) if not result.success else "",
+            target_notice=t("Search strategy generated") if result.success else "",
+        )
+
+    @app.post("/collection/channels/basic-search/parse-results")
+    @tenant_required(app)
+    def collection_basic_search_parse_results():
+        tenant_id = session.get("tenant_id", "")
+        user_id = session.get("user_id", "")
+        result = parse_basic_search_results_for_collection(
+            app,
+            tenant_id=tenant_id,
+            user_id=user_id,
+            locale=get_locale(),
+            form=request.form,
+        )
+        return _render_collection_workspace(
+            app,
+            target_error=_target_error_message(result.error_code) if not result.success else "",
+            target_notice=t("Search results parsed") if result.success else "",
         )
 
     @app.post("/collection/candidates/<candidate_id>/add-to-crm")
@@ -182,6 +221,7 @@ def _render_collection_workspace(app: Flask, *, target_error: str = "", target_n
         target_context=target_context,
         target_plan=plan_json(target_context.latest_run),
         raw_candidate_data=raw_candidate_data,
+        acquisition_channels=acquisition_channels(),
         target_filters=filters_from_form(request.form),
         target_error=target_error,
         target_notice=target_notice,
@@ -197,4 +237,6 @@ def _target_error_message(error_code: str) -> str:
         return t("Duplicate candidate detected")
     if error_code == "candidate_not_found":
         return t("Candidate not found")
+    if error_code == "missing_search_results":
+        return t("Paste search results")
     return t("System is busy, please try again later")
