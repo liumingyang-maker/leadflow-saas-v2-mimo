@@ -481,6 +481,35 @@ _BASE_TRANSLATIONS = {
     "Automatically call approved search APIs to find candidate companies.": (
         "后续自动调用已批准的搜索 API 获取候选公司。"
     ),
+    "Acquisition provider": "获客 provider",
+    "Acquisition provider settings": "获客渠道 provider 设置",
+    "Acquisition provider settings saved": "获客 provider 设置已保存",
+    "Acquisition provider test failed": "获客 provider 测试失败",
+    "Acquisition provider test succeeded": "获客 provider 测试成功",
+    "Advanced web search": "高级自动网页搜索",
+    "Advanced web search enabled": "启用高级自动网页搜索",
+    "Advanced web search is not configured.": "高级自动网页搜索尚未配置。",
+    "Advanced web search results saved": "高级自动网页搜索结果已保存",
+    "Configure advanced acquisition channels without exposing provider secrets.": (
+        "配置高级获客渠道，不向租户暴露 provider 密钥。"
+    ),
+    "Daily spend cap": "每日花费上限",
+    "Daily spend cap reached.": "已达到每日花费上限。",
+    "Empty API key keeps provider unconfigured": "不填写 API key 将保持 provider 未配置",
+    "Estimated target customer credits": "预计目标客户额度",
+    "Last test status": "最近测试状态",
+    "No email will be sent automatically.": "系统不会自动发送邮件。",
+    "Provider disabled by default": "Provider 默认关闭",
+    "Provider status": "Provider 状态",
+    "Provider timeout": "Provider 请求超时",
+    "Purchase intent is not guaranteed.": "不保证采购意向。",
+    "Query limit per run": "每次运行查询数上限",
+    "Requires admin configuration": "需要管理员配置",
+    "Result limit per run": "每次运行结果数上限",
+    "Run advanced web search": "自动搜索目标客户",
+    "Safety": "安全边界",
+    "Search results are candidates. Review before using.": "搜索结果仅为候选，请审核后使用。",
+    "advanced_web_search": "高级自动网页搜索",
     "Plan for directories such as Europages, Kompass, and Thomasnet.": (
         "面向 Europages、Kompass、Thomasnet 等目录。"
     ),

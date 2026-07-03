@@ -10,10 +10,22 @@ from sqlalchemy.orm import Session
 
 from app.extensions import get_engine
 from app.integrations.acquisition.basic_ai_search import build_search_links
+from app.integrations.acquisition.search_api.base import SearchProviderError, SearchResult
+from app.integrations.acquisition.search_api.brave import BraveSearchProvider
+from app.integrations.acquisition.search_api.fake import FakeSearchProvider
+from app.modules.acquisition.service import (
+    acquisition_provider_secret,
+    advanced_search_queries_used_today,
+    daily_query_limit,
+    get_acquisition_settings,
+)
+from app.modules.ai.ledger import record_ai_usage
+from app.modules.ai.quota import summarize_quota
 from app.modules.ai.service import (
     generate_basic_search_strategy,
     generate_target_customer_candidates,
     generate_target_customer_plan,
+    get_provider_settings,
     parse_pasted_search_results,
 )
 from app.modules.jobs.target_models import (
@@ -27,6 +39,7 @@ from app.modules.onboarding.service import parse_profile_json
 DEFAULT_MATCH_COUNT = 10
 MAX_MATCH_COUNT = 25
 MAX_PASTED_RESULTS_LENGTH = 10_000
+ADVANCED_WEB_SEARCH_FEATURE = "advanced_web_search"
 
 
 @dataclass(frozen=True)
@@ -313,6 +326,192 @@ def parse_basic_search_results_for_collection(
         )
 
 
+def run_advanced_web_search_for_collection(
+    app: Flask,
+    *,
+    tenant_id: str,
+    user_id: str,
+    locale: str,
+    form,
+) -> TargetDiscoveryResult:
+    del locale
+    filters = filters_from_form(form)
+    settings = get_acquisition_settings(app)
+    ai_settings = get_provider_settings(app)
+    if not ai_settings.enabled or ai_settings.provider == "disabled":
+        _record_advanced_search_ledger(
+            app,
+            tenant_id=tenant_id,
+            user_id=user_id,
+            provider=settings.provider,
+            status="disabled",
+            error_code="ai_disabled",
+        )
+        return TargetDiscoveryResult(success=False, error_code="ai_disabled")
+    with Session(get_engine(app)) as session:
+        profile = _confirmed_product_profile(session, tenant_id=tenant_id)
+        if profile is None:
+            return TargetDiscoveryResult(success=False, error_code="missing_product_profile")
+        quota = summarize_quota(session, tenant_id=tenant_id)
+        if not quota.enabled:
+            record_ai_usage(
+                session,
+                tenant_id=tenant_id,
+                user_id=user_id,
+                feature_name=ADVANCED_WEB_SEARCH_FEATURE,
+                provider=settings.provider,
+                model="acquisition_search",
+                credits_charged=0,
+                input_tokens=0,
+                output_tokens=0,
+                status="disabled",
+                error_code="tenant_ai_disabled",
+            )
+            session.commit()
+            return TargetDiscoveryResult(success=False, error_code="tenant_ai_disabled")
+        product_profile_id = profile.id
+        product_profile_summary = parse_profile_json(profile.extracted_profile_json)
+
+    if not settings.enabled or settings.provider == "disabled":
+        _record_advanced_search_ledger(
+            app,
+            tenant_id=tenant_id,
+            user_id=user_id,
+            provider=settings.provider,
+            status="disabled",
+            error_code="acquisition_provider_disabled",
+        )
+        return TargetDiscoveryResult(success=False, error_code="acquisition_provider_disabled")
+    if settings.provider == "brave" and not settings.configured:
+        _record_advanced_search_ledger(
+            app,
+            tenant_id=tenant_id,
+            user_id=user_id,
+            provider=settings.provider,
+            status="disabled",
+            error_code="acquisition_provider_unconfigured",
+        )
+        return TargetDiscoveryResult(success=False, error_code="acquisition_provider_unconfigured")
+
+    query_limit = min(int(settings.query_limit_per_run), 3)
+    result_count = min(int(filters["result_count"]), int(settings.result_limit_per_run), 10)
+    if advanced_search_queries_used_today(app) + query_limit > daily_query_limit(settings):
+        _record_advanced_search_ledger(
+            app,
+            tenant_id=tenant_id,
+            user_id=user_id,
+            provider=settings.provider,
+            status="blocked_quota",
+            error_code="daily_spend_cap_reached",
+        )
+        return TargetDiscoveryResult(success=False, error_code="daily_spend_cap_reached")
+
+    queries = _advanced_search_queries(
+        product_profile_summary,
+        filters=filters,
+        limit=query_limit,
+    )
+    provider = _advanced_search_provider(app, settings_provider=settings.provider)
+    try:
+        search_results: list[SearchResult] = []
+        per_query_limit = max(1, min(result_count, 10))
+        for query in queries:
+            search_results.extend(
+                provider.search(
+                    query,
+                    country=str(filters.get("country", "")) or None,
+                    language="en",
+                    limit=per_query_limit,
+                )
+            )
+    except SearchProviderError as exc:
+        _record_advanced_search_ledger(
+            app,
+            tenant_id=tenant_id,
+            user_id=user_id,
+            provider=settings.provider,
+            status="failed",
+            error_code=exc.code,
+        )
+        return TargetDiscoveryResult(success=False, error_code=exc.code)
+
+    with Session(get_engine(app)) as session:
+        run = TargetCustomerDiscoveryRun(
+            tenant_id=tenant_id,
+            product_profile_id=product_profile_id,
+            filters_json=json.dumps(
+                {
+                    **filters,
+                    "channel_key": "advanced_web_search",
+                    "provider": settings.provider,
+                    "query_count": len(queries),
+                },
+                ensure_ascii=False,
+            ),
+            generated_plan_json=json.dumps(
+                {
+                    "source_channel": "advanced_web_search",
+                    "source_provider": settings.provider,
+                    "queries": queries,
+                    "query_count": len(queries),
+                    "requested_count": result_count,
+                    "credits_estimated": 0,
+                    "credits_charged": 0,
+                    "test_phase_free": True,
+                },
+                ensure_ascii=False,
+            ),
+            status="matched",
+            requested_count=result_count,
+            generated_count=0,
+            credits_estimated=0,
+            credits_charged=0,
+        )
+        session.add(run)
+        session.flush()
+        saved = 0
+        duplicates = 0
+        invalid = 0
+        for result in search_results:
+            if saved >= result_count:
+                break
+            candidate_data = _candidate_from_search_result(result, filters=filters)
+            if not candidate_data.get("company_name") and not candidate_data.get("website"):
+                invalid += 1
+                continue
+            if _candidate_duplicate_exists(
+                session,
+                tenant_id=tenant_id,
+                run_id=run.id,
+                data=candidate_data,
+            ):
+                duplicates += 1
+                candidate_data["status"] = "duplicate"
+            session.add(_candidate_from_ai(tenant_id=tenant_id, run_id=run.id, data=candidate_data))
+            saved += 1
+        run.generated_count = saved
+        run.generated_plan_json = _add_advanced_search_summary(
+            run.generated_plan_json,
+            generated_count=saved,
+            duplicate_count=duplicates,
+            invalid_count=invalid,
+        )
+        record_ai_usage(
+            session,
+            tenant_id=tenant_id,
+            user_id=user_id,
+            feature_name=ADVANCED_WEB_SEARCH_FEATURE,
+            provider=settings.provider,
+            model="acquisition_search",
+            credits_charged=0,
+            input_tokens=0,
+            output_tokens=0,
+            status="success",
+        )
+        session.commit()
+        return TargetDiscoveryResult(success=True, run_id=run.id)
+
+
 def add_candidate_to_crm(
     app: Flask, *, tenant_id: str, user_id: str, candidate_id: str
 ) -> AddCandidateResult:
@@ -438,6 +637,11 @@ def _candidate_from_ai(
         "suggested_next_action": _public_text(data.get("suggested_next_action", ""), 500),
         "unverified": True,
     }
+    extra_raw = data.get("raw_data")
+    if isinstance(extra_raw, dict):
+        for key in ("source_provider", "rank", "domain"):
+            if key in extra_raw:
+                raw_data[key] = _public_text(extra_raw.get(key, ""), 120)
     return TargetCustomerCandidate(
         tenant_id=tenant_id,
         run_id=run_id,
@@ -515,6 +719,133 @@ def _normalize_basic_search_candidate(
     return normalized
 
 
+def _advanced_search_provider(app: Flask, *, settings_provider: str):
+    if settings_provider == "fake":
+        return FakeSearchProvider()
+    if settings_provider == "brave":
+        settings = get_acquisition_settings(app)
+        return BraveSearchProvider(
+            api_key=acquisition_provider_secret(app),
+            timeout_seconds=settings.timeout_seconds,
+        )
+    raise SearchProviderError("unsupported_provider")
+
+
+def _advanced_search_queries(
+    product_profile: dict[str, object],
+    *,
+    filters: dict[str, object],
+    limit: int,
+) -> list[str]:
+    keywords = _list_values(product_profile.get("product_keywords_en")) or _list_values(
+        product_profile.get("search_keywords")
+    )
+    buyer_types = _list_values(product_profile.get("buyer_types")) or ["importer", "distributor"]
+    country = str(filters.get("country", "") or "").strip()
+    filtered_buyer = str(filters.get("buyer_type", "") or "").strip()
+    base_keyword = keywords[0] if keywords else "product"
+    buyers = [filtered_buyer] if filtered_buyer else buyer_types
+    queries: list[str] = []
+    for buyer in buyers:
+        query = f"{base_keyword} {buyer}"
+        if country:
+            query = f"{query} {country}"
+        queries.append(query)
+    queries.append(f"{base_keyword} wholesaler")
+    queries.append(f"{base_keyword} procurement")
+    deduped: list[str] = []
+    for query in queries:
+        clean = " ".join(query.split())[:180]
+        if clean and clean not in deduped:
+            deduped.append(clean)
+    return deduped[: max(1, min(limit, 3))]
+
+
+def _candidate_from_search_result(
+    result: SearchResult, *, filters: dict[str, object]
+) -> dict[str, object]:
+    domain = _domain_from_url(result.url)
+    company_name = _company_from_title_or_domain(result.title, domain)
+    country = str(filters.get("country", "") or result.country or "")
+    industry = str(filters.get("industry", "") or "")
+    buyer_type = str(filters.get("buyer_type", "") or "")
+    data = {
+        "company_name": company_name,
+        "website": result.url,
+        "country": country,
+        "industry": industry,
+        "buyer_type": buyer_type,
+        "source_channel": "advanced_web_search",
+        "match_reason": _public_text(
+            f"Search result matched the advanced web search query. {result.snippet}",
+            1000,
+        ),
+        "confidence_score": _score_candidate(
+            {
+                "company_name": company_name,
+                "website": result.url,
+                "country": country,
+                "industry": industry,
+                "buyer_type": buyer_type,
+                "match_reason": result.snippet,
+            },
+            filters=filters,
+        ),
+        "suggested_next_action": "Review the website before adding outreach context.",
+        "raw_data": {
+            "source_provider": result.source_provider,
+            "rank": result.rank,
+            "domain": domain,
+            "unverified": True,
+        },
+    }
+    return data
+
+
+def _add_advanced_search_summary(
+    plan_json_text: str,
+    *,
+    generated_count: int,
+    duplicate_count: int,
+    invalid_count: int,
+) -> str:
+    try:
+        parsed = json.loads(plan_json_text or "{}")
+        data = parsed if isinstance(parsed, dict) else {}
+    except json.JSONDecodeError:
+        data = {}
+    data["generated_count"] = generated_count
+    data["duplicate_count"] = duplicate_count
+    data["invalid_count"] = invalid_count
+    return json.dumps(data, ensure_ascii=False)
+
+
+def _record_advanced_search_ledger(
+    app: Flask,
+    *,
+    tenant_id: str,
+    user_id: str,
+    provider: str,
+    status: str,
+    error_code: str = "",
+) -> None:
+    with Session(get_engine(app)) as session:
+        record_ai_usage(
+            session,
+            tenant_id=tenant_id,
+            user_id=user_id,
+            feature_name=ADVANCED_WEB_SEARCH_FEATURE,
+            provider=provider,
+            model="acquisition_search",
+            credits_charged=0,
+            input_tokens=0,
+            output_tokens=0,
+            status=status,
+            error_code=error_code,
+        )
+        session.commit()
+
+
 def _score_candidate(data: dict[str, object], *, filters: dict[str, object]) -> int:
     score = _int_in_range(data.get("confidence_score", 65), 0, 100)
     website = str(data.get("website", "")).lower()
@@ -538,6 +869,27 @@ def _score_candidate(data: dict[str, object], *, filters: dict[str, object]) -> 
     if any(term in combined for term in penalty_terms):
         score -= 10
     return max(0, min(score, 100))
+
+
+def _list_values(value: object) -> list[str]:
+    if isinstance(value, list):
+        return [str(item).strip() for item in value if str(item).strip()]
+    if isinstance(value, str) and value.strip():
+        return [value.strip()]
+    return []
+
+
+def _company_from_title_or_domain(title: str, domain: str) -> str:
+    clean_title = _public_text(title, 160)
+    for separator in (" - ", " | ", " – ", ":"):
+        if separator in clean_title:
+            clean_title = clean_title.split(separator, 1)[0].strip()
+    if clean_title:
+        return clean_title[:160]
+    if domain:
+        root = domain.split(".")[0].replace("-", " ").title()
+        return root[:160]
+    return ""
 
 
 def _mark_pasted_result_parse(plan_json_text: str, *, pasted_length: int) -> str:

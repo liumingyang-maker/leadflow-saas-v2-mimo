@@ -3,7 +3,9 @@ from __future__ import annotations
 from app.integrations.acquisition.base import AcquisitionChannel
 
 
-def acquisition_channels() -> list[AcquisitionChannel]:
+def acquisition_channels(*, advanced_web_search_enabled: bool = False) -> list[AcquisitionChannel]:
+    advanced_status = "enabled_advanced" if advanced_web_search_enabled else "requires_config"
+    advanced_href = "#advanced-web-search" if advanced_web_search_enabled else ""
     return [
         AcquisitionChannel(
             channel_key="ai_basic_search",
@@ -38,14 +40,16 @@ def acquisition_channels() -> list[AcquisitionChannel]:
         AcquisitionChannel(
             channel_key="auto_web_search_api",
             channel_name="Advanced automatic search",
-            status="coming_soon",
+            status=advanced_status,
             tier="advanced",
             description="Automatically call approved search APIs to find candidate companies.",
             requires_api_key=True,
             requires_paid_api=True,
-            planned_version="alpha.7+",
+            enabled=advanced_web_search_enabled,
+            planned_version="alpha.7",
             risk_level="medium",
             compliance_note="Requires approved paid search API and quota controls.",
+            href=advanced_href,
         ),
         AcquisitionChannel(
             channel_key="map_businesses",

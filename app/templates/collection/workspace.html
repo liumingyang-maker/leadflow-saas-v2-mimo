@@ -32,6 +32,10 @@
         <span class="lf-badge">
           {% if channel.status == "enabled_basic" %}
             {{ t("Available") }}
+          {% elif channel.status == "enabled_advanced" %}
+            {{ t("Available") }}
+          {% elif channel.status == "requires_config" %}
+            {{ t("Requires admin configuration") }}
           {% elif channel.status == "coming_soon" %}
             {{ t("Coming soon") }}
           {% elif channel.tier in ["advanced", "premium"] %}
@@ -114,6 +118,50 @@
         <button class="lf-button lf-button-primary" type="submit">{{ t("Generate search strategy") }}</button>
       </div>
     </form>
+
+    <section id="advanced-web-search" class="lf-panel lf-form-stack">
+      <div>
+        <span class="lf-eyebrow">{{ t("Advanced channel") }}</span>
+        <h3>{{ t("Advanced web search") }}</h3>
+        <p>{{ t("Search results are candidates. Review before using.") }}</p>
+      </div>
+      <dl class="lf-dl">
+        <dt>{{ t("Provider status") }}</dt>
+        <dd>{% if acquisition_settings.enabled and acquisition_settings.configured %}{{ t("Available") }}{% else %}{{ t("Requires admin configuration") }}{% endif %}</dd>
+        <dt>{{ t("Expected cost") }}</dt>
+        <dd>{{ t("Test phase does not charge credits") }}</dd>
+        <dt>{{ t("Safety") }}</dt>
+        <dd>{{ t("No email will be sent automatically.") }} {{ t("Purchase intent is not guaranteed.") }}</dd>
+      </dl>
+      {% if acquisition_settings.enabled and (acquisition_settings.provider == "fake" or acquisition_settings.configured) %}
+        <form class="lf-form-stack" method="post" action="/collection/channels/advanced-web-search/run">
+          {{ csrf_input() }}
+          <div class="lf-grid">
+            <div class="lf-field-group">
+              <label class="lf-label" for="advanced_country">{{ t("Target countries") }}</label>
+              <input class="lf-field" id="advanced_country" name="country" value="{{ target_filters.country }}">
+            </div>
+            <div class="lf-field-group">
+              <label class="lf-label" for="advanced_buyer_type">{{ t("Buyer types") }}</label>
+              <input class="lf-field" id="advanced_buyer_type" name="buyer_type" value="{{ target_filters.buyer_type }}">
+            </div>
+            <div class="lf-field-group">
+              <label class="lf-label" for="advanced_industry">{{ t("Industry") }}</label>
+              <input class="lf-field" id="advanced_industry" name="industry" value="{{ target_filters.industry }}">
+            </div>
+            <div class="lf-field-group">
+              <label class="lf-label" for="advanced_result_count">{{ t("Result count") }}</label>
+              <input class="lf-field" id="advanced_result_count" name="result_count" type="number" min="3" max="10" value="{{ target_filters.result_count }}">
+            </div>
+          </div>
+          <div class="lf-actions">
+            <button class="lf-button lf-button-primary" type="submit">{{ t("Run advanced web search") }}</button>
+          </div>
+        </form>
+      {% else %}
+        <div class="lf-alert lf-alert-info">{{ t("Advanced web search is not configured.") }}</div>
+      {% endif %}
+    </section>
 
     {% if target_plan %}
       <section class="lf-panel">

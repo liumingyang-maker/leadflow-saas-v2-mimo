@@ -8,6 +8,7 @@ from app.i18n import get_locale
 from app.i18n import translate as t
 from app.integrations.acquisition.registry import acquisition_channels
 from app.modules.accounts.guards import tenant_required
+from app.modules.acquisition.service import advanced_search_available, get_acquisition_settings
 from app.modules.jobs.service import (
     JobServiceError,
     create_and_enqueue,
@@ -24,6 +25,7 @@ from app.modules.jobs.target_discovery import (
     parse_basic_search_results_for_collection,
     plan_json,
     raw_candidate_data,
+    run_advanced_web_search_for_collection,
 )
 
 
@@ -107,6 +109,24 @@ def register_collection_routes(app: Flask) -> None:
             app,
             target_error=_target_error_message(result.error_code) if not result.success else "",
             target_notice=t("Search results parsed") if result.success else "",
+        )
+
+    @app.post("/collection/channels/advanced-web-search/run")
+    @tenant_required(app)
+    def collection_advanced_web_search_run():
+        tenant_id = session.get("tenant_id", "")
+        user_id = session.get("user_id", "")
+        result = run_advanced_web_search_for_collection(
+            app,
+            tenant_id=tenant_id,
+            user_id=user_id,
+            locale=get_locale(),
+            form=request.form,
+        )
+        return _render_collection_workspace(
+            app,
+            target_error=_target_error_message(result.error_code) if not result.success else "",
+            target_notice=t("Advanced web search results saved") if result.success else "",
         )
 
     @app.post("/collection/candidates/<candidate_id>/add-to-crm")
@@ -221,7 +241,10 @@ def _render_collection_workspace(app: Flask, *, target_error: str = "", target_n
         target_context=target_context,
         target_plan=plan_json(target_context.latest_run),
         raw_candidate_data=raw_candidate_data,
-        acquisition_channels=acquisition_channels(),
+        acquisition_channels=acquisition_channels(
+            advanced_web_search_enabled=advanced_search_available(app)
+        ),
+        acquisition_settings=get_acquisition_settings(app),
         target_filters=filters_from_form(request.form),
         target_error=target_error,
         target_notice=target_notice,
@@ -239,4 +262,10 @@ def _target_error_message(error_code: str) -> str:
         return t("Candidate not found")
     if error_code == "missing_search_results":
         return t("Paste search results")
+    if error_code in {"acquisition_provider_disabled", "acquisition_provider_unconfigured"}:
+        return t("Advanced web search is not configured.")
+    if error_code == "daily_spend_cap_reached":
+        return t("Daily spend cap reached.")
+    if error_code == "provider_timeout":
+        return t("Provider timeout")
     return t("System is busy, please try again later")

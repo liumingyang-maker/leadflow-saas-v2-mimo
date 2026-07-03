@@ -12,6 +12,17 @@
   {{ badge(t("Console")) }}
 </header>
 
+<section class="lf-grid lf-section">
+  <a class="lf-panel" href="/admin/ai" style="text-decoration:none;color:inherit;">
+    <h2>{{ t("AI control plane") }}</h2>
+    <p>{{ t("Manage provider access, quotas, and safe AI usage.") }}</p>
+  </a>
+  <a class="lf-panel" href="/admin/acquisition" style="text-decoration:none;color:inherit;">
+    <h2>{{ t("Acquisition provider settings") }}</h2>
+    <p>{{ t("Configure advanced acquisition channels without exposing provider secrets.") }}</p>
+  </a>
+</section>
+
 <section class="lf-section">
   <h2>{{ t("Tenants") }} ({{ tenants|length }})</h2>
   {% if tenants %}

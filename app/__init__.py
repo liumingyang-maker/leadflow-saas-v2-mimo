@@ -16,6 +16,7 @@ from app.extensions import init_extensions
 from app.i18n import register_i18n
 from app.modules.accounts.admin_routes import register_admin_routes
 from app.modules.accounts.routes import register_account_routes
+from app.modules.acquisition.routes_admin import register_acquisition_admin_routes
 from app.modules.admin.routes import register_admin_dashboard_routes
 from app.modules.ai.routes_admin import register_ai_admin_routes
 from app.modules.ai.routes_tenant import register_ai_tenant_routes
@@ -42,6 +43,7 @@ def create_app(config_name: str | None = None) -> Flask:
     register_account_routes(flask_app)
     register_admin_dashboard_routes(flask_app)
     register_admin_routes(flask_app)
+    register_acquisition_admin_routes(flask_app)
     register_ai_admin_routes(flask_app)
     register_ai_tenant_routes(flask_app)
     register_audit_routes(flask_app)

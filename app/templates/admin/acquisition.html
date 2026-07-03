@@ -1,0 +1,77 @@
+{% from "components/_shell.html" import shell %}
+{% from "components/_buttons.html" import button %}
+{% from "components/_forms.html" import csrf_input %}
+
+{% call shell(t("Acquisition provider settings")) %}
+<header class="lf-page-header">
+  <div>
+    <span class="lf-eyebrow">{{ t("Admin") }}</span>
+    <h1 class="lf-page-title">{{ t("Acquisition provider settings") }}</h1>
+    <p>{{ t("Configure advanced acquisition channels without exposing provider secrets.") }}</p>
+  </div>
+  <a href="/admin" class="lf-button">{{ t("Back to admin console") }}</a>
+</header>
+
+{% if message %}<div class="lf-alert lf-alert-success" role="status">{{ message }}</div>{% endif %}
+{% if error %}<div class="lf-alert lf-alert-error" role="alert">{{ error }}</div>{% endif %}
+
+<section class="lf-panel lf-form-stack">
+  <h2>{{ t("Advanced web search") }}</h2>
+  <p>{{ t("Provider disabled by default") }}</p>
+  <form method="post" action="/admin/acquisition" class="lf-form-stack">
+    {{ csrf_input() }}
+    <input type="hidden" name="action" value="save">
+    <div class="lf-field-group">
+      <label class="lf-label" for="enabled">{{ t("Advanced web search enabled") }}</label>
+      <input id="enabled" name="enabled" type="checkbox" value="1"{% if settings.enabled %} checked{% endif %}>
+    </div>
+    <div class="lf-field-group">
+      <label class="lf-label" for="provider">{{ t("Acquisition provider") }}</label>
+      <select class="lf-field" id="provider" name="provider">
+        {% for item in ["disabled", "fake", "brave"] %}
+          <option value="{{ item }}"{% if settings.provider == item %} selected{% endif %}>{{ item }}</option>
+        {% endfor %}
+      </select>
+    </div>
+    <div class="lf-field-group">
+      <label class="lf-label" for="api_key">{{ t("API key") }}</label>
+      <input class="lf-field" id="api_key" name="api_key" type="password" value="" autocomplete="off">
+      {% if settings.api_key_masked %}
+        <span class="lf-help">{{ t("Configured key") }}: {{ settings.api_key_masked }}</span>
+      {% else %}
+        <span class="lf-help">{{ t("Empty API key keeps provider unconfigured") }}</span>
+      {% endif %}
+    </div>
+    <div class="lf-grid">
+      <div class="lf-field-group">
+        <label class="lf-label" for="daily_spend_cap_cents">{{ t("Daily spend cap") }}</label>
+        <input class="lf-field" id="daily_spend_cap_cents" name="daily_spend_cap_cents" type="number" min="0" max="100000" value="{{ settings.daily_spend_cap_cents }}">
+      </div>
+      <div class="lf-field-group">
+        <label class="lf-label" for="query_limit_per_run">{{ t("Query limit per run") }}</label>
+        <input class="lf-field" id="query_limit_per_run" name="query_limit_per_run" type="number" min="1" max="3" value="{{ settings.query_limit_per_run }}">
+      </div>
+      <div class="lf-field-group">
+        <label class="lf-label" for="result_limit_per_run">{{ t("Result limit per run") }}</label>
+        <input class="lf-field" id="result_limit_per_run" name="result_limit_per_run" type="number" min="3" max="10" value="{{ settings.result_limit_per_run }}">
+      </div>
+      <div class="lf-field-group">
+        <label class="lf-label" for="timeout_seconds">{{ t("Timeout seconds") }}</label>
+        <input class="lf-field" id="timeout_seconds" name="timeout_seconds" type="number" min="1" max="30" value="{{ settings.timeout_seconds }}">
+      </div>
+    </div>
+    {{ button(t("Save"), "primary", "submit") }}
+  </form>
+  <form method="post" action="/admin/acquisition">
+    {{ csrf_input() }}
+    <input type="hidden" name="action" value="test">
+    {{ button(t("Test connection"), "secondary", "submit") }}
+  </form>
+  <dl class="lf-dl">
+    <dt>{{ t("Provider status") }}</dt>
+    <dd>{{ settings.provider }} / {{ settings.enabled }}</dd>
+    <dt>{{ t("Last test status") }}</dt>
+    <dd>{{ settings.last_test_status }} {{ settings.last_error_code }}</dd>
+  </dl>
+</section>
+{% endcall %}
