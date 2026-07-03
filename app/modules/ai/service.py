@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import re
 import time
 from dataclasses import dataclass
 
@@ -17,6 +18,8 @@ from app.integrations.ai.openai_compatible import OpenAICompatibleProvider
 from app.integrations.ai.prompts import (
     build_outreach_draft_prompt,
     build_product_profile_extraction_prompt,
+    build_target_customer_candidate_prompt,
+    build_target_customer_plan_prompt,
 )
 from app.modules.accounts.models import Tenant
 from app.modules.ai.ledger import record_ai_usage, usage_summary
@@ -56,6 +59,32 @@ PRODUCT_PROFILE_TEXT_FIELDS = (
     "oem_odm_capability",
     "price_positioning",
 )
+TARGET_CUSTOMER_PLAN_FEATURE = "target_customer_plan_generation"
+TARGET_CUSTOMER_MATCH_FEATURE = "target_customer_candidate_matching"
+TARGET_CUSTOMER_PLAN_CREDITS = 0
+TARGET_CUSTOMER_MATCH_CREDITS = 0
+TARGET_CUSTOMER_PLAN_ARRAY_FIELDS = (
+    "ideal_buyer_types",
+    "target_industries",
+    "recommended_countries",
+    "search_keywords",
+    "negative_keywords",
+    "channel_recommendations",
+    "buyer_pain_points",
+    "match_scoring_rules",
+    "disqualification_rules",
+)
+TARGET_CUSTOMER_PLAN_TEXT_FIELDS = ("first_batch_strategy",)
+TARGET_CUSTOMER_CANDIDATE_FIELDS = (
+    "company_name",
+    "country",
+    "website",
+    "industry",
+    "buyer_type",
+    "source_channel",
+    "match_reason",
+    "suggested_next_action",
+)
 
 
 class AIServiceError(ValueError):
@@ -86,6 +115,22 @@ class OutreachDraftResult:
 class ProductProfileExtractionResult:
     success: bool
     profile: dict[str, object] | None = None
+    error_code: str = ""
+    quota_remaining: int = 0
+
+
+@dataclass(frozen=True)
+class TargetCustomerPlanResult:
+    success: bool
+    plan: dict[str, object] | None = None
+    error_code: str = ""
+    quota_remaining: int = 0
+
+
+@dataclass(frozen=True)
+class TargetCustomerCandidateResult:
+    success: bool
+    candidates: list[dict[str, object]] | None = None
     error_code: str = ""
     quota_remaining: int = 0
 
@@ -446,6 +491,270 @@ def extract_product_profile(
         )
 
 
+def generate_target_customer_plan(
+    app: Flask,
+    *,
+    tenant_id: str,
+    user_id: str,
+    locale: str,
+    product_profile_json: str,
+) -> TargetCustomerPlanResult:
+    with _session(app) as session:
+        settings = _get_or_create_settings(session)
+        provider_name = settings.provider
+        model = settings.model
+        if not settings.enabled or settings.provider == "disabled":
+            record_ai_usage(
+                session,
+                tenant_id=tenant_id,
+                user_id=user_id,
+                feature_name=TARGET_CUSTOMER_PLAN_FEATURE,
+                provider=provider_name,
+                model=model,
+                credits_charged=0,
+                input_tokens=0,
+                output_tokens=0,
+                status="disabled",
+                error_code="ai_disabled",
+            )
+            session.commit()
+            return TargetCustomerPlanResult(success=False, error_code="ai_disabled")
+
+        summary = summarize_quota(session, tenant_id=tenant_id)
+        if not summary.enabled:
+            record_ai_usage(
+                session,
+                tenant_id=tenant_id,
+                user_id=user_id,
+                feature_name=TARGET_CUSTOMER_PLAN_FEATURE,
+                provider=provider_name,
+                model=model,
+                credits_charged=0,
+                input_tokens=0,
+                output_tokens=0,
+                status="disabled",
+                error_code="tenant_ai_disabled",
+            )
+            session.commit()
+            return TargetCustomerPlanResult(
+                success=False,
+                error_code="tenant_ai_disabled",
+                quota_remaining=summary.remaining,
+            )
+
+        prompt = build_target_customer_plan_prompt(
+            locale=locale,
+            product_profile_json=product_profile_json,
+        )
+        provider = _provider_from_settings(settings)
+
+    start = time.monotonic()
+    result = provider.generate_text(
+        AIGenerationRequest(
+            system_prompt=prompt.system_prompt,
+            user_prompt=prompt.user_prompt,
+            locale=locale,
+            max_output_tokens=max(256, settings.max_output_tokens),
+        )
+    )
+    latency_ms = int((time.monotonic() - start) * 1000)
+
+    with _session(app) as session:
+        if result.success:
+            try:
+                plan = _parse_target_customer_plan_json(result.text)
+            except AIServiceError:
+                record_ai_usage(
+                    session,
+                    tenant_id=tenant_id,
+                    user_id=user_id,
+                    feature_name=TARGET_CUSTOMER_PLAN_FEATURE,
+                    provider=result.provider or provider_name,
+                    model=result.model or model,
+                    credits_charged=0,
+                    input_tokens=result.input_tokens,
+                    output_tokens=result.output_tokens,
+                    status="failed",
+                    error_code="malformed_json",
+                    latency_ms=latency_ms,
+                )
+                session.commit()
+                return TargetCustomerPlanResult(success=False, error_code="malformed_json")
+
+            record_ai_usage(
+                session,
+                tenant_id=tenant_id,
+                user_id=user_id,
+                feature_name=TARGET_CUSTOMER_PLAN_FEATURE,
+                provider=result.provider or provider_name,
+                model=result.model or model,
+                credits_charged=TARGET_CUSTOMER_PLAN_CREDITS,
+                input_tokens=result.input_tokens,
+                output_tokens=result.output_tokens,
+                status="success",
+                latency_ms=latency_ms,
+            )
+            remaining = summarize_quota(session, tenant_id=tenant_id).remaining
+            session.commit()
+            return TargetCustomerPlanResult(success=True, plan=plan, quota_remaining=remaining)
+
+        record_ai_usage(
+            session,
+            tenant_id=tenant_id,
+            user_id=user_id,
+            feature_name=TARGET_CUSTOMER_PLAN_FEATURE,
+            provider=result.provider or provider_name,
+            model=result.model or model,
+            credits_charged=0,
+            input_tokens=result.input_tokens,
+            output_tokens=result.output_tokens,
+            status="failed",
+            error_code=result.error_code or "provider_error",
+            latency_ms=latency_ms,
+        )
+        session.commit()
+        return TargetCustomerPlanResult(
+            success=False, error_code=result.error_code or "provider_error"
+        )
+
+
+def generate_target_customer_candidates(
+    app: Flask,
+    *,
+    tenant_id: str,
+    user_id: str,
+    locale: str,
+    product_profile_json: str,
+    target_plan_json: str,
+    filters: dict[str, object],
+    count: int,
+) -> TargetCustomerCandidateResult:
+    with _session(app) as session:
+        settings = _get_or_create_settings(session)
+        provider_name = settings.provider
+        model = settings.model
+        if not settings.enabled or settings.provider == "disabled":
+            record_ai_usage(
+                session,
+                tenant_id=tenant_id,
+                user_id=user_id,
+                feature_name=TARGET_CUSTOMER_MATCH_FEATURE,
+                provider=provider_name,
+                model=model,
+                credits_charged=0,
+                input_tokens=0,
+                output_tokens=0,
+                status="disabled",
+                error_code="ai_disabled",
+            )
+            session.commit()
+            return TargetCustomerCandidateResult(success=False, error_code="ai_disabled")
+
+        summary = summarize_quota(session, tenant_id=tenant_id)
+        if not summary.enabled:
+            record_ai_usage(
+                session,
+                tenant_id=tenant_id,
+                user_id=user_id,
+                feature_name=TARGET_CUSTOMER_MATCH_FEATURE,
+                provider=provider_name,
+                model=model,
+                credits_charged=0,
+                input_tokens=0,
+                output_tokens=0,
+                status="disabled",
+                error_code="tenant_ai_disabled",
+            )
+            session.commit()
+            return TargetCustomerCandidateResult(
+                success=False,
+                error_code="tenant_ai_disabled",
+                quota_remaining=summary.remaining,
+            )
+
+        prompt = build_target_customer_candidate_prompt(
+            locale=locale,
+            product_profile_json=product_profile_json,
+            target_plan_json=target_plan_json,
+            filters=filters,
+            count=count,
+        )
+        provider = _provider_from_settings(settings)
+
+    start = time.monotonic()
+    result = provider.generate_text(
+        AIGenerationRequest(
+            system_prompt=prompt.system_prompt,
+            user_prompt=prompt.user_prompt,
+            locale=locale,
+            max_output_tokens=max(512, settings.max_output_tokens),
+        )
+    )
+    latency_ms = int((time.monotonic() - start) * 1000)
+
+    with _session(app) as session:
+        if result.success:
+            try:
+                candidates = _parse_target_customer_candidates_json(result.text)
+            except AIServiceError:
+                record_ai_usage(
+                    session,
+                    tenant_id=tenant_id,
+                    user_id=user_id,
+                    feature_name=TARGET_CUSTOMER_MATCH_FEATURE,
+                    provider=result.provider or provider_name,
+                    model=result.model or model,
+                    credits_charged=0,
+                    input_tokens=result.input_tokens,
+                    output_tokens=result.output_tokens,
+                    status="failed",
+                    error_code="malformed_json",
+                    latency_ms=latency_ms,
+                )
+                session.commit()
+                return TargetCustomerCandidateResult(success=False, error_code="malformed_json")
+
+            record_ai_usage(
+                session,
+                tenant_id=tenant_id,
+                user_id=user_id,
+                feature_name=TARGET_CUSTOMER_MATCH_FEATURE,
+                provider=result.provider or provider_name,
+                model=result.model or model,
+                credits_charged=TARGET_CUSTOMER_MATCH_CREDITS,
+                input_tokens=result.input_tokens,
+                output_tokens=result.output_tokens,
+                status="success",
+                latency_ms=latency_ms,
+            )
+            remaining = summarize_quota(session, tenant_id=tenant_id).remaining
+            session.commit()
+            return TargetCustomerCandidateResult(
+                success=True,
+                candidates=candidates,
+                quota_remaining=remaining,
+            )
+
+        record_ai_usage(
+            session,
+            tenant_id=tenant_id,
+            user_id=user_id,
+            feature_name=TARGET_CUSTOMER_MATCH_FEATURE,
+            provider=result.provider or provider_name,
+            model=result.model or model,
+            credits_charged=0,
+            input_tokens=result.input_tokens,
+            output_tokens=result.output_tokens,
+            status="failed",
+            error_code=result.error_code or "provider_error",
+            latency_ms=latency_ms,
+        )
+        session.commit()
+        return TargetCustomerCandidateResult(
+            success=False, error_code=result.error_code or "provider_error"
+        )
+
+
 def _session(app: Flask) -> Session:
     session = Session(get_engine(app))
     session.expire_on_commit = False
@@ -550,6 +859,58 @@ def _parse_product_profile_json(text: str) -> dict[str, object]:
     return normalized
 
 
+def _parse_target_customer_plan_json(text: str) -> dict[str, object]:
+    data = _load_json_object(text)
+    normalized: dict[str, object] = {}
+    for key in TARGET_CUSTOMER_PLAN_ARRAY_FIELDS:
+        normalized[key] = _normalize_list(data.get(key))
+    for key in TARGET_CUSTOMER_PLAN_TEXT_FIELDS:
+        normalized[key] = _normalize_text(data.get(key))
+    return normalized
+
+
+def _parse_target_customer_candidates_json(text: str) -> list[dict[str, object]]:
+    data = _load_json_object(text)
+    raw_candidates = data.get("candidates", [])
+    if not isinstance(raw_candidates, list):
+        raise AIServiceError("Target customer candidates must be a list")
+
+    candidates: list[dict[str, object]] = []
+    for raw_candidate in raw_candidates[:25]:
+        if not isinstance(raw_candidate, dict):
+            continue
+        candidate = {
+            key: _sanitize_public_text(raw_candidate.get(key, ""), max_length=500)
+            for key in TARGET_CUSTOMER_CANDIDATE_FIELDS
+        }
+        candidate["company_name"] = candidate["company_name"][:300]
+        candidate["country"] = candidate["country"][:120]
+        candidate["industry"] = candidate["industry"][:120]
+        candidate["buyer_type"] = candidate["buyer_type"][:120]
+        candidate["source_channel"] = candidate["source_channel"][:80]
+        candidate["confidence_score"] = _normalize_score(raw_candidate.get("confidence_score"))
+        if candidate["company_name"]:
+            candidates.append(candidate)
+    if not candidates:
+        raise AIServiceError("No target customer candidates returned")
+    return candidates
+
+
+def _load_json_object(text: str) -> dict[str, object]:
+    clean = (text or "").strip()
+    if clean.startswith("```"):
+        clean = clean.removeprefix("```json").removeprefix("```").strip()
+        if clean.endswith("```"):
+            clean = clean[:-3].strip()
+    try:
+        data = json.loads(clean)
+    except json.JSONDecodeError as exc:
+        raise AIServiceError("Malformed JSON") from exc
+    if not isinstance(data, dict):
+        raise AIServiceError("JSON must be an object")
+    return data
+
+
 def _normalize_list(value: object) -> list[str]:
     if value is None:
         return []
@@ -566,3 +927,18 @@ def _normalize_text(value: object) -> str:
         return "unknown"
     clean = str(value).strip()
     return clean[:1000] if clean else "unknown"
+
+
+def _normalize_score(value: object) -> int:
+    try:
+        score = int(value or 0)
+    except (TypeError, ValueError):
+        score = 0
+    return max(0, min(score, 100))
+
+
+def _sanitize_public_text(value: object, *, max_length: int) -> str:
+    clean = str(value or "").strip()
+    clean = re.sub(r"[\w.+-]+@[\w-]+(?:\.[\w-]+)+", "", clean)
+    clean = re.sub(r"(?:\+?\d[\d\s().-]{7,}\d)", "", clean)
+    return clean[:max_length].strip()

@@ -11,6 +11,7 @@ import app.modules.ai.models  # noqa: F401
 import app.modules.audit.models  # noqa: F401
 import app.modules.inbound.models  # noqa: F401
 import app.modules.jobs.models  # noqa: F401
+import app.modules.jobs.target_models  # noqa: F401
 import app.modules.leads.models  # noqa: F401
 import app.modules.onboarding.models  # noqa: F401
 import app.modules.outreach.models  # noqa: F401

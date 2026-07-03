@@ -4,12 +4,23 @@ from __future__ import annotations
 
 from flask import Flask, redirect, render_template, request, session
 
+from app.i18n import get_locale
+from app.i18n import translate as t
 from app.modules.accounts.guards import tenant_required
 from app.modules.jobs.service import (
     JobServiceError,
     create_and_enqueue,
     get_job_status,
     list_jobs,
+)
+from app.modules.jobs.target_discovery import (
+    add_candidate_to_crm,
+    collection_target_context,
+    filters_from_form,
+    generate_collection_target_plan,
+    match_collection_target_candidates,
+    plan_json,
+    raw_candidate_data,
 )
 
 
@@ -21,9 +32,61 @@ def register_collection_routes(app: Flask) -> None:
     @app.get("/collection")
     @tenant_required(app)
     def collection_workspace():
+        return _render_collection_workspace(app)
+
+    @app.post("/collection/target-plan")
+    @tenant_required(app)
+    def collection_target_plan():
         tenant_id = session.get("tenant_id", "")
-        jobs = list_jobs(app, tenant_id=tenant_id, limit=50)
-        return render_template("collection/workspace.html", jobs=jobs)
+        user_id = session.get("user_id", "")
+        result = generate_collection_target_plan(
+            app,
+            tenant_id=tenant_id,
+            user_id=user_id,
+            locale=get_locale(),
+            form=request.form,
+        )
+        return _render_collection_workspace(
+            app,
+            target_error=_target_error_message(result.error_code) if not result.success else "",
+            target_notice=t("Recommended buyer profile") if result.success else "",
+        )
+
+    @app.post("/collection/target-match")
+    @tenant_required(app)
+    def collection_target_match():
+        tenant_id = session.get("tenant_id", "")
+        user_id = session.get("user_id", "")
+        result = match_collection_target_candidates(
+            app,
+            tenant_id=tenant_id,
+            user_id=user_id,
+            locale=get_locale(),
+            form=request.form,
+        )
+        return _render_collection_workspace(
+            app,
+            target_error=_target_error_message(result.error_code) if not result.success else "",
+            target_notice=t("Example customers for testing") if result.success else "",
+        )
+
+    @app.post("/collection/candidates/<candidate_id>/add-to-crm")
+    @tenant_required(app)
+    def add_collection_candidate_to_crm(candidate_id: str):
+        tenant_id = session.get("tenant_id", "")
+        user_id = session.get("user_id", "")
+        result = add_candidate_to_crm(
+            app,
+            tenant_id=tenant_id,
+            user_id=user_id,
+            candidate_id=candidate_id,
+        )
+        if result.success:
+            return redirect(f"/leads/{result.lead_id}")
+        return _render_collection_workspace(
+            app,
+            target_error=_target_error_message(result.error_code),
+        )
 
     # ------------------------------------------------------------------
     # Create Google Search job
@@ -107,3 +170,31 @@ def register_collection_routes(app: Flask) -> None:
         if job is None:
             return "", 404
         return render_template("collection/_job_status.html", job=job)
+
+
+def _render_collection_workspace(app: Flask, *, target_error: str = "", target_notice: str = ""):
+    tenant_id = session.get("tenant_id", "")
+    jobs = list_jobs(app, tenant_id=tenant_id, limit=50)
+    target_context = collection_target_context(app, tenant_id=tenant_id)
+    return render_template(
+        "collection/workspace.html",
+        jobs=jobs,
+        target_context=target_context,
+        target_plan=plan_json(target_context.latest_run),
+        raw_candidate_data=raw_candidate_data,
+        target_filters=filters_from_form(request.form),
+        target_error=target_error,
+        target_notice=target_notice,
+    )
+
+
+def _target_error_message(error_code: str) -> str:
+    if error_code == "missing_product_profile":
+        return t("Please train your AI foreign trade operator first")
+    if error_code in {"tenant_ai_disabled", "ai_disabled"}:
+        return t("AI is not enabled for this workspace. Please contact the administrator.")
+    if error_code == "duplicate_candidate":
+        return t("Duplicate candidate detected")
+    if error_code == "candidate_not_found":
+        return t("Candidate not found")
+    return t("System is busy, please try again later")

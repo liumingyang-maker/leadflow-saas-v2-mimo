@@ -1,6 +1,7 @@
 {% from "components/_shell.html" import shell %}
 {% from "components/_buttons.html" import button %}
 {% from "components/_empty_states.html" import empty_state %}
+{% from "components/_forms.html" import csrf_input %}
 
 {% call shell(t("Collection workspace")) %}
 <header class="lf-page-header">
@@ -16,6 +17,127 @@
   <a href="/collection" aria-current="page">{{ t("Collection") }}</a>
   <a href="/leads">CRM</a>
 </nav>
+
+<section class="lf-panel lf-section">
+  <header class="lf-section-header">
+    <div>
+      <span class="lf-eyebrow">{{ t("Target customers") }}</span>
+      <h2>{{ t("AI helps you find target customers") }}</h2>
+      <p>{{ t("Based on your product memory") }}</p>
+    </div>
+  </header>
+
+  {% if target_error %}<div class="lf-alert lf-alert-danger">{{ target_error }}</div>{% endif %}
+  {% if target_notice %}<div class="lf-alert lf-alert-success">{{ target_notice }}</div>{% endif %}
+
+  {% if not target_context.product_profile %}
+    {{ empty_state(t("Please train your AI foreign trade operator first"), t("Tell AI what you sell"), t("Start training")) }}
+    <p><a class="lf-button lf-button-primary" href="/onboarding/product-profile">{{ t("Start training") }}</a></p>
+  {% else %}
+    <div class="lf-grid">
+      <article class="lf-panel">
+        <h3>{{ t("Product memory") }}</h3>
+        <dl class="lf-dl">
+          <dt>{{ t("English keywords") }}</dt>
+          <dd>{{ ", ".join(target_context.product_profile_summary.get("product_keywords_en", [])) }}</dd>
+          <dt>{{ t("Target countries") }}</dt>
+          <dd>{{ ", ".join(target_context.product_profile_summary.get("target_countries", [])) }}</dd>
+          <dt>{{ t("Buyer types") }}</dt>
+          <dd>{{ ", ".join(target_context.product_profile_summary.get("buyer_types", [])) }}</dd>
+        </dl>
+      </article>
+
+      <article class="lf-panel">
+        <h3>{{ t("Expected cost") }}</h3>
+        <p>{{ t("Test phase does not charge credits") }}</p>
+        <p>{{ t("Future expected cost: {count} target customer credits", count=target_filters.result_count) }}</p>
+      </article>
+    </div>
+
+    <form class="lf-panel lf-form-stack" method="post" action="/collection/target-plan">
+      {{ csrf_input() }}
+      <h3>{{ t("Recommended buyer profile") }}</h3>
+      <div class="lf-grid">
+        <div class="lf-field-group">
+          <label class="lf-label" for="country">{{ t("Target countries") }}</label>
+          <input class="lf-field" id="country" name="country" value="{{ target_filters.country }}">
+        </div>
+        <div class="lf-field-group">
+          <label class="lf-label" for="buyer_type">{{ t("Buyer types") }}</label>
+          <input class="lf-field" id="buyer_type" name="buyer_type" value="{{ target_filters.buyer_type }}">
+        </div>
+        <div class="lf-field-group">
+          <label class="lf-label" for="industry">{{ t("Industry") }}</label>
+          <input class="lf-field" id="industry" name="industry" value="{{ target_filters.industry }}">
+        </div>
+        <div class="lf-field-group">
+          <label class="lf-label" for="result_count">{{ t("Result count") }}</label>
+          <input class="lf-field" id="result_count" name="result_count" type="number" min="1" max="25" value="{{ target_filters.result_count }}">
+        </div>
+      </div>
+      <div class="lf-actions">
+        <button class="lf-button lf-button-primary" type="submit">{{ t("Recommended buyer profile") }}</button>
+      </div>
+    </form>
+
+    {% if target_plan %}
+      <section class="lf-panel">
+        <h3>{{ t("Recommended buyer profile") }}</h3>
+        <dl class="lf-dl">
+          <dt>{{ t("Buyer types") }}</dt>
+          <dd>{{ ", ".join(target_plan.get("ideal_buyer_types", [])) }}</dd>
+          <dt>{{ t("Target industries") }}</dt>
+          <dd>{{ ", ".join(target_plan.get("target_industries", [])) }}</dd>
+          <dt>{{ t("Target countries") }}</dt>
+          <dd>{{ ", ".join(target_plan.get("recommended_countries", [])) }}</dd>
+          <dt>{{ t("Search keywords") }}</dt>
+          <dd>{{ ", ".join(target_plan.get("search_keywords", [])) }}</dd>
+          <dt>{{ t("Review before using") }}</dt>
+          <dd>{{ target_plan.get("first_batch_strategy", "") }}</dd>
+        </dl>
+        <form method="post" action="/collection/target-match" class="lf-actions">
+          {{ csrf_input() }}
+          <input type="hidden" name="run_id" value="{{ target_context.latest_run.id }}">
+          <input type="hidden" name="country" value="{{ target_filters.country }}">
+          <input type="hidden" name="buyer_type" value="{{ target_filters.buyer_type }}">
+          <input type="hidden" name="industry" value="{{ target_filters.industry }}">
+          <input type="hidden" name="result_count" value="{{ target_filters.result_count }}">
+          <button class="lf-button lf-button-primary" type="submit">{{ t("Match target customers") }}</button>
+        </form>
+      </section>
+    {% endif %}
+
+    {% if target_context.candidates %}
+      <section class="lf-grid lf-section" aria-label="{{ t('Search candidates') }}">
+        {% for candidate in target_context.candidates %}
+          {% set extra = raw_candidate_data(candidate) %}
+          <article class="lf-panel">
+            <span class="lf-badge">{{ t(candidate.source_channel or "Example customers for testing") }}</span>
+            <h3>{{ candidate.company_name }}</h3>
+            <dl class="lf-dl">
+              <dt>{{ t("Target countries") }}</dt><dd>{{ candidate.country }}</dd>
+              <dt>{{ t("Website") }}</dt><dd>{% if candidate.website %}<a href="{{ candidate.website }}" rel="noopener noreferrer">{{ candidate.website }}</a>{% endif %}</dd>
+              <dt>{{ t("Industry") }}</dt><dd>{{ candidate.industry }}</dd>
+              <dt>{{ t("Buyer types") }}</dt><dd>{{ candidate.buyer_type }}</dd>
+              <dt>{{ t("Source") }}</dt><dd>{{ candidate.source_channel }}</dd>
+              <dt>{{ t("Confidence") }}</dt><dd>{{ candidate.confidence_score }}</dd>
+              <dt>{{ t("Match reason") }}</dt><dd>{{ candidate.match_reason }}</dd>
+              <dt>{{ t("Suggested next action") }}</dt><dd>{{ extra.get("suggested_next_action", "") }}</dd>
+            </dl>
+            {% if candidate.status == "pending_review" %}
+              <form method="post" action="/collection/candidates/{{ candidate.id }}/add-to-crm">
+                {{ csrf_input() }}
+                <button class="lf-button lf-button-primary" type="submit">{{ t("Add to CRM") }}</button>
+              </form>
+            {% else %}
+              <span class="lf-badge">{{ candidate.status }}</span>
+            {% endif %}
+          </article>
+        {% endfor %}
+      </section>
+    {% endif %}
+  {% endif %}
+</section>
 
 <div class="lf-grid lf-section">
   <a href="/collection/search" class="lf-panel" style="text-decoration:none;color:inherit;">

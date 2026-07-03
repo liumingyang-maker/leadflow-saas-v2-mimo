@@ -48,6 +48,96 @@ class FakeAIProvider:
                 output_tokens=_rough_tokens(text),
             )
 
+        if "target_customer_plan_generation" in request.system_prompt:
+            text = json.dumps(
+                {
+                    "ideal_buyer_types": ["Importer", "Distributor", "Retail chain buyer"],
+                    "target_industries": ["Retail", "Home goods", "Promotional products"],
+                    "recommended_countries": ["United States", "Germany", "Australia"],
+                    "search_keywords": [
+                        "insulated bottle importer",
+                        "drinkware distributor",
+                        "promotional bottle wholesaler",
+                    ],
+                    "negative_keywords": ["job", "career", "free"],
+                    "channel_recommendations": ["示例客户", "搜索候选", "CSV 导入"],
+                    "buyer_pain_points": [
+                        "needs stable small-batch supply",
+                        "needs custom branding options",
+                    ],
+                    "match_scoring_rules": [
+                        "has a public company website",
+                        "sells or distributes adjacent products",
+                        "matches target country or buyer type",
+                    ],
+                    "first_batch_strategy": "Start with 10 example candidates for user review.",
+                    "disqualification_rules": [
+                        "private individual contacts",
+                        "job boards",
+                        "companies without clear product fit",
+                    ],
+                },
+                ensure_ascii=False,
+            )
+            return AIGenerationResult(
+                success=True,
+                text=text,
+                provider="fake",
+                model=self._model,
+                input_tokens=_rough_tokens(request.system_prompt + request.user_prompt),
+                output_tokens=_rough_tokens(text),
+            )
+
+        if "target_customer_candidate_matching" in request.system_prompt:
+            text = json.dumps(
+                {
+                    "candidates": [
+                        {
+                            "company_name": "Northstar Outdoor Supply",
+                            "country": "United States",
+                            "website": "https://northstar-outdoor.example",
+                            "industry": "Outdoor retail",
+                            "buyer_type": "Distributor",
+                            "source_channel": "示例客户",
+                            "match_reason": "Carries drinkware-adjacent outdoor products.",
+                            "confidence_score": 82,
+                            "suggested_next_action": "Review website categories before outreach.",
+                        },
+                        {
+                            "company_name": "Meyer Promo Gifts",
+                            "country": "Germany",
+                            "website": "https://meyer-promo.example",
+                            "industry": "Promotional products",
+                            "buyer_type": "Wholesaler",
+                            "source_channel": "示例客户",
+                            "match_reason": "Likely fit for branded bottle trial orders.",
+                            "confidence_score": 78,
+                            "suggested_next_action": "Check catalog fit, then add to CRM.",
+                        },
+                        {
+                            "company_name": "Pacific Home Goods",
+                            "country": "Australia",
+                            "website": "https://pacific-home-goods.example",
+                            "industry": "Home goods",
+                            "buyer_type": "Importer",
+                            "source_channel": "搜索候选",
+                            "match_reason": "Imports household categories with gift potential.",
+                            "confidence_score": 74,
+                            "suggested_next_action": "Verify product category before contact.",
+                        },
+                    ]
+                },
+                ensure_ascii=False,
+            )
+            return AIGenerationResult(
+                success=True,
+                text=text,
+                provider="fake",
+                model=self._model,
+                input_tokens=_rough_tokens(request.system_prompt + request.user_prompt),
+                output_tokens=_rough_tokens(text),
+            )
+
         if request.locale == "en-US":
             text = (
                 "Subject: Quick idea for your growth pipeline\n\n"

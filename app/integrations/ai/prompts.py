@@ -113,9 +113,81 @@ def build_product_profile_extraction_prompt(
     return OutreachDraftPrompt(system_prompt=system, user_prompt=user)
 
 
+def build_target_customer_plan_prompt(
+    *, locale: str, product_profile_json: str
+) -> OutreachDraftPrompt:
+    keys = (
+        "ideal_buyer_types",
+        "target_industries",
+        "recommended_countries",
+        "search_keywords",
+        "negative_keywords",
+        "channel_recommendations",
+        "buyer_pain_points",
+        "match_scoring_rules",
+        "first_batch_strategy",
+        "disqualification_rules",
+    )
+    system = (
+        "feature: target_customer_plan_generation\n"
+        "Create a target customer discovery plan from confirmed product memory only. "
+        "Return strict JSON only. Do not claim verified buyers or purchase intent. "
+        "Do not include private emails, phone numbers, or personal data. JSON keys must "
+        f"be exactly: {', '.join(keys)}."
+    )
+    if locale == "zh-CN":
+        system += " UI language is Simplified Chinese, but JSON keys stay English."
+    user = (
+        "Confirmed tenant product memory JSON:\n"
+        f"{_clean_jsonish(product_profile_json)}\n\n"
+        "Suggest buyer types, countries, industries, search keywords, and conservative "
+        "matching rules for the first batch of target customer candidates."
+    )
+    return OutreachDraftPrompt(system_prompt=system, user_prompt=user)
+
+
+def build_target_customer_candidate_prompt(
+    *,
+    locale: str,
+    product_profile_json: str,
+    target_plan_json: str,
+    filters: dict[str, object],
+    count: int,
+) -> OutreachDraftPrompt:
+    system = (
+        "feature: target_customer_candidate_matching\n"
+        "Generate clearly test-safe example B2B target customer candidates. Return strict "
+        "JSON only with a top-level candidates array. Do not include private email, phone, "
+        "personal data, verified buyer claims, guaranteed purchase intent, or scraped data. "
+        "Each candidate must include company_name, country, website, industry, buyer_type, "
+        "source_channel, match_reason, confidence_score, and suggested_next_action."
+    )
+    if locale == "zh-CN":
+        system += " UI language is Simplified Chinese, but JSON keys stay English."
+    user = (
+        f"Requested count: {max(1, min(count, 25))}\n"
+        f"Filters JSON: {_clean_jsonish(_json_dumps(filters))}\n\n"
+        "Confirmed tenant product memory JSON:\n"
+        f"{_clean_jsonish(product_profile_json)}\n\n"
+        "Target customer plan JSON:\n"
+        f"{_clean_jsonish(target_plan_json)}"
+    )
+    return OutreachDraftPrompt(system_prompt=system, user_prompt=user)
+
+
 def _clean(value: str) -> str:
     return (value or "").strip()[:500]
 
 
 def _clean_long(value: str) -> str:
     return (value or "").strip()[:2000]
+
+
+def _clean_jsonish(value: str) -> str:
+    return (value or "").strip()[:6000]
+
+
+def _json_dumps(value: dict[str, object]) -> str:
+    import json
+
+    return json.dumps(value, ensure_ascii=False, sort_keys=True)

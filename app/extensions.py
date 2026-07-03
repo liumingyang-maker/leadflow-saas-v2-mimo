@@ -72,6 +72,7 @@ import app.modules.ai.models  # noqa: E402,F401
 import app.modules.audit.models  # noqa: E402,F401
 import app.modules.inbound.models  # noqa: E402,F401
 import app.modules.jobs.models  # noqa: E402,F401
+import app.modules.jobs.target_models  # noqa: E402,F401
 import app.modules.leads.models  # noqa: E402,F401
 import app.modules.onboarding.models  # noqa: E402,F401
 import app.modules.outreach.models  # noqa: E402,F401
