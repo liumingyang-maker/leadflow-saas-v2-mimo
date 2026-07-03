@@ -222,6 +222,61 @@ class FakeAIProvider:
                 output_tokens=_rough_tokens(text),
             )
 
+        if "candidate_company_research" in request.system_prompt:
+            text = json.dumps(
+                {
+                    "summary": (
+                        "This candidate appears to be a public B2B company profile that "
+                        "may be worth manual review."
+                    ),
+                    "why_potential_buyer": (
+                        "The supplied metadata suggests a possible importer or distributor fit, "
+                        "but the evidence is not verified."
+                    ),
+                    "product_fit": (
+                        "Likely adjacent to the tenant product category based on candidate "
+                        "buyer type and match reason."
+                    ),
+                    "buyer_type": "Distributor",
+                    "country_region": "United States",
+                    "possible_use_cases": ["Trial order review", "Catalog fit check"],
+                    "positive_signals": [
+                        {
+                            "signal": "Candidate metadata mentions adjacent product categories",
+                            "source": "candidate_metadata",
+                            "confidence": "medium",
+                        }
+                    ],
+                    "risk_signals": [
+                        {
+                            "risk": "Source data is thin and has not been manually verified",
+                            "source": "candidate_metadata",
+                            "severity": "medium",
+                        }
+                    ],
+                    "fit_score": 72,
+                    "confidence_score": 58,
+                    "suggested_next_action": (
+                        "Open the source link and confirm product category fit before "
+                        "adding to CRM."
+                    ),
+                    "suggested_outreach_angle": (
+                        "Lead with a small trial order and stable supply angle after "
+                        "manual confirmation."
+                    ),
+                    "disclaimer": "未验证，需要人工确认",
+                },
+                ensure_ascii=False,
+            )
+            return AIGenerationResult(
+                success=True,
+                text=text,
+                provider="fake",
+                model=self._model,
+                input_tokens=_rough_tokens(request.system_prompt + request.user_prompt),
+                output_tokens=_rough_tokens(text),
+            )
+
         if request.locale == "en-US":
             text = (
                 "Subject: Quick idea for your growth pipeline\n\n"

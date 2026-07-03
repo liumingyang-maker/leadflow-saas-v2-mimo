@@ -2,13 +2,17 @@
 
 from __future__ import annotations
 
-from flask import Flask, redirect, render_template, request, session
+from flask import Flask, abort, redirect, render_template, request, session
 
 from app.i18n import get_locale
 from app.i18n import translate as t
 from app.integrations.acquisition.registry import acquisition_channels
 from app.modules.accounts.guards import tenant_required
 from app.modules.acquisition.service import advanced_search_available, get_acquisition_settings
+from app.modules.jobs.candidate_research import (
+    candidate_research_context,
+    generate_candidate_research_report,
+)
 from app.modules.jobs.service import (
     JobServiceError,
     create_and_enqueue,
@@ -147,6 +151,63 @@ def register_collection_routes(app: Flask) -> None:
             target_error=_target_error_message(result.error_code),
         )
 
+    @app.get("/collection/candidates/<candidate_id>")
+    @tenant_required(app)
+    def collection_candidate_detail(candidate_id: str):
+        tenant_id = session.get("tenant_id", "")
+        context = candidate_research_context(app, tenant_id=tenant_id, candidate_id=candidate_id)
+        if context is None:
+            abort(404)
+        return render_template(
+            "collection/candidate_detail.html",
+            candidate=context.candidate,
+            candidate_extra=context.candidate_extra,
+            candidate_view=context.candidate_view,
+            latest_report=context.latest_report,
+            report_view=context.report_view,
+            error="",
+            notice=request.args.get("notice", ""),
+        )
+
+    @app.post("/collection/candidates/<candidate_id>/research")
+    @tenant_required(app)
+    def collection_candidate_research(candidate_id: str):
+        tenant_id = session.get("tenant_id", "")
+        user_id = session.get("user_id", "")
+        result = generate_candidate_research_report(
+            app,
+            tenant_id=tenant_id,
+            user_id=user_id,
+            candidate_id=candidate_id,
+            locale=get_locale(),
+        )
+        if result.error_code == "candidate_not_found":
+            abort(404)
+        if result.success:
+            return redirect(f"/collection/candidates/{candidate_id}?notice=research_ready#research")
+        context = candidate_research_context(app, tenant_id=tenant_id, candidate_id=candidate_id)
+        if context is None:
+            abort(404)
+        return render_template(
+            "collection/candidate_detail.html",
+            candidate=context.candidate,
+            candidate_extra=context.candidate_extra,
+            candidate_view=context.candidate_view,
+            latest_report=context.latest_report,
+            report_view=context.report_view,
+            error=_candidate_research_error_message(result.error_code),
+            notice="",
+        )
+
+    @app.get("/collection/candidates/<candidate_id>/research")
+    @tenant_required(app)
+    def collection_candidate_research_view(candidate_id: str):
+        tenant_id = session.get("tenant_id", "")
+        context = candidate_research_context(app, tenant_id=tenant_id, candidate_id=candidate_id)
+        if context is None:
+            abort(404)
+        return redirect(f"/collection/candidates/{candidate_id}#research")
+
     # ------------------------------------------------------------------
     # Create Google Search job
     # ------------------------------------------------------------------
@@ -268,4 +329,12 @@ def _target_error_message(error_code: str) -> str:
         return t("Daily spend cap reached.")
     if error_code == "provider_timeout":
         return t("Provider timeout")
+    return t("System is busy, please try again later")
+
+
+def _candidate_research_error_message(error_code: str) -> str:
+    if error_code in {"ai_disabled", "tenant_ai_disabled"}:
+        return t("AI feature is not enabled")
+    if error_code == "insufficient_credits":
+        return t("Not enough credits")
     return t("System is busy, please try again later")

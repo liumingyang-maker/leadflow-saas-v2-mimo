@@ -1,0 +1,179 @@
+{% from "components/_shell.html" import shell %}
+{% from "components/_forms.html" import csrf_input %}
+
+{% call shell(t("Candidate company research")) %}
+<header class="lf-page-header">
+  <div>
+    <span class="lf-eyebrow">{{ t("Target customers") }}</span>
+    <h1 class="lf-page-title">{{ candidate.company_name }}</h1>
+    <p>{{ t("AI company research helps you review unverified target customer candidates.") }}</p>
+  </div>
+  <a class="lf-button lf-button-secondary" href="/collection">{{ t("Back to collection") }}</a>
+</header>
+
+<nav class="lf-top-nav" aria-label="{{ t('Collection sources') }}">
+  <a href="/workbench">{{ t("Workbench") }}</a>
+  <a href="/collection">{{ t("Collection") }}</a>
+  <a href="/collection/candidates/{{ candidate.id }}" aria-current="page">{{ t("Candidate detail") }}</a>
+</nav>
+
+{% if error %}<div class="lf-alert lf-alert-danger" role="alert">{{ error }}</div>{% endif %}
+{% if notice == "research_ready" %}<div class="lf-alert lf-alert-success" role="status">{{ t("Research report is ready") }}</div>{% endif %}
+
+<section class="lf-grid lf-section">
+  <article class="lf-panel">
+    <span class="lf-badge">{{ t("Unverified") }}</span>
+    <h2>{{ t("Candidate summary") }}</h2>
+    <dl class="lf-dl">
+      <dt>{{ t("Website") }}</dt>
+      <dd>
+        {% if candidate.website %}
+          <a href="{{ candidate.website }}" rel="noopener noreferrer">{{ candidate.website }}</a>
+        {% else %}
+          {{ t("No website provided") }}
+        {% endif %}
+      </dd>
+      <dt>{{ t("Target countries") }}</dt><dd>{{ candidate.country }}</dd>
+      <dt>{{ t("Industry") }}</dt><dd>{{ candidate.industry }}</dd>
+      <dt>{{ t("Buyer types") }}</dt><dd>{{ candidate.buyer_type }}</dd>
+      <dt>{{ t("Source") }}</dt><dd>{{ candidate.source_channel }}</dd>
+      <dt>{{ t("Confidence") }}</dt><dd>{{ candidate.confidence_score }}</dd>
+      <dt>{{ t("Status") }}</dt><dd>{{ candidate.status }}</dd>
+      <dt>{{ t("Match reason") }}</dt><dd>{{ candidate_view.match_reason }}</dd>
+      <dt>{{ t("Suggested next action") }}</dt><dd>{{ candidate_extra.get("suggested_next_action", "") }}</dd>
+    </dl>
+    {% if not candidate.website %}
+      <div class="lf-alert lf-alert-info">{{ t("Source information is limited, so confidence is lower.") }}</div>
+    {% endif %}
+    <div class="lf-actions">
+      {% if candidate.status == "pending_review" %}
+        <form method="post" action="/collection/candidates/{{ candidate.id }}/add-to-crm">
+          {{ csrf_input() }}
+          <button class="lf-button lf-button-secondary" type="submit">{{ t("Add to CRM") }}</button>
+        </form>
+      {% endif %}
+      {% if not latest_report or latest_report.status != "completed" %}
+        <form method="post" action="/collection/candidates/{{ candidate.id }}/research">
+          {{ csrf_input() }}
+          <button class="lf-button lf-button-primary" type="submit">{{ t("AI company research") }}</button>
+        </form>
+      {% endif %}
+    </div>
+    <p class="lf-muted">{{ t("AI will use candidate metadata and product memory only. It will not crawl websites.") }}</p>
+  </article>
+
+  <article class="lf-panel">
+    <h2>{{ t("Safety boundaries") }}</h2>
+    <ul class="lf-list">
+      <li>{{ t("AI result is for reference only and needs manual confirmation.") }}</li>
+      <li>{{ t("No email will be sent automatically.") }}</li>
+      <li>{{ t("Private emails and phone numbers are not saved as trusted fields.") }}</li>
+      <li>{{ t("The system will not create outreach messages from this report.") }}</li>
+    </ul>
+  </article>
+</section>
+
+<section id="research" class="lf-section">
+  {% if latest_report and latest_report.status == "completed" %}
+    <article class="lf-panel">
+      <header class="lf-section-header">
+        <div>
+          <span class="lf-eyebrow">{{ t("Unverified") }}</span>
+          <h2>{{ t("AI company research") }}</h2>
+          <p>{{ t("AI result is for reference only and needs manual confirmation.") }}</p>
+        </div>
+        <span class="lf-badge">{{ latest_report.confidence_score }}</span>
+      </header>
+
+      <div class="lf-grid">
+        <section>
+          <h3>{{ t("Company overview") }}</h3>
+          <p>{{ latest_report.summary }}</p>
+        </section>
+        <section>
+          <h3>{{ t("Why it may fit you") }}</h3>
+          <p>{{ latest_report.why_potential_buyer }}</p>
+        </section>
+        <section>
+          <h3>{{ t("Buyer type judgment") }}</h3>
+          <p>{{ latest_report.buyer_type }}</p>
+        </section>
+        <section>
+          <h3>{{ t("Product fit") }}</h3>
+          <p>{{ latest_report.product_fit }}</p>
+        </section>
+      </div>
+
+      {% if report_view.possible_use_cases %}
+        <h3>{{ t("Possible use cases") }}</h3>
+        <ul class="lf-list">
+          {% for item in report_view.possible_use_cases %}<li>{{ item }}</li>{% endfor %}
+        </ul>
+      {% endif %}
+
+      <div class="lf-grid">
+        <section>
+          <h3>{{ t("Positive signals") }}</h3>
+          <ul class="lf-list">
+            {% for item in report_view.buyer_signals %}
+              <li>{{ item.signal }} <span class="lf-muted">· {{ item.source }}</span></li>
+            {% endfor %}
+          </ul>
+        </section>
+        <section>
+          <h3>{{ t("Risks and uncertainties") }}</h3>
+          <ul class="lf-list">
+            {% for item in report_view.risk_signals %}
+              <li>{{ item.risk }} <span class="lf-muted">· {{ item.source }}</span></li>
+            {% endfor %}
+          </ul>
+        </section>
+      </div>
+
+      <section>
+        <h3>{{ t("Suggested next action") }}</h3>
+        <p>{{ latest_report.suggested_next_action }}</p>
+      </section>
+      <section>
+        <h3>{{ t("Suggested outreach angle") }}</h3>
+        <p>{{ latest_report.suggested_outreach_angle }}</p>
+      </section>
+
+      <section>
+        <h3>{{ t("Source links") }}</h3>
+        <ul class="lf-list">
+          {% for source in report_view.sources %}
+            <li>
+              {% if source.url %}<a href="{{ source.url }}" rel="noopener noreferrer">{{ source.title }}</a>{% else %}{{ source.title }}{% endif %}
+              <span class="lf-muted">· {{ source.source_provider }} · {{ source.snippet }}</span>
+            </li>
+          {% endfor %}
+        </ul>
+      </section>
+
+      <div class="lf-alert lf-alert-info" role="status">
+        <strong>{{ t("Disclaimer") }}</strong>
+        <span>{{ t("Unverified") }} · {{ t("AI result is for reference only and needs manual confirmation.") }}</span>
+      </div>
+    </article>
+  {% elif latest_report and latest_report.status == "failed" %}
+    <article class="lf-panel">
+      <h2>{{ t("AI company research") }}</h2>
+      <div class="lf-alert lf-alert-danger" role="alert">{{ t("System is busy, please try again later") }}</div>
+      <form method="post" action="/collection/candidates/{{ candidate.id }}/research">
+        {{ csrf_input() }}
+        <button class="lf-button lf-button-primary" type="submit">{{ t("AI company research") }}</button>
+      </form>
+    </article>
+  {% else %}
+    <article class="lf-panel">
+      <h2>{{ t("AI company research") }}</h2>
+      <p>{{ t("AI will generate an unverified research report from candidate information and your product memory. Please manually confirm the website, buying need, and contact path.") }}</p>
+      <form method="post" action="/collection/candidates/{{ candidate.id }}/research">
+        {{ csrf_input() }}
+        <button class="lf-button lf-button-primary" type="submit">{{ t("AI company research") }}</button>
+      </form>
+    </article>
+  {% endif %}
+</section>
+{% endcall %}

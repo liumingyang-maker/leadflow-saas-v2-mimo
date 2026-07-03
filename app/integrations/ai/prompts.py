@@ -236,6 +236,50 @@ def build_pasted_search_results_prompt(
     return OutreachDraftPrompt(system_prompt=system, user_prompt=user)
 
 
+def build_candidate_company_research_prompt(
+    *,
+    locale: str,
+    candidate_context_json: str,
+    product_profile_json: str,
+) -> OutreachDraftPrompt:
+    keys = (
+        "summary",
+        "why_potential_buyer",
+        "product_fit",
+        "buyer_type",
+        "country_region",
+        "possible_use_cases",
+        "positive_signals",
+        "risk_signals",
+        "fit_score",
+        "confidence_score",
+        "suggested_next_action",
+        "suggested_outreach_angle",
+        "disclaimer",
+    )
+    system = (
+        "feature: candidate_company_research\n"
+        "Create an unverified B2B candidate company research report from supplied "
+        "candidate metadata, source snippets, and confirmed product memory only. Return "
+        "strict JSON only. Do not crawl, fetch URLs, infer from private data, include "
+        "private emails or phone numbers, claim verified buyer/importer status, claim "
+        "verified purchasing intent, or invent facts not supported by the supplied "
+        "metadata. If evidence is weak, state uncertainty and lower confidence. JSON keys "
+        f"must be exactly: {', '.join(keys)}."
+    )
+    if locale == "zh-CN":
+        system += " UI language is Simplified Chinese, but JSON keys stay English."
+    user = (
+        "Candidate metadata JSON, already sanitized and not fetched from the website:\n"
+        f"{_clean_jsonish(candidate_context_json)}\n\n"
+        "Confirmed tenant product memory JSON:\n"
+        f"{_clean_jsonish(product_profile_json)}\n\n"
+        "Write a concise report that distinguishes evidence from inference. Include a "
+        "manual-confirmation disclaimer."
+    )
+    return OutreachDraftPrompt(system_prompt=system, user_prompt=user)
+
+
 def _clean(value: str) -> str:
     return (value or "").strip()[:500]
 

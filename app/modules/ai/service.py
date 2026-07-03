@@ -17,6 +17,7 @@ from app.integrations.ai.fake import FakeAIProvider
 from app.integrations.ai.openai_compatible import OpenAICompatibleProvider
 from app.integrations.ai.prompts import (
     build_basic_search_strategy_prompt,
+    build_candidate_company_research_prompt,
     build_outreach_draft_prompt,
     build_pasted_search_results_prompt,
     build_product_profile_extraction_prompt,
@@ -70,6 +71,9 @@ PASTED_SEARCH_PARSE_FEATURE = "pasted_search_result_parsing"
 CANDIDATE_FIT_SCORING_FEATURE = "candidate_fit_scoring"
 BASIC_SEARCH_STRATEGY_CREDITS = 0
 PASTED_SEARCH_PARSE_CREDITS = 0
+CANDIDATE_COMPANY_RESEARCH_FEATURE = "candidate_company_research"
+CANDIDATE_COMPANY_RESEARCH_REQUIRED_CREDITS = 5
+CANDIDATE_COMPANY_RESEARCH_CREDITS = 0
 TARGET_CUSTOMER_PLAN_ARRAY_FIELDS = (
     "ideal_buyer_types",
     "target_industries",
@@ -100,6 +104,11 @@ BASIC_SEARCH_STRATEGY_ARRAY_FIELDS = (
     "query_templates",
     "query_rationale",
     "match_scoring_hints",
+)
+CANDIDATE_COMPANY_RESEARCH_ARRAY_FIELDS = (
+    "possible_use_cases",
+    "positive_signals",
+    "risk_signals",
 )
 
 
@@ -165,6 +174,17 @@ class PastedSearchResultParseResult:
     candidates: list[dict[str, object]] | None = None
     error_code: str = ""
     quota_remaining: int = 0
+
+
+@dataclass(frozen=True)
+class CandidateCompanyResearchResult:
+    success: bool
+    report: dict[str, object] | None = None
+    error_code: str = ""
+    quota_remaining: int = 0
+    ledger_id: str = ""
+    provider: str = ""
+    model: str = ""
 
 
 @dataclass(frozen=True)
@@ -1061,6 +1081,197 @@ def parse_pasted_search_results(
         )
 
 
+def generate_candidate_company_research(
+    app: Flask,
+    *,
+    tenant_id: str,
+    user_id: str,
+    locale: str,
+    candidate_context_json: str,
+    product_profile_json: str,
+) -> CandidateCompanyResearchResult:
+    with _session(app) as session:
+        settings = _get_or_create_settings(session)
+        provider_name = settings.provider
+        model = settings.model
+        if not settings.enabled or settings.provider == "disabled":
+            ledger = record_ai_usage(
+                session,
+                tenant_id=tenant_id,
+                user_id=user_id,
+                feature_name=CANDIDATE_COMPANY_RESEARCH_FEATURE,
+                provider=provider_name,
+                model=model,
+                credits_charged=0,
+                input_tokens=0,
+                output_tokens=0,
+                status="disabled",
+                error_code="ai_disabled",
+            )
+            session.flush()
+            ledger_id = ledger.id
+            session.commit()
+            return CandidateCompanyResearchResult(
+                success=False,
+                error_code="ai_disabled",
+                ledger_id=ledger_id,
+                provider=provider_name,
+                model=model,
+            )
+
+        summary = summarize_quota(session, tenant_id=tenant_id)
+        if not summary.enabled:
+            ledger = record_ai_usage(
+                session,
+                tenant_id=tenant_id,
+                user_id=user_id,
+                feature_name=CANDIDATE_COMPANY_RESEARCH_FEATURE,
+                provider=provider_name,
+                model=model,
+                credits_charged=0,
+                input_tokens=0,
+                output_tokens=0,
+                status="disabled",
+                error_code="tenant_ai_disabled",
+            )
+            session.flush()
+            ledger_id = ledger.id
+            session.commit()
+            return CandidateCompanyResearchResult(
+                success=False,
+                error_code="tenant_ai_disabled",
+                quota_remaining=summary.remaining,
+                ledger_id=ledger_id,
+                provider=provider_name,
+                model=model,
+            )
+
+        if summary.remaining < CANDIDATE_COMPANY_RESEARCH_REQUIRED_CREDITS:
+            ledger = record_ai_usage(
+                session,
+                tenant_id=tenant_id,
+                user_id=user_id,
+                feature_name=CANDIDATE_COMPANY_RESEARCH_FEATURE,
+                provider=provider_name,
+                model=model,
+                credits_charged=0,
+                input_tokens=0,
+                output_tokens=0,
+                status="blocked_quota",
+                error_code="insufficient_credits",
+            )
+            session.flush()
+            ledger_id = ledger.id
+            session.commit()
+            return CandidateCompanyResearchResult(
+                success=False,
+                error_code="insufficient_credits",
+                quota_remaining=summary.remaining,
+                ledger_id=ledger_id,
+                provider=provider_name,
+                model=model,
+            )
+
+        prompt = build_candidate_company_research_prompt(
+            locale=locale,
+            candidate_context_json=candidate_context_json,
+            product_profile_json=product_profile_json,
+        )
+        provider = _provider_from_settings(settings)
+
+    start = time.monotonic()
+    result = provider.generate_text(
+        AIGenerationRequest(
+            system_prompt=prompt.system_prompt,
+            user_prompt=prompt.user_prompt,
+            locale=locale,
+            max_output_tokens=max(512, settings.max_output_tokens),
+        )
+    )
+    latency_ms = int((time.monotonic() - start) * 1000)
+
+    with _session(app) as session:
+        if result.success:
+            try:
+                report = _parse_candidate_company_research_json(result.text)
+            except AIServiceError:
+                ledger = record_ai_usage(
+                    session,
+                    tenant_id=tenant_id,
+                    user_id=user_id,
+                    feature_name=CANDIDATE_COMPANY_RESEARCH_FEATURE,
+                    provider=result.provider or provider_name,
+                    model=result.model or model,
+                    credits_charged=0,
+                    input_tokens=result.input_tokens,
+                    output_tokens=result.output_tokens,
+                    status="failed",
+                    error_code="malformed_json",
+                    latency_ms=latency_ms,
+                )
+                session.flush()
+                ledger_id = ledger.id
+                session.commit()
+                return CandidateCompanyResearchResult(
+                    success=False,
+                    error_code="malformed_json",
+                    ledger_id=ledger_id,
+                    provider=result.provider or provider_name,
+                    model=result.model or model,
+                )
+
+            ledger = record_ai_usage(
+                session,
+                tenant_id=tenant_id,
+                user_id=user_id,
+                feature_name=CANDIDATE_COMPANY_RESEARCH_FEATURE,
+                provider=result.provider or provider_name,
+                model=result.model or model,
+                credits_charged=CANDIDATE_COMPANY_RESEARCH_CREDITS,
+                input_tokens=result.input_tokens,
+                output_tokens=result.output_tokens,
+                status="success",
+                latency_ms=latency_ms,
+            )
+            session.flush()
+            ledger_id = ledger.id
+            remaining = summarize_quota(session, tenant_id=tenant_id).remaining
+            session.commit()
+            return CandidateCompanyResearchResult(
+                success=True,
+                report=report,
+                quota_remaining=remaining,
+                ledger_id=ledger_id,
+                provider=result.provider or provider_name,
+                model=result.model or model,
+            )
+
+        ledger = record_ai_usage(
+            session,
+            tenant_id=tenant_id,
+            user_id=user_id,
+            feature_name=CANDIDATE_COMPANY_RESEARCH_FEATURE,
+            provider=result.provider or provider_name,
+            model=result.model or model,
+            credits_charged=0,
+            input_tokens=result.input_tokens,
+            output_tokens=result.output_tokens,
+            status="failed",
+            error_code=result.error_code or "provider_error",
+            latency_ms=latency_ms,
+        )
+        session.flush()
+        ledger_id = ledger.id
+        session.commit()
+        return CandidateCompanyResearchResult(
+            success=False,
+            error_code=result.error_code or "provider_error",
+            ledger_id=ledger_id,
+            provider=result.provider or provider_name,
+            model=result.model or model,
+        )
+
+
 def _session(app: Flask) -> Session:
     session = Session(get_engine(app))
     session.expire_on_commit = False
@@ -1208,6 +1419,72 @@ def _parse_target_customer_candidates_json(text: str) -> list[dict[str, object]]
     if not candidates:
         raise AIServiceError("No target customer candidates returned")
     return candidates
+
+
+def _parse_candidate_company_research_json(text: str) -> dict[str, object]:
+    data = _load_json_object(text)
+    report: dict[str, object] = {
+        "summary": _sanitize_public_text(data.get("summary", ""), max_length=1500),
+        "why_potential_buyer": _sanitize_public_text(
+            data.get("why_potential_buyer", data.get("why_fit", "")),
+            max_length=1500,
+        ),
+        "product_fit": _sanitize_public_text(data.get("product_fit", ""), max_length=1500),
+        "buyer_type": _sanitize_public_text(
+            data.get("buyer_type", data.get("buyer_type_judgment", "")),
+            max_length=120,
+        ),
+        "country_region": _sanitize_public_text(data.get("country_region", ""), max_length=120),
+        "fit_score": _normalize_score(data.get("fit_score")),
+        "confidence_score": _normalize_score(data.get("confidence_score")),
+        "suggested_next_action": _sanitize_public_text(
+            data.get("suggested_next_action", ""),
+            max_length=1000,
+        ),
+        "suggested_outreach_angle": _sanitize_public_text(
+            data.get("suggested_outreach_angle", ""),
+            max_length=1000,
+        ),
+        "disclaimer": _sanitize_public_text(
+            data.get("disclaimer", "未验证，需要人工确认"),
+            max_length=300,
+        )
+        or "未验证，需要人工确认",
+    }
+    for key in CANDIDATE_COMPANY_RESEARCH_ARRAY_FIELDS:
+        report[key] = _normalize_signal_list(data.get(key), key=key)
+    if not report["summary"]:
+        raise AIServiceError("Candidate research summary is required")
+    return report
+
+
+def _normalize_signal_list(value: object, *, key: str) -> list[dict[str, str]]:
+    if isinstance(value, str):
+        value = [value]
+    if not isinstance(value, list):
+        return []
+    rows: list[dict[str, str]] = []
+    for item in value[:8]:
+        if isinstance(item, dict):
+            label_key = "risk" if key == "risk_signals" else "signal"
+            label = _sanitize_public_text(
+                item.get(label_key, item.get("value", item.get("text", ""))),
+                max_length=300,
+            )
+            source = _sanitize_public_text(item.get("source", "candidate_metadata"), max_length=120)
+            confidence = _sanitize_public_text(
+                item.get("confidence", item.get("severity", "medium")),
+                max_length=40,
+            )
+        else:
+            label_key = "risk" if key == "risk_signals" else "signal"
+            label = _sanitize_public_text(item, max_length=300)
+            source = "candidate_metadata"
+            confidence = "medium"
+        if not label:
+            continue
+        rows.append({label_key: label, "source": source, "confidence": confidence})
+    return rows
 
 
 def _load_json_object(text: str) -> dict[str, object]:

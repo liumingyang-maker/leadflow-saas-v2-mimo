@@ -221,7 +221,7 @@
           {% set extra = raw_candidate_data(candidate) %}
           <article class="lf-panel">
             <span class="lf-badge">{{ t(candidate.source_channel or "Example customers for testing") }}</span>
-            <h3>{{ candidate.company_name }}</h3>
+            <h3><a href="/collection/candidates/{{ candidate.id }}">{{ candidate.company_name }}</a></h3>
             <dl class="lf-dl">
               <dt>{{ t("Target countries") }}</dt><dd>{{ candidate.country }}</dd>
               <dt>{{ t("Website") }}</dt><dd>{% if candidate.website %}<a href="{{ candidate.website }}" rel="noopener noreferrer">{{ candidate.website }}</a>{% endif %}</dd>
@@ -233,10 +233,13 @@
               <dt>{{ t("Suggested next action") }}</dt><dd>{{ extra.get("suggested_next_action", "") }}</dd>
             </dl>
             {% if candidate.status == "pending_review" %}
-              <form method="post" action="/collection/candidates/{{ candidate.id }}/add-to-crm">
-                {{ csrf_input() }}
-                <button class="lf-button lf-button-primary" type="submit">{{ t("Add to CRM") }}</button>
-              </form>
+              <div class="lf-actions">
+                <a class="lf-button lf-button-secondary" href="/collection/candidates/{{ candidate.id }}">{{ t("View company research") }}</a>
+                <form method="post" action="/collection/candidates/{{ candidate.id }}/add-to-crm">
+                  {{ csrf_input() }}
+                  <button class="lf-button lf-button-primary" type="submit">{{ t("Add to CRM") }}</button>
+                </form>
+              </div>
             {% else %}
               <span class="lf-badge">{{ candidate.status }}</span>
             {% endif %}

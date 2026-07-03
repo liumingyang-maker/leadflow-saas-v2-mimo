@@ -508,12 +508,58 @@ _BASE_TRANSLATIONS = {
     "Result limit per run": "每次运行结果数上限",
     "Run advanced web search": "自动搜索目标客户",
     "Safety": "安全边界",
+    "Safety boundaries": "安全边界",
     "Search results are candidates. Review before using.": "搜索结果仅为候选，请审核后使用。",
+    "Source information is limited, so confidence is lower.": "来源信息较少，置信度较低。",
+    "Source links": "来源链接",
     "advanced_web_search": "高级自动网页搜索",
     "Plan for directories such as Europages, Kompass, and Thomasnet.": (
         "面向 Europages、Kompass、Thomasnet 等目录。"
     ),
     "Please train your AI foreign trade operator first": "请先训练你的 AI 外贸员",
+    "AI company research": "AI 深度背调",
+    "AI company research helps you review unverified target customer candidates.": (
+        "AI 深度背调帮助你审核未验证的目标客户候选。"
+    ),
+    "AI feature is not enabled": "AI 功能暂未开启",
+    "AI result is for reference only and needs manual confirmation.": (
+        "AI 结果仅供参考，需要人工确认。"
+    ),
+    (
+        "AI will generate an unverified research report from candidate information and "
+        "your product memory. Please manually confirm the website, buying need, and "
+        "contact path."
+    ): (
+        "AI 会根据候选公司信息和你的产品记忆，生成一份未验证的背调建议。"
+        "请人工确认官网、采购需求和联系人。"
+    ),
+    "AI will use candidate metadata and product memory only. It will not crawl websites.": (
+        "AI 只会使用候选元数据和产品记忆，不会抓取网站。"
+    ),
+    "Back to collection": "返回获客工作台",
+    "Buyer type judgment": "买家类型判断",
+    "Candidate company research": "候选公司深度背调",
+    "Candidate detail": "候选详情",
+    "Candidate summary": "候选公司摘要",
+    "Company overview": "公司概览",
+    "Disclaimer": "免责声明",
+    "No website provided": "未提供官网",
+    "Not enough credits": "额度不足",
+    "Positive signals": "积极信号",
+    "Possible use cases": "可能使用场景",
+    "Private emails and phone numbers are not saved as trusted fields.": (
+        "不会保存私人邮箱/手机号为可信字段。"
+    ),
+    "Product fit": "产品匹配度",
+    "Research report is ready": "背调报告已生成",
+    "Risks and uncertainties": "风险/不确定点",
+    "Suggested outreach angle": "开发信切入角度",
+    "The system will not create outreach messages from this report.": (
+        "系统不会根据这份报告自动创建开发信。"
+    ),
+    "Unverified": "未验证",
+    "View company research": "查看背调",
+    "Why it may fit you": "为什么可能适合你",
     "target customer credits": "目标客户额度",
     "示例客户": "示例客户",
     "搜索候选": "搜索候选",

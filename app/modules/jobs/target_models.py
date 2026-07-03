@@ -10,6 +10,7 @@ from app.extensions import Base
 
 DISCOVERY_RUN_STATUSES = ("draft", "planned", "matched", "failed")
 CANDIDATE_STATUSES = ("pending_review", "added_to_crm", "dismissed", "duplicate", "failed")
+RESEARCH_REPORT_STATUSES = ("pending", "completed", "failed")
 
 
 def _uuid() -> str:
@@ -78,6 +79,54 @@ class TargetCustomerCandidate(Base):
     )
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=_now, nullable=False
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=_now, onupdate=_now, nullable=False
+    )
+
+
+class CandidateResearchReport(Base):
+    __tablename__ = "candidate_research_reports"
+    __table_args__ = (
+        CheckConstraint(
+            "status in ('pending', 'completed', 'failed')",
+            name="candidate_research_reports_status",
+        ),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid)
+    tenant_id: Mapped[str] = mapped_column(ForeignKey("tenants.id"), nullable=False, index=True)
+    candidate_id: Mapped[str] = mapped_column(
+        ForeignKey("target_customer_candidates.id"), nullable=False, index=True
+    )
+    status: Mapped[str] = mapped_column(String(24), default="pending", nullable=False, index=True)
+    research_type: Mapped[str] = mapped_column(
+        String(40), default="ai_company_research", nullable=False
+    )
+    provider: Mapped[str] = mapped_column(String(32), default="", nullable=False)
+    search_provider: Mapped[str] = mapped_column(String(32), default="none", nullable=False)
+    company_name: Mapped[str] = mapped_column(String(300), default="", nullable=False)
+    company_domain: Mapped[str] = mapped_column(String(255), default="", nullable=False)
+    country: Mapped[str] = mapped_column(String(120), default="", nullable=False)
+    buyer_type: Mapped[str] = mapped_column(String(120), default="", nullable=False)
+    fit_score: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    confidence_score: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    summary: Mapped[str] = mapped_column(Text, default="", nullable=False)
+    why_potential_buyer: Mapped[str] = mapped_column(Text, default="", nullable=False)
+    product_fit: Mapped[str] = mapped_column(Text, default="", nullable=False)
+    possible_use_cases_json: Mapped[str] = mapped_column(Text, default="[]", nullable=False)
+    buyer_signals_json: Mapped[str] = mapped_column(Text, default="[]", nullable=False)
+    risk_signals_json: Mapped[str] = mapped_column(Text, default="[]", nullable=False)
+    suggested_next_action: Mapped[str] = mapped_column(Text, default="", nullable=False)
+    suggested_outreach_angle: Mapped[str] = mapped_column(Text, default="", nullable=False)
+    sources_json: Mapped[str] = mapped_column(Text, default="[]", nullable=False)
+    ai_model: Mapped[str] = mapped_column(String(120), default="", nullable=False)
+    ai_usage_ledger_id: Mapped[str | None] = mapped_column(
+        ForeignKey("ai_usage_ledger.id"), nullable=True
+    )
+    error_code: Mapped[str] = mapped_column(String(80), default="", nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=_now, nullable=False, index=True
     )
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=_now, onupdate=_now, nullable=False
