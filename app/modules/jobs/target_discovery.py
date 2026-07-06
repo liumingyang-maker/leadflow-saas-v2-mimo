@@ -30,6 +30,7 @@ from app.modules.ai.service import (
     generate_target_customer_plan,
     get_provider_settings,
     parse_pasted_search_results,
+    parse_search_result_paste_parser_v2,
 )
 from app.modules.jobs.target_models import (
     TargetCustomerCandidate,
@@ -42,7 +43,10 @@ from app.modules.onboarding.service import parse_profile_json
 DEFAULT_MATCH_COUNT = 10
 MAX_MATCH_COUNT = 25
 MAX_PASTED_RESULTS_LENGTH = 10_000
+MAX_MANUAL_PASTE_LENGTH = 40_000
+MAX_MANUAL_PASTE_SAVE_COUNT = 20
 ADVANCED_WEB_SEARCH_FEATURE = "advanced_web_search"
+MANUAL_SEARCH_PASTE_PARSER_CHANNEL = "manual_search_paste_parser_v2"
 SEARCH_INTENT_QUERY_MATRIX_CHANNEL = "search_intent_query_matrix"
 SEARCH_INTENT_QUERY_MATRIX_PROMPT_VERSION = "alpha13a_v2_product_specific"
 ADVANCED_SEARCH_NEGATIVE_KEYWORDS = (
@@ -504,6 +508,145 @@ def parse_basic_search_results_for_collection(
         )
 
 
+def parse_manual_search_results_for_collection(
+    app: Flask,
+    *,
+    tenant_id: str,
+    user_id: str,
+    locale: str,
+    form,
+) -> TargetDiscoveryResult:
+    filters = filters_from_form(form)
+    pasted_text = _limit(
+        form.get("pasted_text", form.get("pasted_results", "")),
+        MAX_MANUAL_PASTE_LENGTH,
+    )
+    if not pasted_text:
+        return TargetDiscoveryResult(success=False, error_code="missing_search_results")
+    source_type = _normalize_paste_source_type(form.get("source_type", "unknown"))
+    user_note = _public_text(form.get("user_note", ""), 1000)
+
+    with Session(get_engine(app)) as session:
+        profile = _confirmed_product_profile(session, tenant_id=tenant_id)
+        if profile is None:
+            return TargetDiscoveryResult(success=False, error_code="missing_product_profile")
+        product_profile_id = profile.id
+        product_profile_json = profile.extracted_profile_json
+        product_profile_hash = build_product_profile_fingerprint(profile)
+        latest_strategy = _latest_search_intent_run_for_profile(
+            list(
+                session.scalars(
+                    select(TargetCustomerDiscoveryRun)
+                    .where(TargetCustomerDiscoveryRun.tenant_id == tenant_id)
+                    .order_by(TargetCustomerDiscoveryRun.created_at.desc())
+                    .limit(20)
+                )
+            ),
+            product_profile_hash=product_profile_hash,
+        )
+        strategy_json = latest_strategy.generated_plan_json if latest_strategy is not None else "{}"
+
+    result = parse_search_result_paste_parser_v2(
+        app,
+        tenant_id=tenant_id,
+        user_id=user_id,
+        locale=locale,
+        product_profile_json=product_profile_json,
+        product_profile_hash=product_profile_hash,
+        strategy_json=strategy_json,
+        pasted_text=pasted_text,
+        source_type=source_type,
+        user_note=user_note,
+        filters=filters,
+        count=min(int(filters["result_count"]), 50),
+    )
+
+    with Session(get_engine(app)) as session:
+        plan = _manual_paste_plan(
+            parse_result=result.parse_result if result.success else None,
+            source_type=source_type,
+            product_profile_hash=product_profile_hash,
+            pasted_text_length=len(pasted_text),
+            user_note=user_note,
+        )
+        run = TargetCustomerDiscoveryRun(
+            tenant_id=tenant_id,
+            product_profile_id=product_profile_id,
+            filters_json=json.dumps(
+                {
+                    **filters,
+                    "channel_key": MANUAL_SEARCH_PASTE_PARSER_CHANNEL,
+                    "source_type": source_type,
+                },
+                ensure_ascii=False,
+            ),
+            generated_plan_json=json.dumps(plan, ensure_ascii=False),
+            status="matched" if result.success else "failed",
+            requested_count=min(int(filters["result_count"]), 50),
+            generated_count=0,
+            credits_estimated=1,
+            credits_charged=0,
+        )
+        session.add(run)
+        session.flush()
+
+        saved = 0
+        duplicates = 0
+        rejected_items = list(plan.get("rejected_items", []))
+        if result.success and result.parse_result is not None:
+            candidates = result.parse_result.get("candidates", [])
+            if isinstance(candidates, list):
+                for candidate in candidates:
+                    if saved >= MAX_MANUAL_PASTE_SAVE_COUNT:
+                        break
+                    if not isinstance(candidate, dict):
+                        continue
+                    normalized = _normalize_manual_paste_candidate(candidate, filters=filters)
+                    if normalized.get("classification") not in {"buyer", "maybe_buyer"}:
+                        rejected_items.append(
+                            {
+                                "source_item_id": normalized.get("source_item_id", ""),
+                                "reason": normalized.get("classification", "rejected"),
+                            }
+                        )
+                        continue
+                    if _candidate_duplicate_exists_for_tenant(
+                        session,
+                        tenant_id=tenant_id,
+                        data=normalized,
+                    ):
+                        duplicates += 1
+                        rejected_items.append(
+                            {
+                                "source_item_id": normalized.get("source_item_id", ""),
+                                "reason": "duplicate",
+                            }
+                        )
+                        continue
+                    session.add(
+                        _candidate_from_ai(
+                            tenant_id=tenant_id,
+                            run_id=run.id,
+                            data=normalized,
+                        )
+                    )
+                    saved += 1
+        plan = _finalize_manual_paste_plan(
+            plan,
+            saved_count=saved,
+            duplicate_count=duplicates,
+            rejected_items=rejected_items[:50],
+        )
+        run.generated_count = saved
+        run.generated_plan_json = json.dumps(plan, ensure_ascii=False)
+        session.commit()
+        return TargetDiscoveryResult(
+            success=result.success,
+            error_code=result.error_code,
+            run_id=run.id,
+        )
+
+
 def run_advanced_web_search_for_collection(
     app: Flask,
     *,
@@ -953,9 +1096,27 @@ def _candidate_from_ai(
 ) -> TargetCustomerCandidate:
     confidence_score = _int_in_range(data.get("confidence_score", 0), 0, 100)
     raw_data = {
-        "suggested_next_action": _public_text(data.get("suggested_next_action", ""), 500),
+        "suggested_next_action": _public_text(
+            data.get("suggested_next_action", data.get("next_action", "")),
+            500,
+        ),
         "unverified": True,
     }
+    for key in (
+        "source_type",
+        "source_item_id",
+        "source_domain",
+        "source_url",
+        "sanitized_snippet",
+        "classification",
+        "product_fit",
+        "source_quality",
+        "risk_reason",
+        "fit_score",
+        "parser_version",
+    ):
+        if key in data:
+            raw_data[key] = _public_text(data.get(key, ""), 500)
     extra_raw = data.get("raw_data")
     if isinstance(extra_raw, dict):
         for key in ("source_provider", "rank", "domain"):
@@ -1026,6 +1187,41 @@ def _candidate_duplicate_exists(
     return False
 
 
+def _candidate_duplicate_exists_for_tenant(
+    session: Session,
+    *,
+    tenant_id: str,
+    data: dict[str, object],
+) -> bool:
+    domain = _domain_from_url(
+        str(data.get("website", data.get("source_url", data.get("domain", ""))))
+    )
+    company_name = _normalize_company_name(str(data.get("company_name", "")))
+    country = str(data.get("country", "")).strip().lower()
+    if not domain and not company_name:
+        return False
+    candidates = session.scalars(
+        select(TargetCustomerCandidate).where(TargetCustomerCandidate.tenant_id == tenant_id)
+    )
+    for candidate in candidates:
+        if domain and _domain_from_url(candidate.website) == domain:
+            return True
+        if (
+            company_name
+            and _normalize_company_name(candidate.company_name) == company_name
+            and (not country or candidate.country.strip().lower() == country)
+        ):
+            return True
+    if _find_duplicate(
+        session,
+        tenant_id=tenant_id,
+        domain=domain,
+        name=str(data.get("company_name", "")),
+    ):
+        return True
+    return False
+
+
 def _normalize_basic_search_candidate(
     data: dict[str, object], *, filters: dict[str, object]
 ) -> dict[str, object]:
@@ -1036,6 +1232,117 @@ def _normalize_basic_search_candidate(
     normalized["confidence_score"] = _score_candidate(normalized, filters=filters)
     normalized.setdefault("suggested_next_action", "Review before adding to CRM.")
     return normalized
+
+
+def _normalize_manual_paste_candidate(
+    data: dict[str, object],
+    *,
+    filters: dict[str, object],
+) -> dict[str, object]:
+    domain = _domain_from_url(str(data.get("domain", "") or data.get("source_url", "")))
+    source_url = _public_text(data.get("source_url", ""), 500)
+    website = source_url or (f"https://{domain}" if domain else "")
+    classification = _public_text(data.get("classification", "unsafe"), 40).lower()
+    normalized = {
+        "company_name": _public_text(data.get("company_name", ""), 300),
+        "website": website,
+        "country": _public_text(data.get("country", filters.get("country", "")), 120),
+        "industry": _public_text(data.get("industry", filters.get("industry", "")), 120),
+        "buyer_type": _public_text(data.get("buyer_type", filters.get("buyer_type", "")), 120),
+        "source_channel": MANUAL_SEARCH_PASTE_PARSER_CHANNEL,
+        "match_reason": _public_text(data.get("match_reason", ""), 1000),
+        "confidence_score": _int_in_range(data.get("confidence_score", 0), 0, 100),
+        "suggested_next_action": _public_text(data.get("next_action", "review"), 500),
+        "status": "pending_review",
+        "source_type": "manual_search_paste",
+        "source_item_id": _public_text(data.get("source_item_id", ""), 80),
+        "source_domain": domain,
+        "source_url": source_url,
+        "sanitized_snippet": _public_text(data.get("sanitized_snippet", ""), 500),
+        "classification": classification,
+        "product_fit": _public_text(data.get("product_fit", ""), 40),
+        "source_quality": _public_text(data.get("source_quality", ""), 80),
+        "risk_reason": _public_text(data.get("risk_reason", ""), 700),
+        "fit_score": _int_in_range(data.get("fit_score", 0), 0, 100),
+        "parser_version": "alpha13b_v2",
+    }
+    normalized["confidence_score"] = max(
+        normalized["confidence_score"],
+        _score_candidate(normalized, filters=filters),
+    )
+    return normalized
+
+
+def _manual_paste_plan(
+    *,
+    parse_result: dict[str, object] | None,
+    source_type: str,
+    product_profile_hash: str,
+    pasted_text_length: int,
+    user_note: str,
+) -> dict[str, object]:
+    parse_result = parse_result or {}
+    parse_summary = parse_result.get("parse_summary")
+    if not isinstance(parse_summary, dict):
+        parse_summary = {}
+    return {
+        "source_channel": MANUAL_SEARCH_PASTE_PARSER_CHANNEL,
+        "test_phase_free": True,
+        "metadata": {
+            "feature": MANUAL_SEARCH_PASTE_PARSER_CHANNEL,
+            "parser_version": "alpha13b_v2",
+            "product_profile_hash": product_profile_hash,
+            "source_type": source_type,
+            "pasted_text_length": min(pasted_text_length, MAX_MANUAL_PASTE_LENGTH),
+            "generated_at": datetime.now(UTC).isoformat(),
+        },
+        "parse_summary": parse_summary,
+        "rejected_items": _safe_list_of_dicts(parse_result.get("rejected_items"), limit=50),
+        "query_feedback": parse_result.get("query_feedback", {})
+        if isinstance(parse_result.get("query_feedback"), dict)
+        else {},
+        "safety_notes": [
+            "系统不会自动访问或抓取网页。",
+            "系统不会自动发送邮件。",
+            "系统不会保存私人邮箱/手机号为可信字段。",
+            "候选客户未验证，需要人工确认。",
+        ],
+        "user_note_present": bool(user_note),
+    }
+
+
+def _finalize_manual_paste_plan(
+    plan: dict[str, object],
+    *,
+    saved_count: int,
+    duplicate_count: int,
+    rejected_items: list[object],
+) -> dict[str, object]:
+    summary = plan.get("parse_summary")
+    if not isinstance(summary, dict):
+        summary = {}
+    summary["saved_candidate_count"] = saved_count
+    summary["duplicate_count"] = duplicate_count
+    summary["rejected_count"] = len(rejected_items)
+    plan["parse_summary"] = summary
+    plan["rejected_items"] = _safe_list_of_dicts(rejected_items, limit=50)
+    return plan
+
+
+def _safe_list_of_dicts(value: object, *, limit: int) -> list[dict[str, str]]:
+    if not isinstance(value, list):
+        return []
+    rows: list[dict[str, str]] = []
+    for item in value[:limit]:
+        if not isinstance(item, dict):
+            continue
+        rows.append(
+            {
+                "source_item_id": _public_text(item.get("source_item_id", ""), 80),
+                "reason": _public_text(item.get("reason", ""), 240),
+            }
+        )
+    return rows
 
 
 def _advanced_search_provider(app: Flask, *, settings_provider: str):
@@ -1423,6 +1730,19 @@ def _int_in_range(value: object, minimum: int, maximum: int) -> int:
 
 def _limit(value: object, max_length: int) -> str:
     return str(value or "").strip()[:max_length]
+
+
+def _normalize_paste_source_type(value: object) -> str:
+    allowed = {
+        "search_engine_results",
+        "b2b_directory_text",
+        "exhibitor_list",
+        "csv_rows",
+        "manual_company_list",
+        "unknown",
+    }
+    clean = str(value or "").strip().lower()
+    return clean if clean in allowed else "unknown"
 
 
 def _public_text(value: object, max_length: int) -> str:

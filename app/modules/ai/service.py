@@ -23,6 +23,7 @@ from app.integrations.ai.prompts import (
     build_pasted_search_results_prompt,
     build_product_profile_extraction_prompt,
     build_search_intent_query_matrix_prompt,
+    build_search_result_paste_parser_v2_prompt,
     build_target_customer_candidate_prompt,
     build_target_customer_plan_prompt,
 )
@@ -70,11 +71,14 @@ TARGET_CUSTOMER_PLAN_CREDITS = 0
 TARGET_CUSTOMER_MATCH_CREDITS = 0
 BASIC_SEARCH_STRATEGY_FEATURE = "basic_search_strategy_generation"
 SEARCH_INTENT_QUERY_MATRIX_FEATURE = "search_intent_query_matrix"
+SEARCH_RESULT_PASTE_PARSER_V2_FEATURE = "search_result_paste_parser_v2"
 PASTED_SEARCH_PARSE_FEATURE = "pasted_search_result_parsing"
 CANDIDATE_FIT_SCORING_FEATURE = "candidate_fit_scoring"
 BASIC_SEARCH_STRATEGY_CREDITS = 0
 SEARCH_INTENT_QUERY_MATRIX_REQUIRED_CREDITS = 1
 SEARCH_INTENT_QUERY_MATRIX_CREDITS = 0
+SEARCH_RESULT_PASTE_PARSER_V2_REQUIRED_CREDITS = 1
+SEARCH_RESULT_PASTE_PARSER_V2_CREDITS = 0
 PASTED_SEARCH_PARSE_CREDITS = 0
 CANDIDATE_COMPANY_RESEARCH_FEATURE = "candidate_company_research"
 CANDIDATE_COMPANY_RESEARCH_REQUIRED_CREDITS = 5
@@ -203,6 +207,14 @@ class SearchIntentQueryMatrixResult:
 class PastedSearchResultParseResult:
     success: bool
     candidates: list[dict[str, object]] | None = None
+    error_code: str = ""
+    quota_remaining: int = 0
+
+
+@dataclass(frozen=True)
+class SearchResultPasteParserV2Result:
+    success: bool
+    parse_result: dict[str, object] | None = None
     error_code: str = ""
     quota_remaining: int = 0
 
@@ -1287,6 +1299,178 @@ def parse_pasted_search_results(
         )
 
 
+def parse_search_result_paste_parser_v2(
+    app: Flask,
+    *,
+    tenant_id: str,
+    user_id: str,
+    locale: str,
+    product_profile_json: str,
+    product_profile_hash: str,
+    strategy_json: str,
+    pasted_text: str,
+    source_type: str,
+    user_note: str,
+    filters: dict[str, object],
+    count: int,
+) -> SearchResultPasteParserV2Result:
+    sanitized_paste = _sanitize_pasted_text_for_prompt(pasted_text, max_length=30_000)
+    sanitized_note = _sanitize_paste_parser_text(user_note, max_length=1000)
+    with _session(app) as session:
+        settings = _get_or_create_settings(session)
+        provider_name = settings.provider
+        model = settings.model
+        if not settings.enabled or settings.provider == "disabled":
+            record_ai_usage(
+                session,
+                tenant_id=tenant_id,
+                user_id=user_id,
+                feature_name=SEARCH_RESULT_PASTE_PARSER_V2_FEATURE,
+                provider=provider_name,
+                model=model,
+                credits_charged=0,
+                input_tokens=0,
+                output_tokens=0,
+                status="disabled",
+                error_code="ai_disabled",
+            )
+            session.commit()
+            return SearchResultPasteParserV2Result(success=False, error_code="ai_disabled")
+
+        summary = summarize_quota(session, tenant_id=tenant_id)
+        if not summary.enabled:
+            record_ai_usage(
+                session,
+                tenant_id=tenant_id,
+                user_id=user_id,
+                feature_name=SEARCH_RESULT_PASTE_PARSER_V2_FEATURE,
+                provider=provider_name,
+                model=model,
+                credits_charged=0,
+                input_tokens=0,
+                output_tokens=0,
+                status="disabled",
+                error_code="tenant_ai_disabled",
+            )
+            session.commit()
+            return SearchResultPasteParserV2Result(
+                success=False,
+                error_code="tenant_ai_disabled",
+                quota_remaining=summary.remaining,
+            )
+
+        if summary.remaining < SEARCH_RESULT_PASTE_PARSER_V2_REQUIRED_CREDITS:
+            record_ai_usage(
+                session,
+                tenant_id=tenant_id,
+                user_id=user_id,
+                feature_name=SEARCH_RESULT_PASTE_PARSER_V2_FEATURE,
+                provider=provider_name,
+                model=model,
+                credits_charged=0,
+                input_tokens=0,
+                output_tokens=0,
+                status="blocked_quota",
+                error_code="insufficient_credits",
+            )
+            session.commit()
+            return SearchResultPasteParserV2Result(
+                success=False,
+                error_code="insufficient_credits",
+                quota_remaining=summary.remaining,
+            )
+
+        prompt = build_search_result_paste_parser_v2_prompt(
+            locale=locale,
+            product_profile_json=product_profile_json,
+            product_profile_hash=product_profile_hash,
+            strategy_json=strategy_json,
+            pasted_text=sanitized_paste,
+            source_type=source_type,
+            user_note=sanitized_note,
+            filters=filters,
+            count=count,
+        )
+        provider = _provider_from_settings(settings)
+
+    start = time.monotonic()
+    result = provider.generate_text(
+        AIGenerationRequest(
+            system_prompt=prompt.system_prompt,
+            user_prompt=prompt.user_prompt,
+            locale=locale,
+            max_output_tokens=max(3000, settings.max_output_tokens),
+        )
+    )
+    latency_ms = int((time.monotonic() - start) * 1000)
+
+    with _session(app) as session:
+        if result.success:
+            try:
+                parse_result = _parse_search_result_paste_parser_v2_json(result.text)
+            except AIServiceError:
+                record_ai_usage(
+                    session,
+                    tenant_id=tenant_id,
+                    user_id=user_id,
+                    feature_name=SEARCH_RESULT_PASTE_PARSER_V2_FEATURE,
+                    provider=result.provider or provider_name,
+                    model=result.model or model,
+                    credits_charged=0,
+                    input_tokens=result.input_tokens,
+                    output_tokens=result.output_tokens,
+                    status="failed",
+                    error_code="malformed_json",
+                    latency_ms=latency_ms,
+                )
+                session.commit()
+                return SearchResultPasteParserV2Result(
+                    success=False,
+                    error_code="malformed_json",
+                )
+
+            record_ai_usage(
+                session,
+                tenant_id=tenant_id,
+                user_id=user_id,
+                feature_name=SEARCH_RESULT_PASTE_PARSER_V2_FEATURE,
+                provider=result.provider or provider_name,
+                model=result.model or model,
+                credits_charged=SEARCH_RESULT_PASTE_PARSER_V2_CREDITS,
+                input_tokens=result.input_tokens,
+                output_tokens=result.output_tokens,
+                status="success",
+                latency_ms=latency_ms,
+            )
+            remaining = summarize_quota(session, tenant_id=tenant_id).remaining
+            session.commit()
+            return SearchResultPasteParserV2Result(
+                success=True,
+                parse_result=parse_result,
+                quota_remaining=remaining,
+            )
+
+        record_ai_usage(
+            session,
+            tenant_id=tenant_id,
+            user_id=user_id,
+            feature_name=SEARCH_RESULT_PASTE_PARSER_V2_FEATURE,
+            provider=result.provider or provider_name,
+            model=result.model or model,
+            credits_charged=0,
+            input_tokens=result.input_tokens,
+            output_tokens=result.output_tokens,
+            status="failed",
+            error_code=result.error_code or "provider_error",
+            latency_ms=latency_ms,
+        )
+        session.commit()
+        return SearchResultPasteParserV2Result(
+            success=False,
+            error_code=result.error_code or "provider_error",
+        )
+
+
 def generate_candidate_company_research(
     app: Flask,
     *,
@@ -1880,6 +2064,24 @@ def _parse_target_customer_candidates_json(text: str) -> list[dict[str, object]]
     return candidates
 
 
+def _parse_search_result_paste_parser_v2_json(text: str) -> dict[str, object]:
+    data = _load_json_object(text)
+    candidates = _normalize_paste_parser_candidates(data.get("candidates"))
+    rejected_items = _normalize_rejected_paste_items(data.get("rejected_items"))
+    parse_summary = _normalize_paste_parse_summary(
+        data.get("parse_summary"),
+        candidate_count=len(candidates),
+        rejected_count=len(rejected_items),
+    )
+    query_feedback = _normalize_paste_query_feedback(data.get("query_feedback"))
+    return {
+        "parse_summary": parse_summary,
+        "candidates": candidates,
+        "rejected_items": rejected_items,
+        "query_feedback": query_feedback,
+    }
+
+
 def _parse_candidate_company_research_json(text: str) -> dict[str, object]:
     data = _load_json_object(text)
     report: dict[str, object] = {
@@ -1945,6 +2147,167 @@ def _parse_candidate_outreach_draft_json(text: str) -> dict[str, object]:
     if not draft["subject"] or not draft["body"]:
         raise AIServiceError("Candidate outreach draft subject and body are required")
     return draft
+
+
+def _normalize_paste_parse_summary(
+    value: object,
+    *,
+    candidate_count: int,
+    rejected_count: int,
+) -> dict[str, object]:
+    data = value if isinstance(value, dict) else {}
+    return {
+        "source_type": _sanitize_paste_parser_text(data.get("source_type", ""), max_length=80),
+        "total_items_seen": _safe_int(data.get("total_items_seen"), 0, 500),
+        "candidate_count": _safe_int(data.get("candidate_count"), candidate_count, 50),
+        "rejected_count": _safe_int(data.get("rejected_count"), rejected_count, 100),
+        "duplicate_hint_count": _safe_int(data.get("duplicate_hint_count"), 0, 100),
+        "safety_warnings": _normalize_paste_public_list(data.get("safety_warnings"), limit=8),
+    }
+
+
+def _normalize_paste_parser_candidates(value: object) -> list[dict[str, object]]:
+    if not isinstance(value, list):
+        return []
+    rows: list[dict[str, object]] = []
+    for item in value[:50]:
+        if not isinstance(item, dict):
+            continue
+        classification = _normalize_classification(item.get("classification"))
+        candidate = {
+            "source_item_id": _sanitize_paste_parser_text(
+                item.get("source_item_id", ""),
+                max_length=80,
+            ),
+            "company_name": _sanitize_paste_parser_text(
+                item.get("company_name", ""),
+                max_length=300,
+            ),
+            "domain": _sanitize_domain_like(item.get("domain", "")),
+            "source_url": _sanitize_source_url(item.get("source_url", "")),
+            "country": _sanitize_paste_parser_text(item.get("country", ""), max_length=120),
+            "buyer_type": _sanitize_paste_parser_text(item.get("buyer_type", ""), max_length=120),
+            "classification": classification,
+            "product_fit": _normalize_enum(
+                item.get("product_fit"),
+                allowed={"high", "medium", "low", "irrelevant"},
+                default="low",
+            ),
+            "source_quality": _normalize_enum(
+                item.get("source_quality"),
+                allowed={
+                    "official_site",
+                    "company_profile",
+                    "directory",
+                    "marketplace",
+                    "article",
+                    "unknown",
+                },
+                default="unknown",
+            ),
+            "fit_score": _normalize_score(item.get("fit_score")),
+            "confidence_score": _normalize_score(item.get("confidence_score")),
+            "match_reason": _sanitize_paste_parser_text(
+                item.get("match_reason", ""),
+                max_length=1000,
+            ),
+            "risk_reason": _sanitize_paste_parser_text(
+                item.get("risk_reason", ""),
+                max_length=700,
+            ),
+            "next_action": _sanitize_paste_parser_text(
+                item.get("next_action", ""),
+                max_length=500,
+            ),
+            "sanitized_snippet": _sanitize_paste_parser_text(
+                item.get("sanitized_snippet", ""),
+                max_length=500,
+            ),
+        }
+        if candidate["company_name"] or candidate["domain"]:
+            rows.append(candidate)
+    return rows
+
+
+def _normalize_rejected_paste_items(value: object) -> list[dict[str, str]]:
+    if not isinstance(value, list):
+        return []
+    rows: list[dict[str, str]] = []
+    for item in value[:50]:
+        if not isinstance(item, dict):
+            continue
+        source_item_id = _sanitize_paste_parser_text(item.get("source_item_id", ""), max_length=80)
+        reason = _sanitize_paste_parser_text(item.get("reason", ""), max_length=240)
+        if source_item_id or reason:
+            rows.append({"source_item_id": source_item_id, "reason": reason})
+    return rows
+
+
+def _normalize_paste_query_feedback(value: object) -> dict[str, object]:
+    data = value if isinstance(value, dict) else {}
+    return {
+        "suggested_negative_keywords": _normalize_paste_public_list(
+            data.get("suggested_negative_keywords"),
+            limit=12,
+        ),
+        "suggested_better_queries": _normalize_paste_public_list(
+            data.get("suggested_better_queries"),
+            limit=12,
+        ),
+        "domain_blacklist_suggestions": _normalize_paste_public_list(
+            data.get("domain_blacklist_suggestions"),
+            limit=12,
+        ),
+        "notes": _normalize_paste_public_list(data.get("notes"), limit=8),
+    }
+
+
+def _normalize_paste_public_list(value: object, *, limit: int) -> list[str]:
+    if value is None:
+        return []
+    raw_values: list[object]
+    if isinstance(value, str):
+        raw_values = value.replace(",", "\n").splitlines()
+    elif isinstance(value, list):
+        raw_values = value
+    else:
+        return []
+    rows: list[str] = []
+    for item in raw_values:
+        clean = _sanitize_paste_parser_text(item, max_length=220)
+        if clean:
+            rows.append(clean)
+        if len(rows) >= limit:
+            break
+    return rows
+
+
+def _normalize_classification(value: object) -> str:
+    allowed = {
+        "buyer",
+        "maybe_buyer",
+        "supplier",
+        "directory",
+        "marketplace",
+        "article",
+        "irrelevant",
+        "unsafe",
+    }
+    clean = str(value or "").strip().lower().replace(" ", "_")
+    return clean if clean in allowed else "unsafe"
+
+
+def _normalize_enum(value: object, *, allowed: set[str], default: str) -> str:
+    clean = str(value or "").strip().lower()
+    return clean if clean in allowed else default
+
+
+def _safe_int(value: object, default: int, maximum: int) -> int:
+    try:
+        parsed = int(value or default)
+    except (TypeError, ValueError):
+        parsed = default
+    return max(0, min(parsed, maximum))
 
 
 def _normalize_signal_list(value: object, *, key: str) -> list[dict[str, str]]:
@@ -2480,6 +2843,73 @@ def _sanitize_search_intent_text(value: object, *, max_length: int) -> str:
         "purchase intent",
     )
     if any(term in lower for term in blocked_terms):
+        return ""
+    return clean
+
+
+def _sanitize_pasted_text_for_prompt(value: object, *, max_length: int) -> str:
+    clean_lines: list[str] = []
+    total_length = 0
+    for line in str(value or "").replace("\r", "\n").splitlines():
+        stripped = line.strip()
+        if not stripped:
+            continue
+        lowered = stripped.lower()
+        if any(term in lowered for term in ("whatsapp", "telegram")):
+            continue
+        if "linkedin.com/in/" in lowered:
+            continue
+        if "facebook.com/" in lowered and "company" not in lowered:
+            continue
+        clean = _sanitize_paste_parser_text(stripped, max_length=800)
+        if clean:
+            clean_lines.append(clean)
+            total_length += len(clean)
+        if total_length >= max_length:
+            break
+    return "\n".join(clean_lines)[:max_length]
+
+
+def _sanitize_paste_parser_text(value: object, *, max_length: int) -> str:
+    clean = _sanitize_public_text(value, max_length=max_length)
+    blocked_terms = (
+        "verified buyer",
+        "verified importer",
+        "purchase intent",
+        "confirmed purchasing",
+        "confirmed buyer",
+        "confirmed contact",
+        "automatic email",
+        "send email",
+        "email campaign",
+        "smtp",
+        "crawl",
+        "scrape",
+        "scraping",
+        "phone enrichment",
+        "private email",
+        "private phone",
+        "linkedin",
+        "facebook",
+        "whatsapp",
+        "telegram",
+    )
+    for term in blocked_terms:
+        clean = re.sub(re.escape(term), "", clean, flags=re.IGNORECASE)
+    return " ".join(clean.split())[:max_length].strip()
+
+
+def _sanitize_domain_like(value: object) -> str:
+    clean = _sanitize_paste_parser_text(value, max_length=253).lower()
+    clean = clean.replace("https://", "").replace("http://", "").split("/", 1)[0]
+    if "@" in clean or " " in clean:
+        return ""
+    return clean[:253]
+
+
+def _sanitize_source_url(value: object) -> str:
+    clean = _sanitize_paste_parser_text(value, max_length=500)
+    if "@" in clean:
         return ""
     return clean
 

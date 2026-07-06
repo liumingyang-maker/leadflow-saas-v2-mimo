@@ -189,6 +189,17 @@ class FakeAIProvider:
                 output_tokens=_rough_tokens(text),
             )
 
+        if "search_result_paste_parser_v2" in request.system_prompt:
+            text = json.dumps(_fake_search_result_paste_parser_v2(), ensure_ascii=False)
+            return AIGenerationResult(
+                success=True,
+                text=text,
+                provider="fake",
+                model=self._model,
+                input_tokens=_rough_tokens(request.system_prompt + request.user_prompt),
+                output_tokens=_rough_tokens(text),
+            )
+
         if "pasted_search_result_parsing" in request.system_prompt:
             text = json.dumps(
                 {
@@ -369,6 +380,91 @@ class FakeAIProvider:
 
 def _rough_tokens(value: str) -> int:
     return max(1, len(value) // 4)
+
+
+def _fake_search_result_paste_parser_v2() -> dict[str, object]:
+    return {
+        "parse_summary": {
+            "source_type": "search_engine_results",
+            "total_items_seen": 6,
+            "candidate_count": 3,
+            "rejected_count": 3,
+            "duplicate_hint_count": 0,
+            "safety_warnings": [
+                "候选客户未验证，需要人工确认。",
+                "未保存私人邮箱或手机号。",
+            ],
+        },
+        "candidates": [
+            {
+                "source_item_id": "item_001",
+                "company_name": "GreenPack Distribution",
+                "domain": "greenpack-distribution.example",
+                "source_url": "https://greenpack-distribution.example",
+                "country": "United States",
+                "buyer_type": "Distributor",
+                "classification": "buyer",
+                "product_fit": "high",
+                "source_quality": "official_site",
+                "fit_score": 82,
+                "confidence_score": 74,
+                "match_reason": "Snippet suggests a distributor reviewing packaging categories.",
+                "risk_reason": "Unverified search snippet; confirm product category manually.",
+                "next_action": "review",
+                "sanitized_snippet": (
+                    "Distributor profile with sustainable packaging category signals."
+                ),
+            },
+            {
+                "source_item_id": "item_002",
+                "company_name": "Eco Retail Brands",
+                "domain": "ecoretailbrands.example",
+                "source_url": "https://ecoretailbrands.example",
+                "country": "Germany",
+                "buyer_type": "Private label brand",
+                "classification": "buyer",
+                "product_fit": "medium",
+                "source_quality": "company_profile",
+                "fit_score": 76,
+                "confidence_score": 68,
+                "match_reason": "Pasted text indicates retail brand needs packaging suppliers.",
+                "risk_reason": "May be a brand article rather than procurement page.",
+                "next_action": "research",
+                "sanitized_snippet": "Retail brand profile mentioning custom packaging needs.",
+            },
+            {
+                "source_item_id": "item_003",
+                "company_name": "North Market Import",
+                "domain": "northmarketimport.example",
+                "source_url": "https://northmarketimport.example",
+                "country": "United Kingdom",
+                "buyer_type": "Importer",
+                "classification": "maybe_buyer",
+                "product_fit": "medium",
+                "source_quality": "unknown",
+                "fit_score": 65,
+                "confidence_score": 55,
+                "match_reason": "Manual list entry looks like an importer but evidence is limited.",
+                "risk_reason": "Thin source text; manually confirm buyer role.",
+                "next_action": "review",
+                "sanitized_snippet": "Importer name and country only.",
+            },
+        ],
+        "rejected_items": [
+            {"source_item_id": "item_004", "reason": "supplier"},
+            {"source_item_id": "item_005", "reason": "directory"},
+            {"source_item_id": "item_006", "reason": "marketplace"},
+        ],
+        "query_feedback": {
+            "suggested_negative_keywords": ["manufacturer", "factory", "supplier", "marketplace"],
+            "suggested_better_queries": [
+                "eco-friendly packaging distributor -manufacturer -factory",
+                "custom packaging importer Germany -supplier -marketplace",
+            ],
+            "domain_blacklist_suggestions": ["example-directory.test"],
+            "notes": ["目录和市场站噪音偏多，下一轮搜索应加强排除词。"],
+        },
+    }
 
 
 def _fake_search_intent_query_matrix(user_prompt: str) -> dict[str, object]:

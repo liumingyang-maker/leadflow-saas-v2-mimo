@@ -310,6 +310,63 @@ def build_pasted_search_results_prompt(
     return OutreachDraftPrompt(system_prompt=system, user_prompt=user)
 
 
+def build_search_result_paste_parser_v2_prompt(
+    *,
+    locale: str,
+    product_profile_json: str,
+    product_profile_hash: str,
+    strategy_json: str,
+    pasted_text: str,
+    source_type: str,
+    user_note: str,
+    filters: dict[str, object],
+    count: int,
+) -> OutreachDraftPrompt:
+    keys = ("parse_summary", "candidates", "rejected_items", "query_feedback")
+    system = (
+        "feature: search_result_paste_parser_v2\n"
+        "Parse user-pasted public search result text into unverified B2B company candidate "
+        "previews. Return strict JSON only. Do not visit, fetch, crawl, scrape, or enrich "
+        "any URL. Do not use LinkedIn, Facebook, WhatsApp, Telegram, social profiles, "
+        "private email, phone, or personal data as contact data. If pasted text contains "
+        "emails, phone numbers, or personal social handles, ignore them and do not output "
+        "them. Do not claim verified buyer status, importer status, confirmed purchasing "
+        "intent, or a confirmed contact person. Do not write outreach copy, suggest "
+        "automatic email sending, create campaigns, or recommend scraping. Classify each "
+        "item as buyer, maybe_buyer, supplier, directory, marketplace, article, irrelevant, "
+        "or unsafe. Only buyer and maybe_buyer are candidate previews; supplier, directory, "
+        "marketplace, article, irrelevant, and unsafe must be rejected or marked for discard. "
+        "Packaging and LED can be scored more directly when product fit is clear. Hardware "
+        "or OEM must be conservative. JSON keys must be exactly: "
+        f"{', '.join(keys)}."
+    )
+    if locale == "zh-CN":
+        system += " UI language is Simplified Chinese, but JSON keys stay English."
+    user = (
+        f"Requested candidate cap: {max(1, min(count, 50))}\n"
+        f"Source type: {_clean(source_type)}\n"
+        f"Product profile hash: {_clean(product_profile_hash)}\n"
+        f"Filters JSON: {_clean_jsonish(_json_dumps(filters))}\n"
+        f"User note: {_clean_long(user_note)}\n\n"
+        "Confirmed tenant product memory JSON:\n"
+        f"{_clean_jsonish(product_profile_json)}\n\n"
+        "Latest AI search intent/query matrix JSON, if available:\n"
+        f"{_clean_jsonish(strategy_json)}\n\n"
+        "Sanitized user-pasted text. It may contain search snippets, CSV rows, exhibitor "
+        "lists, directory text, or manual company names. Do not output this text in full:\n"
+        f"{_clean_jsonish(pasted_text)}\n\n"
+        "Return parse_summary with source_type, total_items_seen, candidate_count, "
+        "rejected_count, duplicate_hint_count, and safety_warnings. Candidate objects must "
+        "include source_item_id, company_name, domain, source_url, country, buyer_type, "
+        "classification, product_fit, source_quality, fit_score, confidence_score, "
+        "match_reason, risk_reason, next_action, and sanitized_snippet. Rejected items must "
+        "include source_item_id and reason. Query feedback may include "
+        "suggested_negative_keywords, suggested_better_queries, domain_blacklist_suggestions, "
+        "and notes."
+    )
+    return OutreachDraftPrompt(system_prompt=system, user_prompt=user)
+
+
 def build_candidate_company_research_prompt(
     *,
     locale: str,

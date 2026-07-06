@@ -32,6 +32,7 @@ from app.modules.jobs.target_discovery import (
     generate_search_intent_query_matrix_for_collection,
     match_collection_target_candidates,
     parse_basic_search_results_for_collection,
+    parse_manual_search_results_for_collection,
     plan_json,
     raw_candidate_data,
     run_advanced_web_search_for_collection,
@@ -131,6 +132,24 @@ def register_collection_routes(app: Flask) -> None:
         tenant_id = session.get("tenant_id", "")
         user_id = session.get("user_id", "")
         result = parse_basic_search_results_for_collection(
+            app,
+            tenant_id=tenant_id,
+            user_id=user_id,
+            locale=get_locale(),
+            form=request.form,
+        )
+        return _render_collection_workspace(
+            app,
+            target_error=_target_error_message(result.error_code) if not result.success else "",
+            target_notice=t("Search results parsed") if result.success else "",
+        )
+
+    @app.post("/collection/search-intent/parse")
+    @tenant_required(app)
+    def collection_search_intent_parse_results():
+        tenant_id = session.get("tenant_id", "")
+        user_id = session.get("user_id", "")
+        result = parse_manual_search_results_for_collection(
             app,
             tenant_id=tenant_id,
             user_id=user_id,

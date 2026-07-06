@@ -267,20 +267,40 @@
         {% endif %}
 
         {% if target_context.latest_search_intent_run %}
-          <form method="post" action="/collection/channels/basic-search/parse-results" class="lf-form-stack">
+          <form method="post" action="/collection/search-intent/parse" class="lf-form-stack">
             {{ csrf_input() }}
-            <input type="hidden" name="run_id" value="{{ target_context.latest_search_intent_run.id }}">
             <input type="hidden" name="country" value="{{ target_filters.country }}">
             <input type="hidden" name="buyer_type" value="{{ target_filters.buyer_type }}">
             <input type="hidden" name="industry" value="{{ target_filters.industry }}">
             <input type="hidden" name="result_count" value="{{ target_filters.result_count }}">
+            <div>
+              <h4>{{ t("Paste search results and let AI screen them") }}</h4>
+              <p>{{ t("Copy search result text from Google, Brave, Bing, trade fair lists, or directory pages into this box. The system will not automatically visit URLs or crawl pages.") }}</p>
+            </div>
+            <div class="lf-grid">
+              <div class="lf-field-group">
+                <label class="lf-label" for="manual_paste_source_type">{{ t("Source type") }}</label>
+                <select class="lf-field" id="manual_paste_source_type" name="source_type">
+                  <option value="search_engine_results">{{ t("Search engine results") }}</option>
+                  <option value="b2b_directory_text">{{ t("B2B or directory text") }}</option>
+                  <option value="exhibitor_list">{{ t("Exhibitor or association list") }}</option>
+                  <option value="csv_rows">{{ t("CSV rows") }}</option>
+                  <option value="manual_company_list">{{ t("Manual company list") }}</option>
+                  <option value="unknown">{{ t("Other") }}</option>
+                </select>
+              </div>
+              <div class="lf-field-group">
+                <label class="lf-label" for="manual_paste_note">{{ t("Optional parsing note") }}</label>
+                <input class="lf-field" id="manual_paste_note" name="user_note" maxlength="1000" placeholder="{{ t('Target country, buyer type, or terms to exclude') }}">
+              </div>
+            </div>
             <div class="lf-field-group">
               <label class="lf-label" for="intent_pasted_results">{{ t("Paste search results") }}</label>
-              <textarea class="lf-field" id="intent_pasted_results" name="pasted_results" rows="7" maxlength="10000" placeholder="{{ t('Paste search results') }}"></textarea>
+              <textarea class="lf-field" id="intent_pasted_results" name="pasted_text" rows="9" maxlength="40000" placeholder="{{ t('Paste search results') }}"></textarea>
             </div>
-            <p>{{ t("Manually search Google, Brave, or Bing, then paste results back for AI review.") }}</p>
+            <p>{{ t("The system will not automatically visit or crawl webpages.") }} {{ t("No email will be sent automatically.") }} {{ t("Private emails and phone numbers are not saved as trusted fields.") }} {{ t("Candidates are unverified and require manual confirmation.") }}</p>
             <div class="lf-actions">
-              <button class="lf-button lf-button-primary" type="submit">{{ t("Parse into candidates") }}</button>
+              <button class="lf-button lf-button-primary" type="submit">{{ t("AI parse and create candidate customers") }}</button>
             </div>
           </form>
         {% endif %}
@@ -358,7 +378,82 @@
       {% endif %}
     </section>
 
-    {% if target_plan %}
+    {% if target_plan.get("parse_summary") %}
+      {% set parse_summary = target_plan.get("parse_summary", {}) %}
+      {% set query_feedback = target_plan.get("query_feedback", {}) %}
+      <section class="lf-panel lf-form-stack">
+        <div>
+          <span class="lf-eyebrow">{{ t("Manual search paste parser") }}</span>
+          <h3>{{ t("Paste parser results") }}</h3>
+          <p>{{ t("Candidates are unverified and require manual confirmation.") }}</p>
+        </div>
+        <div class="lf-grid">
+          <article class="lf-panel">
+            <h4>{{ t("Parsed items") }}</h4>
+            <p>{{ parse_summary.get("total_items_seen", 0) }}</p>
+          </article>
+          <article class="lf-panel">
+            <h4>{{ t("Saved candidates") }}</h4>
+            <p>{{ parse_summary.get("saved_candidate_count", target_context.candidates|length) }}</p>
+          </article>
+          <article class="lf-panel">
+            <h4>{{ t("Duplicate candidates") }}</h4>
+            <p>{{ parse_summary.get("duplicate_count", 0) }}</p>
+          </article>
+          <article class="lf-panel">
+            <h4>{{ t("Rejected items") }}</h4>
+            <p>{{ parse_summary.get("rejected_count", 0) }}</p>
+          </article>
+        </div>
+        {% if parse_summary.get("safety_warnings") %}
+          <div class="lf-alert lf-alert-info">
+            <strong>{{ t("Safety warnings") }}</strong>
+            <ul>
+              {% for warning in parse_summary.get("safety_warnings", []) %}
+                <li>{{ warning }}</li>
+              {% endfor %}
+            </ul>
+          </div>
+        {% endif %}
+        {% if target_plan.get("rejected_items") %}
+          <div class="lf-table-wrap">
+            <table class="lf-table">
+              <caption>{{ t("Rejected summary") }}</caption>
+              <thead>
+                <tr>
+                  <th>{{ t("Item") }}</th>
+                  <th>{{ t("Reason") }}</th>
+                </tr>
+              </thead>
+              <tbody>
+                {% for item in target_plan.get("rejected_items", []) %}
+                  <tr>
+                    <td>{{ item.get("source_item_id", "") }}</td>
+                    <td>{{ item.get("reason", "") }}</td>
+                  </tr>
+                {% endfor %}
+              </tbody>
+            </table>
+          </div>
+        {% endif %}
+        {% if query_feedback %}
+          <div class="lf-grid">
+            <article class="lf-panel">
+              <h4>{{ t("Suggested negative keywords") }}</h4>
+              <p>{{ ", ".join(query_feedback.get("suggested_negative_keywords", [])) }}</p>
+            </article>
+            <article class="lf-panel">
+              <h4>{{ t("Suggested better queries") }}</h4>
+              <p>{{ ", ".join(query_feedback.get("suggested_better_queries", [])) }}</p>
+            </article>
+            <article class="lf-panel">
+              <h4>{{ t("Domain blacklist suggestions") }}</h4>
+              <p>{{ ", ".join(query_feedback.get("domain_blacklist_suggestions", [])) }}</p>
+            </article>
+          </div>
+        {% endif %}
+      </section>
+    {% elif target_plan %}
       <section class="lf-panel">
         <h3>{{ t("Search strategy") }}</h3>
         <dl class="lf-dl">

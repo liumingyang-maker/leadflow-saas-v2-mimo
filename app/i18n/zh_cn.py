@@ -423,7 +423,30 @@ _BASE_TRANSLATIONS = {
     "Outreach angles": "开发信角度",
     "Open search link": "打开搜索链接",
     "Parse into candidates": "整理为候选客户",
+    "AI parse and create candidate customers": "AI 解析并生成候选客户",
+    "B2B or directory text": "B2B/目录文本",
+    "Candidates are unverified and require manual confirmation.": "候选客户未验证，需要人工确认。",
+    (
+        "Copy search result text from Google, Brave, Bing, trade fair lists, or "
+        "directory pages into this box. The system will not automatically visit URLs "
+        "or crawl pages."
+    ): (
+        "请从 Google / Brave / Bing / 展会名单 / 目录页面复制搜索结果文本粘贴到这里。"
+        "系统不会自动访问这些网址，也不会抓取网页。"
+    ),
+    "CSV rows": "CSV 行",
+    "Domain blacklist suggestions": "域名黑名单建议",
+    "Duplicate candidates": "重复候选客户",
+    "Exhibitor or association list": "展会/协会名单",
+    "Item": "项目",
+    "Manual company list": "手工公司名单",
+    "Manual search paste parser": "手动搜索粘贴解析",
+    "Optional parsing note": "可选解析说明",
+    "Other": "其他",
     "Paste search results": "粘贴搜索结果",
+    "Paste search results and let AI screen them": "粘贴搜索结果，AI 帮你筛选",
+    "Paste parser results": "粘贴解析结果",
+    "Parsed items": "已解析项目",
     "Placeholder channel not yet available": "该渠道暂未开放",
     "Planned": "规划中",
     "Price positioning": "价格定位",
@@ -438,6 +461,9 @@ _BASE_TRANSLATIONS = {
     "Regenerate": "重新生成",
     "Recommended buyer profile": "推荐买家画像",
     "Result count": "结果数量",
+    "Reason": "原因",
+    "Rejected items": "已拒绝项目",
+    "Rejected summary": "拒绝摘要",
     "Query count": "搜索词数量",
     "Query self-check": "搜索词自检",
     "Review before using": "请审核后使用",
@@ -452,6 +478,7 @@ _BASE_TRANSLATIONS = {
     "Search intent and query matrix": "搜索意图与搜索词矩阵",
     "Search candidates": "搜索候选，请审核后使用",
     "Search results parsed": "搜索结果已整理为候选客户",
+    "Search engine results": "搜索引擎结果",
     "Search strategy": "搜索策略",
     "Search strategy generated": "搜索策略已生成",
     "Selling points": "产品卖点",
@@ -551,6 +578,13 @@ _BASE_TRANSLATIONS = {
     "Search results are candidates. Review before using.": "搜索结果仅为候选，请审核后使用。",
     "Source information is limited, so confidence is lower.": "来源信息较少，置信度较低。",
     "Source links": "来源链接",
+    "Source type": "来源类型",
+    "Saved candidates": "已保存候选客户",
+    "Safety warnings": "安全提醒",
+    "Suggested better queries": "建议优化搜索词",
+    "Suggested negative keywords": "建议排除词",
+    "Target country, buyer type, or terms to exclude": "目标国家、买家类型或需要排除的词",
+    "The system will not automatically visit or crawl webpages.": "系统不会自动访问或抓取网页。",
     "advanced_web_search": "高级自动网页搜索",
     "Plan for directories such as Europages, Kompass, and Thomasnet.": (
         "面向 Europages、Kompass、Thomasnet 等目录。"
