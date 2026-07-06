@@ -8,3 +8,6 @@ select = ["E", "F", "I", "UP", "B"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 addopts = "-q"
+markers = [
+    "live_mimo: optional live MiMo API tests, skipped unless RUN_LIVE_MIMO=1",
+]
