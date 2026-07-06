@@ -265,7 +265,7 @@ def save_provider_settings(
         settings.base_url = (base_url or "").strip()[:500]
         settings.model = (model or "").strip()[:120]
         settings.timeout_seconds = max(1, min(int(timeout_seconds or 25), 60))
-        settings.max_output_tokens = max(64, min(int(max_output_tokens or 800), 4000))
+        settings.max_output_tokens = max(64, min(int(max_output_tokens or 800), 8000))
         clean_key = (api_key or "").strip()
         if clean_key:
             settings.api_key_encrypted = encrypt_secret(clean_key)
@@ -1074,7 +1074,7 @@ def generate_search_intent_query_matrix(
             system_prompt=prompt.system_prompt,
             user_prompt=prompt.user_prompt,
             locale=locale,
-            max_output_tokens=max(768, settings.max_output_tokens),
+            max_output_tokens=max(4000, settings.max_output_tokens),
         )
     )
     latency_ms = int((time.monotonic() - start) * 1000)
