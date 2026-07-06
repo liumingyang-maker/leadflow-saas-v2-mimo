@@ -175,10 +175,21 @@ def authenticate(app: Flask, *, email: str, password: str) -> LoginIdentity:
             raise AccountError("invalid_credentials", "Email or password is incorrect")
         if user.email_verified_at is None:
             raise AccountError("verification_required", "Email verification required")
-        membership = session.scalar(
-            select(TenantMembership).where(TenantMembership.user_id == user.id)
+        memberships = session.scalars(
+            select(TenantMembership)
+            .join(Tenant)
+            .where(TenantMembership.user_id == user.id)
+            .order_by(TenantMembership.created_at, TenantMembership.id)
+        ).all()
+        membership = next(
+            (
+                candidate
+                for candidate in memberships
+                if candidate.tenant.status not in {"suspended", "deleted"}
+            ),
+            None,
         )
-        if membership is None or membership.tenant.status == "suspended":
+        if membership is None:
             raise AccountError("account_unavailable", "Account is unavailable")
 
         now = _now()
