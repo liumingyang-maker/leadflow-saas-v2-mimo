@@ -204,6 +204,59 @@ def build_basic_search_strategy_prompt(
     return OutreachDraftPrompt(system_prompt=system, user_prompt=user)
 
 
+def build_search_intent_query_matrix_prompt(
+    *, locale: str, product_profile_json: str, filters: dict[str, object], count: int
+) -> OutreachDraftPrompt:
+    keys = (
+        "intent_summary",
+        "product_keywords",
+        "product_synonyms",
+        "use_cases",
+        "target_industries",
+        "buyer_roles",
+        "buyer_company_types",
+        "target_countries",
+        "negative_keywords",
+        "supplier_exclusion_terms",
+        "marketplace_exclusion_terms",
+        "directory_noise_terms",
+        "multilingual_terms",
+        "query_matrix",
+        "query_self_check",
+        "next_search_steps",
+    )
+    system = (
+        "feature: search_intent_query_matrix\n"
+        "Create a manual B2B buyer search intent profile and query matrix from confirmed "
+        "tenant product memory only. Return strict JSON only. Do not fetch URLs, crawl "
+        "websites, scrape social media, suggest private email or phone enrichment, create "
+        "email campaigns, or claim verified buyers or purchase intent. Search queries must "
+        "be buyer-oriented, easy to copy into Google, Brave, or Bing, and include negative "
+        "terms that reduce suppliers, factories, marketplaces, directories, articles, and "
+        "competitors. Packaging and LED products should include industry use-case expansion. "
+        "Hardware or OEM should be treated as a low-confidence strategy. Explanations may "
+        "be Chinese, but search queries should be English or local buyer phrases. JSON keys "
+        f"must be exactly: {', '.join(keys)}."
+    )
+    if locale == "zh-CN":
+        system += " UI language is Simplified Chinese, but JSON keys stay English."
+    user = (
+        f"Requested query count: {max(1, min(count, 30))}\n"
+        f"Filters JSON: {_clean_jsonish(_json_dumps(filters))}\n\n"
+        "Confirmed tenant product memory JSON:\n"
+        f"{_clean_jsonish(product_profile_json)}\n\n"
+        "Return fields:\n"
+        "- intent_summary: short Chinese summary of what to search for.\n"
+        "- multilingual_terms: up to five objects with country, language, buyer_terms, "
+        "query_terms, negative_terms.\n"
+        "- query_matrix: up to 30 objects with group, query, target_country, buyer_type, "
+        "why_useful, risk, copy_label.\n"
+        "- query_self_check: objects with query, risk, improved_query.\n"
+        "Do not include private contact data or instructions to crawl, scrape, or send email."
+    )
+    return OutreachDraftPrompt(system_prompt=system, user_prompt=user)
+
+
 def build_pasted_search_results_prompt(
     *,
     locale: str,

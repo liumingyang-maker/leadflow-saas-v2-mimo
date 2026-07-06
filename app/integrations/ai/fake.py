@@ -175,6 +175,144 @@ class FakeAIProvider:
                 output_tokens=_rough_tokens(text),
             )
 
+        if "search_intent_query_matrix" in request.system_prompt:
+            text = json.dumps(
+                {
+                    "intent_summary": (
+                        "AI 判断该产品适合先找进口商、经销商、批发商、私标品牌和采购公司，"
+                        "搜索时应排除供应商、工厂、平台和目录噪音。"
+                    ),
+                    "product_keywords": [
+                        "eco-friendly packaging",
+                        "custom packaging bags",
+                        "LED decorative lighting",
+                    ],
+                    "product_synonyms": [
+                        "sustainable packaging",
+                        "private label packaging",
+                        "commercial LED lighting",
+                    ],
+                    "use_cases": [
+                        "cosmetic packaging brands",
+                        "coffee roasters",
+                        "lighting distributors",
+                        "hotel lighting projects",
+                    ],
+                    "target_industries": [
+                        "Retail",
+                        "Food packaging",
+                        "Cosmetics",
+                        "Electrical distribution",
+                    ],
+                    "buyer_roles": [
+                        "procurement manager",
+                        "category buyer",
+                        "sourcing manager",
+                    ],
+                    "buyer_company_types": [
+                        "Importer",
+                        "Distributor",
+                        "Wholesaler",
+                        "Retailer",
+                        "Private label brand",
+                        "Procurement company",
+                    ],
+                    "target_countries": ["United States", "Germany", "United Arab Emirates"],
+                    "negative_keywords": [
+                        "manufacturer",
+                        "supplier",
+                        "factory",
+                        "marketplace",
+                        "directory",
+                        "Alibaba",
+                        "Amazon",
+                        "eBay",
+                    ],
+                    "supplier_exclusion_terms": ["manufacturer", "factory", "supplier"],
+                    "marketplace_exclusion_terms": ["Alibaba", "Amazon", "eBay"],
+                    "directory_noise_terms": ["directory", "blog", "article", "news"],
+                    "multilingual_terms": [
+                        {
+                            "country": "Germany",
+                            "language": "German",
+                            "buyer_terms": ["Importeur", "Großhändler", "Händler"],
+                            "query_terms": ["custom packaging Importeur Deutschland"],
+                            "negative_terms": ["Hersteller", "Fabrik"],
+                        },
+                        {
+                            "country": "Spain",
+                            "language": "Spanish",
+                            "buyer_terms": ["importador", "distribuidor", "mayorista"],
+                            "query_terms": ["LED lighting distribuidor España"],
+                            "negative_terms": ["fabricante", "proveedor"],
+                        },
+                    ],
+                    "query_matrix": [
+                        {
+                            "group": "buyer_type",
+                            "query": (
+                                "eco-friendly packaging importer -manufacturer -factory "
+                                "-supplier -Alibaba -Amazon"
+                            ),
+                            "target_country": "United States",
+                            "buyer_type": "Importer",
+                            "why_useful": "偏向寻找进口型买家，而不是包装生产同行。",
+                            "risk": "仍可能出现目录页，需要人工确认。",
+                            "copy_label": "US packaging importer",
+                        },
+                        {
+                            "group": "use_case",
+                            "query": (
+                                "custom cosmetic packaging brand buyer -manufacturer "
+                                "-factory -supplier"
+                            ),
+                            "target_country": "United States",
+                            "buyer_type": "Private label brand",
+                            "why_useful": "化妆品品牌可能采购定制包装。",
+                            "risk": "品牌官网不一定显示采购入口。",
+                            "copy_label": "Cosmetic packaging brand",
+                        },
+                        {
+                            "group": "multilingual",
+                            "query": "LED lighting distribuidor España -fabricante -proveedor",
+                            "target_country": "Spain",
+                            "buyer_type": "Distributor",
+                            "why_useful": "用当地语言寻找 LED 经销商。",
+                            "risk": "需要人工判断是否为买家。",
+                            "copy_label": "Spain LED distributor",
+                        },
+                    ],
+                    "query_self_check": [
+                        {
+                            "query": "custom packaging",
+                            "risk": "too broad",
+                            "improved_query": (
+                                "custom packaging importer -manufacturer -factory -supplier"
+                            ),
+                        },
+                        {
+                            "query": "LED lighting supplier",
+                            "risk": "supplier-biased",
+                            "improved_query": "LED lighting distributor -manufacturer -factory",
+                        },
+                    ],
+                    "next_search_steps": [
+                        "先复制 3-5 条最像买家的搜索词。",
+                        "手动去 Google、Brave 或 Bing 搜索。",
+                        "把搜索结果摘要粘贴回来，让 AI 筛选候选客户。",
+                    ],
+                },
+                ensure_ascii=False,
+            )
+            return AIGenerationResult(
+                success=True,
+                text=text,
+                provider="fake",
+                model=self._model,
+                input_tokens=_rough_tokens(request.system_prompt + request.user_prompt),
+                output_tokens=_rough_tokens(text),
+            )
+
         if "pasted_search_result_parsing" in request.system_prompt:
             text = json.dumps(
                 {

@@ -22,6 +22,7 @@ from app.integrations.ai.prompts import (
     build_outreach_draft_prompt,
     build_pasted_search_results_prompt,
     build_product_profile_extraction_prompt,
+    build_search_intent_query_matrix_prompt,
     build_target_customer_candidate_prompt,
     build_target_customer_plan_prompt,
 )
@@ -68,9 +69,12 @@ TARGET_CUSTOMER_MATCH_FEATURE = "target_customer_candidate_matching"
 TARGET_CUSTOMER_PLAN_CREDITS = 0
 TARGET_CUSTOMER_MATCH_CREDITS = 0
 BASIC_SEARCH_STRATEGY_FEATURE = "basic_search_strategy_generation"
+SEARCH_INTENT_QUERY_MATRIX_FEATURE = "search_intent_query_matrix"
 PASTED_SEARCH_PARSE_FEATURE = "pasted_search_result_parsing"
 CANDIDATE_FIT_SCORING_FEATURE = "candidate_fit_scoring"
 BASIC_SEARCH_STRATEGY_CREDITS = 0
+SEARCH_INTENT_QUERY_MATRIX_REQUIRED_CREDITS = 1
+SEARCH_INTENT_QUERY_MATRIX_CREDITS = 0
 PASTED_SEARCH_PARSE_CREDITS = 0
 CANDIDATE_COMPANY_RESEARCH_FEATURE = "candidate_company_research"
 CANDIDATE_COMPANY_RESEARCH_REQUIRED_CREDITS = 5
@@ -108,6 +112,20 @@ BASIC_SEARCH_STRATEGY_ARRAY_FIELDS = (
     "query_templates",
     "query_rationale",
     "match_scoring_hints",
+)
+SEARCH_INTENT_QUERY_MATRIX_ARRAY_FIELDS = (
+    "product_keywords",
+    "product_synonyms",
+    "use_cases",
+    "target_industries",
+    "buyer_roles",
+    "buyer_company_types",
+    "target_countries",
+    "negative_keywords",
+    "supplier_exclusion_terms",
+    "marketplace_exclusion_terms",
+    "directory_noise_terms",
+    "next_search_steps",
 )
 CANDIDATE_COMPANY_RESEARCH_ARRAY_FIELDS = (
     "possible_use_cases",
@@ -167,6 +185,14 @@ class TargetCustomerCandidateResult:
 
 @dataclass(frozen=True)
 class BasicSearchStrategyResult:
+    success: bool
+    strategy: dict[str, object] | None = None
+    error_code: str = ""
+    quota_remaining: int = 0
+
+
+@dataclass(frozen=True)
+class SearchIntentQueryMatrixResult:
     success: bool
     strategy: dict[str, object] | None = None
     error_code: str = ""
@@ -958,6 +984,165 @@ def generate_basic_search_strategy(
         )
 
 
+def generate_search_intent_query_matrix(
+    app: Flask,
+    *,
+    tenant_id: str,
+    user_id: str,
+    locale: str,
+    product_profile_json: str,
+    filters: dict[str, object],
+    count: int,
+) -> SearchIntentQueryMatrixResult:
+    with _session(app) as session:
+        settings = _get_or_create_settings(session)
+        provider_name = settings.provider
+        model = settings.model
+        if not settings.enabled or settings.provider == "disabled":
+            record_ai_usage(
+                session,
+                tenant_id=tenant_id,
+                user_id=user_id,
+                feature_name=SEARCH_INTENT_QUERY_MATRIX_FEATURE,
+                provider=provider_name,
+                model=model,
+                credits_charged=0,
+                input_tokens=0,
+                output_tokens=0,
+                status="disabled",
+                error_code="ai_disabled",
+            )
+            session.commit()
+            return SearchIntentQueryMatrixResult(success=False, error_code="ai_disabled")
+
+        summary = summarize_quota(session, tenant_id=tenant_id)
+        if not summary.enabled:
+            record_ai_usage(
+                session,
+                tenant_id=tenant_id,
+                user_id=user_id,
+                feature_name=SEARCH_INTENT_QUERY_MATRIX_FEATURE,
+                provider=provider_name,
+                model=model,
+                credits_charged=0,
+                input_tokens=0,
+                output_tokens=0,
+                status="disabled",
+                error_code="tenant_ai_disabled",
+            )
+            session.commit()
+            return SearchIntentQueryMatrixResult(
+                success=False,
+                error_code="tenant_ai_disabled",
+                quota_remaining=summary.remaining,
+            )
+
+        if summary.remaining < SEARCH_INTENT_QUERY_MATRIX_REQUIRED_CREDITS:
+            record_ai_usage(
+                session,
+                tenant_id=tenant_id,
+                user_id=user_id,
+                feature_name=SEARCH_INTENT_QUERY_MATRIX_FEATURE,
+                provider=provider_name,
+                model=model,
+                credits_charged=0,
+                input_tokens=0,
+                output_tokens=0,
+                status="blocked_quota",
+                error_code="insufficient_credits",
+            )
+            session.commit()
+            return SearchIntentQueryMatrixResult(
+                success=False,
+                error_code="insufficient_credits",
+                quota_remaining=summary.remaining,
+            )
+
+        prompt = build_search_intent_query_matrix_prompt(
+            locale=locale,
+            product_profile_json=product_profile_json,
+            filters=filters,
+            count=count,
+        )
+        provider = _provider_from_settings(settings)
+
+    start = time.monotonic()
+    result = provider.generate_text(
+        AIGenerationRequest(
+            system_prompt=prompt.system_prompt,
+            user_prompt=prompt.user_prompt,
+            locale=locale,
+            max_output_tokens=max(768, settings.max_output_tokens),
+        )
+    )
+    latency_ms = int((time.monotonic() - start) * 1000)
+
+    with _session(app) as session:
+        if result.success:
+            try:
+                strategy = _parse_search_intent_query_matrix_json(result.text)
+            except AIServiceError:
+                record_ai_usage(
+                    session,
+                    tenant_id=tenant_id,
+                    user_id=user_id,
+                    feature_name=SEARCH_INTENT_QUERY_MATRIX_FEATURE,
+                    provider=result.provider or provider_name,
+                    model=result.model or model,
+                    credits_charged=0,
+                    input_tokens=result.input_tokens,
+                    output_tokens=result.output_tokens,
+                    status="failed",
+                    error_code="malformed_json",
+                    latency_ms=latency_ms,
+                )
+                session.commit()
+                return SearchIntentQueryMatrixResult(
+                    success=False,
+                    error_code="malformed_json",
+                )
+
+            record_ai_usage(
+                session,
+                tenant_id=tenant_id,
+                user_id=user_id,
+                feature_name=SEARCH_INTENT_QUERY_MATRIX_FEATURE,
+                provider=result.provider or provider_name,
+                model=result.model or model,
+                credits_charged=SEARCH_INTENT_QUERY_MATRIX_CREDITS,
+                input_tokens=result.input_tokens,
+                output_tokens=result.output_tokens,
+                status="success",
+                latency_ms=latency_ms,
+            )
+            remaining = summarize_quota(session, tenant_id=tenant_id).remaining
+            session.commit()
+            return SearchIntentQueryMatrixResult(
+                success=True,
+                strategy=strategy,
+                quota_remaining=remaining,
+            )
+
+        record_ai_usage(
+            session,
+            tenant_id=tenant_id,
+            user_id=user_id,
+            feature_name=SEARCH_INTENT_QUERY_MATRIX_FEATURE,
+            provider=result.provider or provider_name,
+            model=result.model or model,
+            credits_charged=0,
+            input_tokens=result.input_tokens,
+            output_tokens=result.output_tokens,
+            status="failed",
+            error_code=result.error_code or "provider_error",
+            latency_ms=latency_ms,
+        )
+        session.commit()
+        return SearchIntentQueryMatrixResult(
+            success=False, error_code=result.error_code or "provider_error"
+        )
+
+
 def parse_pasted_search_results(
     app: Flask,
     *,
@@ -1609,6 +1794,26 @@ def _parse_basic_search_strategy_json(text: str) -> dict[str, object]:
     return normalized
 
 
+def _parse_search_intent_query_matrix_json(text: str) -> dict[str, object]:
+    data = _load_json_object(text)
+    normalized: dict[str, object] = {
+        "intent_summary": _sanitize_search_intent_text(
+            data.get("intent_summary", ""),
+            max_length=1000,
+        ),
+    }
+    for key in SEARCH_INTENT_QUERY_MATRIX_ARRAY_FIELDS:
+        normalized[key] = _normalize_public_list(data.get(key), limit=20)
+    normalized["multilingual_terms"] = _normalize_multilingual_terms(data.get("multilingual_terms"))
+    normalized["query_matrix"] = _normalize_query_matrix(data.get("query_matrix"))
+    normalized["query_self_check"] = _normalize_query_self_check(data.get("query_self_check"))
+    if not normalized["intent_summary"]:
+        normalized["intent_summary"] = "AI 搜索策略仅供参考，请人工确认搜索结果。"
+    if not normalized["query_matrix"]:
+        raise AIServiceError("Search intent query matrix is required")
+    return normalized
+
+
 def _parse_target_customer_candidates_json(text: str) -> list[dict[str, object]]:
     data = _load_json_object(text)
     raw_candidates = data.get("candidates", [])
@@ -1756,6 +1961,129 @@ def _normalize_list(value: object) -> list[str]:
     if isinstance(value, list):
         return [str(item).strip()[:200] for item in value if str(item).strip()]
     return []
+
+
+def _normalize_public_list(value: object, *, limit: int) -> list[str]:
+    if value is None:
+        return []
+    if isinstance(value, str):
+        raw_values = value.replace(",", "\n").splitlines()
+    elif isinstance(value, list):
+        raw_values = value
+    else:
+        return []
+    rows: list[str] = []
+    for item in raw_values:
+        clean = _sanitize_search_intent_text(item, max_length=200)
+        if clean:
+            rows.append(clean)
+        if len(rows) >= limit:
+            break
+    return rows
+
+
+def _normalize_multilingual_terms(value: object) -> list[dict[str, object]]:
+    if not isinstance(value, list):
+        return []
+    rows: list[dict[str, object]] = []
+    for item in value[:5]:
+        if not isinstance(item, dict):
+            continue
+        row = {
+            "country": _sanitize_search_intent_text(item.get("country", ""), max_length=120),
+            "language": _sanitize_search_intent_text(item.get("language", ""), max_length=80),
+            "buyer_terms": _normalize_public_list(item.get("buyer_terms"), limit=10),
+            "query_terms": _normalize_public_list(item.get("query_terms"), limit=10),
+            "negative_terms": _normalize_public_list(item.get("negative_terms"), limit=10),
+        }
+        if row["country"] or row["language"] or row["buyer_terms"] or row["query_terms"]:
+            rows.append(row)
+    return rows
+
+
+def _normalize_query_matrix(value: object) -> list[dict[str, str]]:
+    if not isinstance(value, list):
+        return []
+    rows: list[dict[str, str]] = []
+    for item in value[:30]:
+        if not isinstance(item, dict):
+            continue
+        query = _sanitize_search_intent_text(item.get("query", ""), max_length=220)
+        if not query:
+            continue
+        rows.append(
+            {
+                "group": _sanitize_search_intent_text(item.get("group", ""), max_length=80),
+                "query": query,
+                "target_country": _sanitize_search_intent_text(
+                    item.get("target_country", ""),
+                    max_length=120,
+                ),
+                "buyer_type": _sanitize_search_intent_text(
+                    item.get("buyer_type", ""),
+                    max_length=120,
+                ),
+                "why_useful": _sanitize_search_intent_text(
+                    item.get("why_useful", ""),
+                    max_length=400,
+                ),
+                "risk": _sanitize_search_intent_text(item.get("risk", ""), max_length=300),
+                "copy_label": _sanitize_search_intent_text(
+                    item.get("copy_label", ""),
+                    max_length=120,
+                ),
+            }
+        )
+    return rows
+
+
+def _normalize_query_self_check(value: object) -> list[dict[str, str]]:
+    if not isinstance(value, list):
+        return []
+    rows: list[dict[str, str]] = []
+    for item in value[:30]:
+        if not isinstance(item, dict):
+            continue
+        query = _sanitize_search_intent_text(item.get("query", ""), max_length=220)
+        improved_query = _sanitize_search_intent_text(
+            item.get("improved_query", ""),
+            max_length=220,
+        )
+        if not query and not improved_query:
+            continue
+        rows.append(
+            {
+                "query": query,
+                "risk": _sanitize_search_intent_text(item.get("risk", ""), max_length=120),
+                "improved_query": improved_query,
+            }
+        )
+    return rows
+
+
+def _sanitize_search_intent_text(value: object, *, max_length: int) -> str:
+    clean = _sanitize_public_text(value, max_length=max_length)
+    lower = clean.lower()
+    blocked_terms = (
+        "linkedin",
+        "facebook",
+        "whatsapp",
+        "telegram",
+        "scrape",
+        "scraping",
+        "crawl",
+        "crawling",
+        "smtp",
+        "send email",
+        "auto email",
+        "private email",
+        "phone enrichment",
+        "verified buyer",
+        "purchase intent",
+    )
+    if any(term in lower for term in blocked_terms):
+        return ""
+    return clean
 
 
 def _normalize_text(value: object) -> str:

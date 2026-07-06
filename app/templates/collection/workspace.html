@@ -92,6 +92,178 @@
       </article>
     </div>
 
+    <form class="lf-panel lf-form-stack" method="post" action="/collection/search-intent">
+      {{ csrf_input() }}
+      <div>
+        <span class="lf-eyebrow">{{ t("AI search strategy") }}</span>
+        <h3>{{ t("Search intent and query matrix") }}</h3>
+        <p>{{ t("These search terms are lead search suggestions, not verified customers.") }}</p>
+        <p>{{ t("The system will not crawl websites or send emails automatically.") }} {{ t("Private emails and phone numbers are not generated or saved.") }}</p>
+      </div>
+      <div class="lf-grid">
+        <div class="lf-field-group">
+          <label class="lf-label" for="intent_country">{{ t("Target countries") }}</label>
+          <input class="lf-field" id="intent_country" name="country" value="{{ target_filters.country }}">
+        </div>
+        <div class="lf-field-group">
+          <label class="lf-label" for="intent_buyer_type">{{ t("Buyer types") }}</label>
+          <input class="lf-field" id="intent_buyer_type" name="buyer_type" value="{{ target_filters.buyer_type }}">
+        </div>
+        <div class="lf-field-group">
+          <label class="lf-label" for="intent_industry">{{ t("Industry") }}</label>
+          <input class="lf-field" id="intent_industry" name="industry" value="{{ target_filters.industry }}">
+        </div>
+        <div class="lf-field-group">
+          <label class="lf-label" for="intent_result_count">{{ t("Query count") }}</label>
+          <input class="lf-field" id="intent_result_count" name="result_count" type="number" min="1" max="25" value="{{ target_filters.result_count }}">
+        </div>
+      </div>
+      <div class="lf-actions">
+        <button class="lf-button lf-button-primary" type="submit">{{ t("Generate AI search strategy") }}</button>
+      </div>
+    </form>
+
+    {% if search_intent_plan %}
+      <section class="lf-panel lf-form-stack">
+        <div>
+          <span class="lf-eyebrow">{{ t("AI search strategy") }}</span>
+          <h3>{{ t("Search query matrix") }}</h3>
+          <p>{{ search_intent_plan.get("intent_summary", "") }}</p>
+        </div>
+
+        <div class="lf-grid">
+          <article class="lf-panel">
+            <h4>{{ t("Buyer company types") }}</h4>
+            <p>{{ ", ".join(search_intent_plan.get("buyer_company_types", [])) }}</p>
+          </article>
+          <article class="lf-panel">
+            <h4>{{ t("Use-case expansion") }}</h4>
+            <p>{{ ", ".join(search_intent_plan.get("use_cases", [])) }}</p>
+          </article>
+          <article class="lf-panel">
+            <h4>{{ t("Negative keywords") }}</h4>
+            <p>{{ ", ".join(search_intent_plan.get("negative_keywords", [])) }}</p>
+          </article>
+        </div>
+
+        {% if search_intent_plan.get("multilingual_terms") %}
+          <div class="lf-table-wrap">
+            <table class="lf-table">
+              <caption>{{ t("Country and language buyer terms") }}</caption>
+              <thead>
+                <tr>
+                  <th>{{ t("Target countries") }}</th>
+                  <th>{{ t("Language") }}</th>
+                  <th>{{ t("Buyer terms") }}</th>
+                  <th>{{ t("Negative terms") }}</th>
+                </tr>
+              </thead>
+              <tbody>
+                {% for row in search_intent_plan.get("multilingual_terms", []) %}
+                  <tr>
+                    <td>{{ row.get("country", "") }}</td>
+                    <td>{{ row.get("language", "") }}</td>
+                    <td>{{ ", ".join(row.get("buyer_terms", [])) }}</td>
+                    <td>{{ ", ".join(row.get("negative_terms", [])) }}</td>
+                  </tr>
+                {% endfor %}
+              </tbody>
+            </table>
+          </div>
+        {% endif %}
+
+        {% if search_intent_plan.get("query_matrix") %}
+          <div class="lf-table-wrap">
+            <table class="lf-table">
+              <caption>{{ t("Search query matrix") }}</caption>
+              <thead>
+                <tr>
+                  <th>{{ t("Group") }}</th>
+                  <th>{{ t("Search query") }}</th>
+                  <th>{{ t("Target countries") }}</th>
+                  <th>{{ t("Buyer types") }}</th>
+                  <th>{{ t("Why useful") }}</th>
+                  <th>{{ t("Risk") }}</th>
+                  <th>{{ t("Copy") }}</th>
+                </tr>
+              </thead>
+              <tbody>
+                {% for row in search_intent_plan.get("query_matrix", []) %}
+                  <tr>
+                    <td>{{ row.get("group", "") }}</td>
+                    <td><code>{{ row.get("query", "") }}</code></td>
+                    <td>{{ row.get("target_country", "") }}</td>
+                    <td>{{ row.get("buyer_type", "") }}</td>
+                    <td>{{ row.get("why_useful", "") }}</td>
+                    <td>{{ row.get("risk", "") }}</td>
+                    <td>
+                      <button class="lf-button lf-button-secondary" type="button" data-copy-query="{{ row.get('query', '')|e }}">
+                        {{ t("Copy search query") }}
+                      </button>
+                    </td>
+                  </tr>
+                {% endfor %}
+              </tbody>
+            </table>
+          </div>
+        {% endif %}
+
+        {% if search_intent_plan.get("query_self_check") %}
+          <div class="lf-table-wrap">
+            <table class="lf-table">
+              <caption>{{ t("Query self-check") }}</caption>
+              <thead>
+                <tr>
+                  <th>{{ t("Search query") }}</th>
+                  <th>{{ t("Risk") }}</th>
+                  <th>{{ t("Improved query") }}</th>
+                </tr>
+              </thead>
+              <tbody>
+                {% for row in search_intent_plan.get("query_self_check", []) %}
+                  <tr>
+                    <td>{{ row.get("query", "") }}</td>
+                    <td>{{ row.get("risk", "") }}</td>
+                    <td><code>{{ row.get("improved_query", "") }}</code></td>
+                  </tr>
+                {% endfor %}
+              </tbody>
+            </table>
+          </div>
+        {% endif %}
+
+        {% if search_intent_plan.get("next_search_steps") %}
+          <div>
+            <h4>{{ t("Next steps") }}</h4>
+            <ol>
+              {% for step in search_intent_plan.get("next_search_steps", []) %}
+                <li>{{ step }}</li>
+              {% endfor %}
+            </ol>
+          </div>
+        {% endif %}
+
+        {% if target_context.latest_search_intent_run %}
+          <form method="post" action="/collection/channels/basic-search/parse-results" class="lf-form-stack">
+            {{ csrf_input() }}
+            <input type="hidden" name="run_id" value="{{ target_context.latest_search_intent_run.id }}">
+            <input type="hidden" name="country" value="{{ target_filters.country }}">
+            <input type="hidden" name="buyer_type" value="{{ target_filters.buyer_type }}">
+            <input type="hidden" name="industry" value="{{ target_filters.industry }}">
+            <input type="hidden" name="result_count" value="{{ target_filters.result_count }}">
+            <div class="lf-field-group">
+              <label class="lf-label" for="intent_pasted_results">{{ t("Paste search results") }}</label>
+              <textarea class="lf-field" id="intent_pasted_results" name="pasted_results" rows="7" maxlength="10000" placeholder="{{ t('Paste search results') }}"></textarea>
+            </div>
+            <p>{{ t("Manually search Google, Brave, or Bing, then paste results back for AI review.") }}</p>
+            <div class="lf-actions">
+              <button class="lf-button lf-button-primary" type="submit">{{ t("Parse into candidates") }}</button>
+            </div>
+          </form>
+        {% endif %}
+      </section>
+    {% endif %}
+
     <form id="ai-basic-search" class="lf-panel lf-form-stack" method="post" action="/collection/channels/basic-search/strategy">
       {{ csrf_input() }}
       <h3>{{ t("AI basic search") }}</h3>
@@ -289,4 +461,13 @@
   {{ empty_state(t("No jobs yet"), t("Start a collection from one of the sources above."), t("Start collecting")) }}
   {% endif %}
 </section>
+<script>
+document.addEventListener("click", function (event) {
+  var button = event.target.closest("[data-copy-query]");
+  if (!button || !navigator.clipboard) {
+    return;
+  }
+  navigator.clipboard.writeText(button.dataset.copyQuery || "");
+});
+</script>
 {% endcall %}

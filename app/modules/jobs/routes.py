@@ -29,6 +29,7 @@ from app.modules.jobs.target_discovery import (
     filters_from_form,
     generate_basic_search_strategy_for_collection,
     generate_collection_target_plan,
+    generate_search_intent_query_matrix_for_collection,
     match_collection_target_candidates,
     parse_basic_search_results_for_collection,
     plan_json,
@@ -46,6 +47,29 @@ def register_collection_routes(app: Flask) -> None:
     @tenant_required(app)
     def collection_workspace():
         return _render_collection_workspace(app)
+
+    @app.get("/collection/search-intent")
+    @tenant_required(app)
+    def collection_search_intent_view():
+        return _render_collection_workspace(app)
+
+    @app.post("/collection/search-intent")
+    @tenant_required(app)
+    def collection_search_intent_generate():
+        tenant_id = session.get("tenant_id", "")
+        user_id = session.get("user_id", "")
+        result = generate_search_intent_query_matrix_for_collection(
+            app,
+            tenant_id=tenant_id,
+            user_id=user_id,
+            locale=get_locale(),
+            form=request.form,
+        )
+        return _render_collection_workspace(
+            app,
+            target_error=_target_error_message(result.error_code) if not result.success else "",
+            target_notice=t("AI search strategy generated") if result.success else "",
+        )
 
     @app.post("/collection/target-plan")
     @tenant_required(app)
@@ -328,6 +352,7 @@ def _render_collection_workspace(app: Flask, *, target_error: str = "", target_n
         jobs=jobs,
         target_context=target_context,
         target_plan=plan_json(target_context.latest_run),
+        search_intent_plan=plan_json(target_context.latest_search_intent_run),
         raw_candidate_data=raw_candidate_data,
         acquisition_channels=acquisition_channels(
             advanced_web_search_enabled=advanced_search_available(app)
@@ -374,6 +399,8 @@ def _target_error_message(error_code: str) -> str:
         return t("Please train your AI foreign trade operator first")
     if error_code in {"tenant_ai_disabled", "ai_disabled"}:
         return t("AI is not enabled for this workspace. Please contact the administrator.")
+    if error_code == "insufficient_credits":
+        return t("Not enough credits")
     if error_code == "duplicate_candidate":
         return t("Duplicate candidate detected")
     if error_code == "candidate_not_found":

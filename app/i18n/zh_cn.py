@@ -335,6 +335,8 @@ _BASE_TRANSLATIONS = {
     ),
     "AI helps you find target customers": "AI 帮你寻找目标客户",
     "AI basic search": "AI 普通搜索",
+    "AI search strategy": "AI 搜索策略",
+    "AI search strategy generated": "AI 搜索策略已生成",
     "Add to CRM": "加入 CRM",
     "Acquisition channels": "获客渠道",
     "Advanced automatic search": "自动网页搜索",
@@ -358,6 +360,8 @@ _BASE_TRANSLATIONS = {
     "Coming soon": "即将开放",
     "Contact enrichment": "联系方式补充",
     "Copy keyword": "复制搜索词",
+    "Copy search query": "复制搜索词",
+    "Copy": "复制",
     "Credits": "额度",
     "Credits used": "已用额度",
     "CSV import": "CSV 导入",
@@ -386,7 +390,9 @@ _BASE_TRANSLATIONS = {
         "发现行业展会和参展商名单中的潜在客户。"
     ),
     "Generate AI draft": "生成 AI 草稿",
+    "Generate AI search strategy": "生成 AI 搜索策略",
     "Generate search strategy": "生成搜索策略",
+    "Group": "分组",
     "Ideal buyer profile": "理想买家画像",
     (
         "If your website has important information, copy the main company or product "
@@ -405,6 +411,7 @@ _BASE_TRANSLATIONS = {
     "Match reason": "匹配理由",
     "Match target customers": "匹配 10 个目标客户",
     "Negative keywords": "排除关键词",
+    "Negative terms": "排除词",
     "No tenant quotas yet": "暂无租户 AI 额度",
     "OEM/ODM capability": "OEM/ODM 能力",
     "Optional context for the draft": "可选：补充草稿上下文",
@@ -425,6 +432,8 @@ _BASE_TRANSLATIONS = {
     "Regenerate": "重新生成",
     "Recommended buyer profile": "推荐买家画像",
     "Result count": "结果数量",
+    "Query count": "搜索词数量",
+    "Query self-check": "搜索词自检",
     "Review before using": "请审核后使用",
     "Please review AI results before use": "AI 结果可能不准确，请审核后使用",
     "Save": "保存",
@@ -433,6 +442,8 @@ _BASE_TRANSLATIONS = {
     "Search keywords": "搜索关键词",
     "Search links": "搜索链接",
     "Search queries": "搜索语句",
+    "Search query matrix": "搜索词矩阵",
+    "Search intent and query matrix": "搜索意图与搜索词矩阵",
     "Search candidates": "搜索候选，请审核后使用",
     "Search results parsed": "搜索结果已整理为候选客户",
     "Search strategy": "搜索策略",
@@ -443,6 +454,7 @@ _BASE_TRANSLATIONS = {
     "Suggested email tone": "建议邮件语气",
     "Suggested next action": "建议下一步",
     "System is busy, please try again later": "系统繁忙，请稍后重试",
+    "Target country": "目标国家",
     "Target countries": "目标国家",
     "Target customers": "目标客户",
     "Target industries": "适合行业",
@@ -462,6 +474,26 @@ _BASE_TRANSLATIONS = {
     "Trade fair directories": "展会目录",
     "Usage summary": "用量摘要",
     "View or edit": "查看或编辑",
+    "Buyer company types": "买家公司类型",
+    "Buyer terms": "买家词",
+    "Country and language buyer terms": "国家/语言买家词",
+    "Improved query": "优化后搜索词",
+    "Manually search Google, Brave, or Bing, then paste results back for AI review.": (
+        "请手动去 Google、Brave 或 Bing 搜索，再把结果粘贴回来让 AI 筛选。"
+    ),
+    "Next steps": "下一步",
+    "Private emails and phone numbers are not generated or saved.": (
+        "不会生成或保存私人邮箱/手机号。"
+    ),
+    "Risk": "风险",
+    "The system will not crawl websites or send emails automatically.": (
+        "系统不会自动爬网页，也不会自动发送邮件。"
+    ),
+    "These search terms are lead search suggestions, not verified customers.": (
+        "这些搜索词只是获客线索搜索建议，不是已验证客户。"
+    ),
+    "Use-case expansion": "行业场景扩展",
+    "Why useful": "为什么有用",
     "Website URL": "官网 URL",
     "Website URL is saved only and will not be crawled.": ("官网 URL 只会保存，不会自动抓取网页。"),
     "Website URL was saved as text. It was not fetched.": (

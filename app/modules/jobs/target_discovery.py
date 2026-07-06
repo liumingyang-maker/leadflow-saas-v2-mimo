@@ -23,6 +23,7 @@ from app.modules.ai.ledger import record_ai_usage
 from app.modules.ai.quota import summarize_quota
 from app.modules.ai.service import (
     generate_basic_search_strategy,
+    generate_search_intent_query_matrix,
     generate_target_customer_candidates,
     generate_target_customer_plan,
     get_provider_settings,
@@ -40,6 +41,7 @@ DEFAULT_MATCH_COUNT = 10
 MAX_MATCH_COUNT = 25
 MAX_PASTED_RESULTS_LENGTH = 10_000
 ADVANCED_WEB_SEARCH_FEATURE = "advanced_web_search"
+SEARCH_INTENT_QUERY_MATRIX_CHANNEL = "search_intent_query_matrix"
 ADVANCED_SEARCH_NEGATIVE_KEYWORDS = (
     "manufacturer",
     "factory",
@@ -114,6 +116,7 @@ class TargetDiscoveryContext:
     product_profile: TenantProductProfile | None
     product_profile_summary: dict[str, object]
     latest_run: TargetCustomerDiscoveryRun | None
+    latest_search_intent_run: TargetCustomerDiscoveryRun | None
     candidates: list[TargetCustomerCandidate]
 
 
@@ -134,11 +137,19 @@ class AddCandidateResult:
 def collection_target_context(app: Flask, *, tenant_id: str) -> TargetDiscoveryContext:
     with Session(get_engine(app)) as session:
         product_profile = _confirmed_product_profile(session, tenant_id=tenant_id)
-        latest_run = session.scalar(
-            select(TargetCustomerDiscoveryRun)
-            .where(TargetCustomerDiscoveryRun.tenant_id == tenant_id)
-            .order_by(TargetCustomerDiscoveryRun.created_at.desc())
+        recent_runs = list(
+            session.scalars(
+                select(TargetCustomerDiscoveryRun)
+                .where(TargetCustomerDiscoveryRun.tenant_id == tenant_id)
+                .order_by(TargetCustomerDiscoveryRun.created_at.desc())
+                .limit(20)
+            )
         )
+        latest_search_intent_run = _latest_run_for_channel(
+            recent_runs,
+            channel_key=SEARCH_INTENT_QUERY_MATRIX_CHANNEL,
+        )
+        latest_run = _latest_non_search_intent_run(recent_runs)
         candidates: list[TargetCustomerCandidate] = []
         if latest_run is not None:
             candidates = list(
@@ -160,6 +171,7 @@ def collection_target_context(app: Flask, *, tenant_id: str) -> TargetDiscoveryC
             product_profile=product_profile,
             product_profile_summary=summary,
             latest_run=latest_run,
+            latest_search_intent_run=latest_search_intent_run,
             candidates=candidates,
         )
 
@@ -310,6 +322,67 @@ def generate_basic_search_strategy_for_collection(
             requested_count=int(filters["result_count"]),
             generated_count=0,
             credits_estimated=0,
+            credits_charged=0,
+        )
+        session.add(run)
+        session.commit()
+        return TargetDiscoveryResult(
+            success=result.success,
+            error_code=result.error_code,
+            run_id=run.id,
+        )
+
+
+def generate_search_intent_query_matrix_for_collection(
+    app: Flask,
+    *,
+    tenant_id: str,
+    user_id: str,
+    locale: str,
+    form,
+) -> TargetDiscoveryResult:
+    filters = filters_from_form(form)
+    with Session(get_engine(app)) as session:
+        profile = _confirmed_product_profile(session, tenant_id=tenant_id)
+        if profile is None:
+            return TargetDiscoveryResult(success=False, error_code="missing_product_profile")
+        product_profile_id = profile.id
+        product_profile_json = profile.extracted_profile_json
+
+    result = generate_search_intent_query_matrix(
+        app,
+        tenant_id=tenant_id,
+        user_id=user_id,
+        locale=locale,
+        product_profile_json=product_profile_json,
+        filters=filters,
+        count=int(filters["result_count"]),
+    )
+
+    strategy = dict(result.strategy or {})
+    if result.success:
+        strategy["source_channel"] = SEARCH_INTENT_QUERY_MATRIX_CHANNEL
+        strategy["test_phase_free"] = True
+        strategy["safety_notes"] = [
+            "这些搜索词不是已验证客户，只是获客线索搜索建议。",
+            "系统不会自动爬网页。",
+            "系统不会自动发送邮件。",
+            "不会生成或保存私人邮箱/手机号。",
+        ]
+
+    with Session(get_engine(app)) as session:
+        run = TargetCustomerDiscoveryRun(
+            tenant_id=tenant_id,
+            product_profile_id=product_profile_id,
+            filters_json=json.dumps(
+                {**filters, "channel_key": SEARCH_INTENT_QUERY_MATRIX_CHANNEL},
+                ensure_ascii=False,
+            ),
+            generated_plan_json=json.dumps(strategy, ensure_ascii=False),
+            status="planned" if result.success else "failed",
+            requested_count=int(filters["result_count"]),
+            generated_count=0,
+            credits_estimated=1,
             credits_charged=0,
         )
         session.add(run)
@@ -692,6 +765,34 @@ def raw_candidate_data(candidate: TargetCustomerCandidate) -> dict[str, object]:
     except json.JSONDecodeError:
         return {}
     return data if isinstance(data, dict) else {}
+
+
+def _latest_run_for_channel(
+    runs: list[TargetCustomerDiscoveryRun], *, channel_key: str
+) -> TargetCustomerDiscoveryRun | None:
+    for run in runs:
+        if _run_channel(run) == channel_key:
+            return run
+    return None
+
+
+def _latest_non_search_intent_run(
+    runs: list[TargetCustomerDiscoveryRun],
+) -> TargetCustomerDiscoveryRun | None:
+    for run in runs:
+        if _run_channel(run) != SEARCH_INTENT_QUERY_MATRIX_CHANNEL:
+            return run
+    return None
+
+
+def _run_channel(run: TargetCustomerDiscoveryRun) -> str:
+    try:
+        filters = json.loads(run.filters_json or "{}")
+    except json.JSONDecodeError:
+        return ""
+    if not isinstance(filters, dict):
+        return ""
+    return str(filters.get("channel_key", "") or "")
 
 
 def _confirmed_product_profile(session: Session, *, tenant_id: str) -> TenantProductProfile | None:
