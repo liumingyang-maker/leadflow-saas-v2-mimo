@@ -205,9 +205,16 @@ def build_basic_search_strategy_prompt(
 
 
 def build_search_intent_query_matrix_prompt(
-    *, locale: str, product_profile_json: str, filters: dict[str, object], count: int
+    *,
+    locale: str,
+    product_profile_json: str,
+    filters: dict[str, object],
+    count: int,
+    product_family: str = "unknown",
+    forbidden_cross_industry_terms: list[str] | None = None,
 ) -> OutreachDraftPrompt:
     keys = (
+        "product_context_check",
         "intent_summary",
         "product_keywords",
         "product_synonyms",
@@ -227,31 +234,45 @@ def build_search_intent_query_matrix_prompt(
     )
     system = (
         "feature: search_intent_query_matrix\n"
-        "Create a manual B2B buyer search intent profile and query matrix from confirmed "
-        "tenant product memory only. Return strict JSON only. Do not fetch URLs, crawl "
-        "websites, scrape social media, suggest private email or phone enrichment, create "
-        "email campaigns, or claim verified buyers or purchase intent. Search queries must "
-        "be buyer-oriented, easy to copy into Google, Brave, or Bing, and include negative "
+        "Create a manual B2B buyer search intent profile and query matrix from the CURRENT "
+        "confirmed tenant product memory only. Return strict JSON only. Product lock: every "
+        "keyword, use case, buyer type, query, and example must be strictly about the current "
+        "product profile. Do not copy or introduce unrelated category examples. Do not fetch "
+        "URLs, crawl websites, scrape social media, suggest private email or phone enrichment, "
+        "create email campaigns, or claim verified buyers or purchase intent. Search queries "
+        "must be buyer-oriented, easy to copy into Google, Brave, or Bing, and include negative "
         "terms that reduce suppliers, factories, marketplaces, directories, articles, and "
-        "competitors. Packaging and LED products should include industry use-case expansion. "
-        "Hardware or OEM should be treated as a low-confidence strategy. Explanations may "
-        "be Chinese, but search queries should be English or local buyer phrases. JSON keys "
-        f"must be exactly: {', '.join(keys)}."
+        "competitors. If the current product is packaging, do not include LED or lighting "
+        "terms unless the product profile explicitly contains them. If the current product is "
+        "LED or lighting, do not include packaging, bag, mailer, kraft, or cosmetic packaging "
+        "terms unless the product profile explicitly contains them. Hardware or OEM should be "
+        "treated as a low-confidence strategy. Explanations may be Chinese, but search queries "
+        "should be English or local buyer phrases. JSON keys must be exactly: "
+        f"{', '.join(keys)}."
     )
     if locale == "zh-CN":
         system += " UI language is Simplified Chinese, but JSON keys stay English."
     user = (
         f"Requested query count: {max(1, min(count, 30))}\n"
         f"Filters JSON: {_clean_jsonish(_json_dumps(filters))}\n\n"
+        f"Detected current product family: {_clean(product_family)}\n"
+        "Forbidden cross-industry terms unless explicitly present in the product profile:\n"
+        f"{_clean_jsonish(_json_dumps({'terms': forbidden_cross_industry_terms or []}))}\n\n"
         "Confirmed tenant product memory JSON:\n"
         f"{_clean_jsonish(product_profile_json)}\n\n"
         "Return fields:\n"
+        "- product_context_check: object with detected_product_family, core_products_used, "
+        "excluded_unrelated_terms, confidence.\n"
         "- intent_summary: short Chinese summary of what to search for.\n"
         "- multilingual_terms: up to five objects with country, language, buyer_terms, "
         "query_terms, negative_terms.\n"
         "- query_matrix: up to 30 objects with group, query, target_country, buyer_type, "
-        "why_useful, risk, copy_label.\n"
-        "- query_self_check: objects with query, risk, improved_query.\n"
+        "why_useful, risk, copy_label, product_terms_used, buyer_terms_used, "
+        "country_terms_used, negative_terms_used, relevance_to_current_product, "
+        "cross_industry_risk. If cross_industry_risk is not none, do not output that row.\n"
+        "- query_self_check: objects with query, risk, improved_query. Risk must check "
+        "too broad, supplier-biased, marketplace-heavy, directory-heavy, wrong product "
+        "category, missing buyer term, missing country or market, or good.\n"
         "Do not include private contact data or instructions to crawl, scrape, or send email."
     )
     return OutreachDraftPrompt(system_prompt=system, user_prompt=user)

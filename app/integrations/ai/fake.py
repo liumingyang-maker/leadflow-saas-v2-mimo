@@ -177,131 +177,7 @@ class FakeAIProvider:
 
         if "search_intent_query_matrix" in request.system_prompt:
             text = json.dumps(
-                {
-                    "intent_summary": (
-                        "AI 判断该产品适合先找进口商、经销商、批发商、私标品牌和采购公司，"
-                        "搜索时应排除供应商、工厂、平台和目录噪音。"
-                    ),
-                    "product_keywords": [
-                        "eco-friendly packaging",
-                        "custom packaging bags",
-                        "LED decorative lighting",
-                    ],
-                    "product_synonyms": [
-                        "sustainable packaging",
-                        "private label packaging",
-                        "commercial LED lighting",
-                    ],
-                    "use_cases": [
-                        "cosmetic packaging brands",
-                        "coffee roasters",
-                        "lighting distributors",
-                        "hotel lighting projects",
-                    ],
-                    "target_industries": [
-                        "Retail",
-                        "Food packaging",
-                        "Cosmetics",
-                        "Electrical distribution",
-                    ],
-                    "buyer_roles": [
-                        "procurement manager",
-                        "category buyer",
-                        "sourcing manager",
-                    ],
-                    "buyer_company_types": [
-                        "Importer",
-                        "Distributor",
-                        "Wholesaler",
-                        "Retailer",
-                        "Private label brand",
-                        "Procurement company",
-                    ],
-                    "target_countries": ["United States", "Germany", "United Arab Emirates"],
-                    "negative_keywords": [
-                        "manufacturer",
-                        "supplier",
-                        "factory",
-                        "marketplace",
-                        "directory",
-                        "Alibaba",
-                        "Amazon",
-                        "eBay",
-                    ],
-                    "supplier_exclusion_terms": ["manufacturer", "factory", "supplier"],
-                    "marketplace_exclusion_terms": ["Alibaba", "Amazon", "eBay"],
-                    "directory_noise_terms": ["directory", "blog", "article", "news"],
-                    "multilingual_terms": [
-                        {
-                            "country": "Germany",
-                            "language": "German",
-                            "buyer_terms": ["Importeur", "Großhändler", "Händler"],
-                            "query_terms": ["custom packaging Importeur Deutschland"],
-                            "negative_terms": ["Hersteller", "Fabrik"],
-                        },
-                        {
-                            "country": "Spain",
-                            "language": "Spanish",
-                            "buyer_terms": ["importador", "distribuidor", "mayorista"],
-                            "query_terms": ["LED lighting distribuidor España"],
-                            "negative_terms": ["fabricante", "proveedor"],
-                        },
-                    ],
-                    "query_matrix": [
-                        {
-                            "group": "buyer_type",
-                            "query": (
-                                "eco-friendly packaging importer -manufacturer -factory "
-                                "-supplier -Alibaba -Amazon"
-                            ),
-                            "target_country": "United States",
-                            "buyer_type": "Importer",
-                            "why_useful": "偏向寻找进口型买家，而不是包装生产同行。",
-                            "risk": "仍可能出现目录页，需要人工确认。",
-                            "copy_label": "US packaging importer",
-                        },
-                        {
-                            "group": "use_case",
-                            "query": (
-                                "custom cosmetic packaging brand buyer -manufacturer "
-                                "-factory -supplier"
-                            ),
-                            "target_country": "United States",
-                            "buyer_type": "Private label brand",
-                            "why_useful": "化妆品品牌可能采购定制包装。",
-                            "risk": "品牌官网不一定显示采购入口。",
-                            "copy_label": "Cosmetic packaging brand",
-                        },
-                        {
-                            "group": "multilingual",
-                            "query": "LED lighting distribuidor España -fabricante -proveedor",
-                            "target_country": "Spain",
-                            "buyer_type": "Distributor",
-                            "why_useful": "用当地语言寻找 LED 经销商。",
-                            "risk": "需要人工判断是否为买家。",
-                            "copy_label": "Spain LED distributor",
-                        },
-                    ],
-                    "query_self_check": [
-                        {
-                            "query": "custom packaging",
-                            "risk": "too broad",
-                            "improved_query": (
-                                "custom packaging importer -manufacturer -factory -supplier"
-                            ),
-                        },
-                        {
-                            "query": "LED lighting supplier",
-                            "risk": "supplier-biased",
-                            "improved_query": "LED lighting distributor -manufacturer -factory",
-                        },
-                    ],
-                    "next_search_steps": [
-                        "先复制 3-5 条最像买家的搜索词。",
-                        "手动去 Google、Brave 或 Bing 搜索。",
-                        "把搜索结果摘要粘贴回来，让 AI 筛选候选客户。",
-                    ],
-                },
+                _fake_search_intent_query_matrix(request.user_prompt),
                 ensure_ascii=False,
             )
             return AIGenerationResult(
@@ -493,3 +369,269 @@ class FakeAIProvider:
 
 def _rough_tokens(value: str) -> int:
     return max(1, len(value) // 4)
+
+
+def _fake_search_intent_query_matrix(user_prompt: str) -> dict[str, object]:
+    lower = user_prompt.lower()
+    if "detected current product family: led_lighting" in lower:
+        return _fake_led_search_intent_query_matrix()
+    if "detected current product family: packaging" in lower:
+        return _fake_packaging_search_intent_query_matrix()
+    packaging_hits = sum(
+        term in lower
+        for term in (
+            "packaging",
+            "bag",
+            "bags",
+            "mailer",
+            "kraft",
+            "compostable",
+            "cosmetic packaging",
+        )
+    )
+    lighting_hits = sum(
+        term in lower
+        for term in (
+            "led",
+            "lighting",
+            "lamp",
+            "fixture",
+            "electrical wholesaler",
+            "decorative lighting",
+        )
+    )
+    if lighting_hits > packaging_hits:
+        return _fake_led_search_intent_query_matrix()
+    return _fake_packaging_search_intent_query_matrix()
+
+
+def _base_search_intent_safety() -> dict[str, object]:
+    return {
+        "negative_keywords": [
+            "manufacturer",
+            "supplier",
+            "factory",
+            "marketplace",
+            "directory",
+            "Alibaba",
+            "Amazon",
+            "eBay",
+        ],
+        "supplier_exclusion_terms": ["manufacturer", "factory", "supplier"],
+        "marketplace_exclusion_terms": ["Alibaba", "Amazon", "eBay"],
+        "directory_noise_terms": ["directory", "blog", "article", "news"],
+        "next_search_steps": [
+            "先复制 3-5 条最像买家的搜索词。",
+            "手动去 Google、Brave 或 Bing 搜索。",
+            "把搜索结果摘要粘贴回来，让 AI 筛选候选客户。",
+        ],
+    }
+
+
+def _fake_packaging_search_intent_query_matrix() -> dict[str, object]:
+    data = {
+        "product_context_check": {
+            "detected_product_family": "packaging",
+            "core_products_used": [
+                "eco-friendly packaging",
+                "compostable mailer bags",
+                "custom packaging bags",
+            ],
+            "excluded_unrelated_terms": ["LED", "lighting", "electrical wholesaler"],
+            "confidence": 92,
+        },
+        "intent_summary": (
+            "AI 判断当前产品是包装类产品，优先寻找包装进口商、经销商、私标品牌和零售品牌。"
+        ),
+        "product_keywords": [
+            "eco-friendly packaging",
+            "compostable mailer bags",
+            "custom packaging bags",
+        ],
+        "product_synonyms": [
+            "sustainable packaging",
+            "private label packaging",
+            "custom printed bags",
+        ],
+        "use_cases": [
+            "cosmetic packaging brands",
+            "coffee roasters",
+            "pet food brands",
+            "sustainable DTC brands",
+        ],
+        "target_industries": ["Food packaging", "Cosmetics", "Retail", "DTC brands"],
+        "buyer_roles": ["procurement manager", "category buyer", "sourcing manager"],
+        "buyer_company_types": ["Importer", "Distributor", "Private label brand", "Retailer"],
+        "target_countries": ["United States", "Germany", "United Kingdom"],
+        "multilingual_terms": [
+            {
+                "country": "Germany",
+                "language": "German",
+                "buyer_terms": ["Importeur", "Großhändler", "Händler"],
+                "query_terms": ["kompostierbare Versandtaschen Importeur Deutschland"],
+                "negative_terms": ["Hersteller", "Fabrik"],
+            }
+        ],
+        "query_matrix": [
+            {
+                "group": "buyer_type",
+                "query": (
+                    "eco-friendly packaging importer United States -manufacturer -supplier -factory"
+                ),
+                "target_country": "United States",
+                "buyer_type": "Importer",
+                "why_useful": "偏向寻找进口型包装买家，而不是包装生产同行。",
+                "risk": "仍可能出现目录页，需要人工确认。",
+                "copy_label": "US packaging importer",
+                "product_terms_used": ["eco-friendly packaging"],
+                "buyer_terms_used": ["importer"],
+                "country_terms_used": ["United States"],
+                "negative_terms_used": ["manufacturer", "supplier", "factory"],
+                "relevance_to_current_product": "high",
+                "cross_industry_risk": "none",
+            },
+            {
+                "group": "country",
+                "query": "compostable mailer bags distributor Germany -manufacturer -factory",
+                "target_country": "Germany",
+                "buyer_type": "Distributor",
+                "why_useful": "德国经销商可能采购环保邮寄袋。",
+                "risk": "需要排除本地工厂。",
+                "copy_label": "Germany compostable mailer distributor",
+                "product_terms_used": ["compostable mailer bags"],
+                "buyer_terms_used": ["distributor"],
+                "country_terms_used": ["Germany"],
+                "negative_terms_used": ["manufacturer", "factory"],
+                "relevance_to_current_product": "high",
+                "cross_industry_risk": "none",
+            },
+            {
+                "group": "private_label",
+                "query": "custom packaging bags private label brand UK -supplier -marketplace",
+                "target_country": "United Kingdom",
+                "buyer_type": "Private label brand",
+                "why_useful": "私标品牌可能需要定制包装袋。",
+                "risk": "品牌官网不一定显示采购入口。",
+                "copy_label": "UK private label packaging",
+                "product_terms_used": ["custom packaging bags"],
+                "buyer_terms_used": ["private label brand"],
+                "country_terms_used": ["UK"],
+                "negative_terms_used": ["supplier", "marketplace"],
+                "relevance_to_current_product": "high",
+                "cross_industry_risk": "none",
+            },
+        ],
+        "query_self_check": [
+            {
+                "query": "custom packaging",
+                "risk": "too broad",
+                "improved_query": "custom packaging bags importer -manufacturer -factory -supplier",
+            }
+        ],
+    }
+    return {**data, **_base_search_intent_safety()}
+
+
+def _fake_led_search_intent_query_matrix() -> dict[str, object]:
+    data = {
+        "product_context_check": {
+            "detected_product_family": "led_lighting",
+            "core_products_used": [
+                "LED lighting",
+                "decorative lighting",
+                "commercial LED fixtures",
+            ],
+            "excluded_unrelated_terms": ["packaging bags", "mailer bags", "kraft paper bags"],
+            "confidence": 93,
+        },
+        "intent_summary": (
+            "AI 判断当前产品是 LED 照明类产品，优先寻找照明经销商、电气批发商和工程供应商。"
+        ),
+        "product_keywords": [
+            "LED lighting",
+            "decorative lighting",
+            "commercial LED fixtures",
+        ],
+        "product_synonyms": ["LED fixtures", "commercial lighting", "decorative lamps"],
+        "use_cases": [
+            "lighting distributors",
+            "hotel lighting projects",
+            "event production companies",
+            "electrical wholesalers",
+        ],
+        "target_industries": ["Electrical distribution", "Hospitality projects", "Lighting retail"],
+        "buyer_roles": ["procurement manager", "project buyer", "lighting category manager"],
+        "buyer_company_types": [
+            "Lighting distributor",
+            "Electrical wholesaler",
+            "Contractor",
+            "Project supplier",
+        ],
+        "target_countries": ["United States", "United Arab Emirates", "Australia"],
+        "multilingual_terms": [
+            {
+                "country": "United Arab Emirates",
+                "language": "English",
+                "buyer_terms": ["lighting distributor", "electrical wholesaler"],
+                "query_terms": ["decorative lighting wholesaler UAE"],
+                "negative_terms": ["manufacturer", "factory"],
+            }
+        ],
+        "query_matrix": [
+            {
+                "group": "buyer_type",
+                "query": "LED lighting distributor United States -manufacturer -factory -supplier",
+                "target_country": "United States",
+                "buyer_type": "Lighting distributor",
+                "why_useful": "偏向寻找销售 LED 照明产品的渠道商。",
+                "risk": "部分结果可能是制造商，需要人工确认。",
+                "copy_label": "US LED lighting distributor",
+                "product_terms_used": ["LED lighting"],
+                "buyer_terms_used": ["distributor"],
+                "country_terms_used": ["United States"],
+                "negative_terms_used": ["manufacturer", "factory", "supplier"],
+                "relevance_to_current_product": "high",
+                "cross_industry_risk": "none",
+            },
+            {
+                "group": "country",
+                "query": "decorative lighting wholesaler UAE -manufacturer -marketplace",
+                "target_country": "United Arab Emirates",
+                "buyer_type": "Wholesaler",
+                "why_useful": "阿联酋装饰灯批发商可能适合人工开发。",
+                "risk": "批发商和供应商词可能混杂。",
+                "copy_label": "UAE decorative lighting wholesaler",
+                "product_terms_used": ["decorative lighting"],
+                "buyer_terms_used": ["wholesaler"],
+                "country_terms_used": ["UAE"],
+                "negative_terms_used": ["manufacturer", "marketplace"],
+                "relevance_to_current_product": "high",
+                "cross_industry_risk": "none",
+            },
+            {
+                "group": "procurement",
+                "query": (
+                    "commercial LED fixtures electrical wholesaler Australia -factory -supplier"
+                ),
+                "target_country": "Australia",
+                "buyer_type": "Electrical wholesaler",
+                "why_useful": "电气批发商可能采购商业 LED 灯具。",
+                "risk": "需要人工判断是否面向项目或渠道采购。",
+                "copy_label": "Australia electrical wholesaler",
+                "product_terms_used": ["commercial LED fixtures"],
+                "buyer_terms_used": ["electrical wholesaler"],
+                "country_terms_used": ["Australia"],
+                "negative_terms_used": ["factory", "supplier"],
+                "relevance_to_current_product": "high",
+                "cross_industry_risk": "none",
+            },
+        ],
+        "query_self_check": [
+            {
+                "query": "LED lighting supplier",
+                "risk": "supplier-biased",
+                "improved_query": "LED lighting distributor -manufacturer -factory -supplier",
+            }
+        ],
+    }
+    return {**data, **_base_search_intent_safety()}

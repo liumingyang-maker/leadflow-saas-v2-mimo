@@ -1063,6 +1063,8 @@ def generate_search_intent_query_matrix(
             product_profile_json=product_profile_json,
             filters=filters,
             count=count,
+            product_family=_detect_search_product_family(product_profile_json),
+            forbidden_cross_industry_terms=_forbidden_cross_industry_terms(product_profile_json),
         )
         provider = _provider_from_settings(settings)
 
@@ -1080,7 +1082,10 @@ def generate_search_intent_query_matrix(
     with _session(app) as session:
         if result.success:
             try:
-                strategy = _parse_search_intent_query_matrix_json(result.text)
+                strategy = _parse_search_intent_query_matrix_json(
+                    result.text,
+                    product_profile_json=product_profile_json,
+                )
             except AIServiceError:
                 record_ai_usage(
                     session,
@@ -1794,23 +1799,57 @@ def _parse_basic_search_strategy_json(text: str) -> dict[str, object]:
     return normalized
 
 
-def _parse_search_intent_query_matrix_json(text: str) -> dict[str, object]:
+def _parse_search_intent_query_matrix_json(
+    text: str,
+    *,
+    product_profile_json: str,
+) -> dict[str, object]:
     data = _load_json_object(text)
+    product_family = _detect_search_product_family(product_profile_json)
     normalized: dict[str, object] = {
         "intent_summary": _sanitize_search_intent_text(
             data.get("intent_summary", ""),
             max_length=1000,
         ),
+        "product_context_check": _normalize_product_context_check(
+            data.get("product_context_check"),
+            fallback_family=product_family,
+            product_profile_json=product_profile_json,
+        ),
     }
     for key in SEARCH_INTENT_QUERY_MATRIX_ARRAY_FIELDS:
         normalized[key] = _normalize_public_list(data.get(key), limit=20)
     normalized["multilingual_terms"] = _normalize_multilingual_terms(data.get("multilingual_terms"))
-    normalized["query_matrix"] = _normalize_query_matrix(data.get("query_matrix"))
-    normalized["query_self_check"] = _normalize_query_self_check(data.get("query_self_check"))
+    normalized = _filter_search_intent_for_current_product(
+        normalized,
+        product_family=product_family,
+        product_profile_json=product_profile_json,
+    )
+    normalized["query_matrix"] = _filter_cross_industry_query_rows(
+        _normalize_query_matrix(data.get("query_matrix")),
+        product_family=product_family,
+        product_profile_json=product_profile_json,
+    )
+    normalized["query_self_check"] = _filter_cross_industry_query_self_check(
+        _normalize_query_self_check(data.get("query_self_check")),
+        product_family=product_family,
+        product_profile_json=product_profile_json,
+    )
     if not normalized["intent_summary"]:
         normalized["intent_summary"] = "AI 搜索策略仅供参考，请人工确认搜索结果。"
     if not normalized["query_matrix"]:
-        raise AIServiceError("Search intent query matrix is required")
+        normalized["query_matrix"] = _fallback_query_matrix_for_product(product_profile_json)
+        normalized["query_self_check"] = normalized["query_self_check"] or [
+            {
+                "query": "",
+                "risk": "wrong product category",
+                "improved_query": "已移除跨行业搜索词，并生成保守 fallback query。",
+            }
+        ]
+        normalized["product_context_check"]["excluded_unrelated_terms"] = sorted(
+            set(normalized["product_context_check"].get("excluded_unrelated_terms", []))
+            | set(_forbidden_cross_industry_terms(product_profile_json))
+        )
     return normalized
 
 
@@ -2001,6 +2040,33 @@ def _normalize_multilingual_terms(value: object) -> list[dict[str, object]]:
     return rows
 
 
+def _normalize_product_context_check(
+    value: object,
+    *,
+    fallback_family: str,
+    product_profile_json: str,
+) -> dict[str, object]:
+    data = value if isinstance(value, dict) else {}
+    detected = _sanitize_search_intent_text(
+        data.get("detected_product_family", fallback_family),
+        max_length=80,
+    )
+    core_products = _normalize_public_list(data.get("core_products_used"), limit=10)
+    if not core_products:
+        core_products = _profile_seed_terms(product_profile_json)[:5]
+    excluded = _normalize_public_list(data.get("excluded_unrelated_terms"), limit=20)
+    try:
+        confidence = int(data.get("confidence", 0) or 0)
+    except (TypeError, ValueError):
+        confidence = 0
+    return {
+        "detected_product_family": detected or fallback_family,
+        "core_products_used": core_products,
+        "excluded_unrelated_terms": excluded,
+        "confidence": max(0, min(confidence, 100)),
+    }
+
+
 def _normalize_query_matrix(value: object) -> list[dict[str, str]]:
     if not isinstance(value, list):
         return []
@@ -2032,6 +2098,27 @@ def _normalize_query_matrix(value: object) -> list[dict[str, str]]:
                     item.get("copy_label", ""),
                     max_length=120,
                 ),
+                "product_terms_used": ", ".join(
+                    _normalize_public_list(item.get("product_terms_used"), limit=6)
+                ),
+                "buyer_terms_used": ", ".join(
+                    _normalize_public_list(item.get("buyer_terms_used"), limit=6)
+                ),
+                "country_terms_used": ", ".join(
+                    _normalize_public_list(item.get("country_terms_used"), limit=6)
+                ),
+                "negative_terms_used": ", ".join(
+                    _normalize_public_list(item.get("negative_terms_used"), limit=8)
+                ),
+                "relevance_to_current_product": _sanitize_search_intent_text(
+                    item.get("relevance_to_current_product", ""),
+                    max_length=160,
+                ),
+                "cross_industry_risk": _sanitize_search_intent_text(
+                    item.get("cross_industry_risk", "none"),
+                    max_length=80,
+                )
+                or "none",
             }
         )
     return rows
@@ -2059,6 +2146,317 @@ def _normalize_query_self_check(value: object) -> list[dict[str, str]]:
             }
         )
     return rows
+
+
+def _filter_search_intent_for_current_product(
+    normalized: dict[str, object],
+    *,
+    product_family: str,
+    product_profile_json: str,
+) -> dict[str, object]:
+    if product_family not in {"packaging", "led_lighting"}:
+        return normalized
+    for key in (
+        "product_keywords",
+        "product_synonyms",
+        "use_cases",
+        "target_industries",
+        "buyer_roles",
+        "buyer_company_types",
+        "target_countries",
+        "negative_keywords",
+        "supplier_exclusion_terms",
+        "marketplace_exclusion_terms",
+        "directory_noise_terms",
+        "next_search_steps",
+    ):
+        value = normalized.get(key)
+        if isinstance(value, list):
+            normalized[key] = [
+                item
+                for item in value
+                if not _has_forbidden_cross_industry_term(
+                    str(item),
+                    product_family=product_family,
+                    product_profile_json=product_profile_json,
+                )
+            ]
+    multilingual_terms = normalized.get("multilingual_terms")
+    if isinstance(multilingual_terms, list):
+        filtered_terms: list[dict[str, object]] = []
+        for row in multilingual_terms:
+            text = json.dumps(row, ensure_ascii=False)
+            if not _has_forbidden_cross_industry_term(
+                text,
+                product_family=product_family,
+                product_profile_json=product_profile_json,
+            ):
+                filtered_terms.append(row)
+        normalized["multilingual_terms"] = filtered_terms
+    return normalized
+
+
+def _filter_cross_industry_query_rows(
+    rows: list[dict[str, str]],
+    *,
+    product_family: str,
+    product_profile_json: str,
+) -> list[dict[str, str]]:
+    if product_family not in {"packaging", "led_lighting"}:
+        return rows
+    filtered: list[dict[str, str]] = []
+    for row in rows:
+        row_text = json.dumps(row, ensure_ascii=False)
+        risk = row.get("cross_industry_risk", "none").strip().lower()
+        if risk and risk != "none":
+            continue
+        if _has_forbidden_cross_industry_term(
+            row_text,
+            product_family=product_family,
+            product_profile_json=product_profile_json,
+        ):
+            continue
+        filtered.append(row)
+    return filtered[:30]
+
+
+def _filter_cross_industry_query_self_check(
+    rows: list[dict[str, str]],
+    *,
+    product_family: str,
+    product_profile_json: str,
+) -> list[dict[str, str]]:
+    if product_family not in {"packaging", "led_lighting"}:
+        return rows
+    return [
+        row
+        for row in rows
+        if not _has_forbidden_cross_industry_term(
+            json.dumps(row, ensure_ascii=False),
+            product_family=product_family,
+            product_profile_json=product_profile_json,
+        )
+    ][:30]
+
+
+def _fallback_query_matrix_for_product(product_profile_json: str) -> list[dict[str, str]]:
+    family = _detect_search_product_family(product_profile_json)
+    seed_terms = _profile_seed_terms(product_profile_json)
+    product_term = seed_terms[0] if seed_terms else "export product"
+    if family == "led_lighting":
+        product_term = _first_matching_seed(
+            seed_terms,
+            ("led", "lighting", "lamp", "fixture"),
+            fallback=product_term,
+        )
+        rows = [
+            (
+                "buyer_type",
+                f"{product_term} distributor -manufacturer -factory -supplier",
+                "Distributor",
+            ),
+            (
+                "procurement",
+                f"{product_term} electrical wholesaler -manufacturer -factory -supplier",
+                "Electrical wholesaler",
+            ),
+            (
+                "use_case",
+                f"{product_term} project supplier -manufacturer -marketplace",
+                "Project supplier",
+            ),
+        ]
+    elif family == "packaging":
+        product_term = _first_matching_seed(
+            seed_terms,
+            ("packaging", "bag", "mailer", "kraft", "compostable"),
+            fallback=product_term,
+        )
+        rows = [
+            (
+                "buyer_type",
+                f"{product_term} importer -manufacturer -factory -supplier",
+                "Importer",
+            ),
+            (
+                "country",
+                f"{product_term} distributor Germany -manufacturer -factory",
+                "Distributor",
+            ),
+            (
+                "private_label",
+                f"{product_term} private label brand -supplier -marketplace",
+                "Private label brand",
+            ),
+        ]
+    else:
+        rows = [
+            (
+                "buyer_type",
+                f"{product_term} importer -manufacturer -factory -supplier",
+                "Importer",
+            ),
+            (
+                "distributor",
+                f"{product_term} distributor -manufacturer -factory -supplier",
+                "Distributor",
+            ),
+        ]
+    return [
+        {
+            "group": group,
+            "query": query[:220],
+            "target_country": "",
+            "buyer_type": buyer_type,
+            "why_useful": "AI 输出被跨行业过滤后，系统用当前产品关键词生成保守搜索词。",
+            "risk": "fallback query，需要人工确认。",
+            "copy_label": buyer_type,
+            "product_terms_used": product_term,
+            "buyer_terms_used": buyer_type,
+            "country_terms_used": "",
+            "negative_terms_used": "manufacturer, factory, supplier",
+            "relevance_to_current_product": "fallback_high",
+            "cross_industry_risk": "none",
+        }
+        for group, query, buyer_type in rows
+    ]
+
+
+def _detect_search_product_family(product_profile_json: str) -> str:
+    text = _profile_text(product_profile_json)
+    packaging_score = sum(1 for term in _PACKAGING_TERMS if term in text)
+    lighting_score = sum(1 for term in _LED_LIGHTING_TERMS if term in text)
+    if packaging_score and lighting_score:
+        if packaging_score > lighting_score:
+            return "packaging"
+        if lighting_score > packaging_score:
+            return "led_lighting"
+        return "mixed"
+    if packaging_score:
+        return "packaging"
+    if lighting_score:
+        return "led_lighting"
+    return "unknown"
+
+
+def _forbidden_cross_industry_terms(product_profile_json: str) -> list[str]:
+    family = _detect_search_product_family(product_profile_json)
+    if family == "packaging":
+        return [
+            "LED",
+            "lighting",
+            "lamp",
+            "fixture",
+            "electrical wholesaler",
+            "contractor lighting",
+            "commercial LED",
+        ]
+    if family == "led_lighting":
+        return [
+            "packaging",
+            "packaging bags",
+            "compostable bags",
+            "mailer bags",
+            "kraft paper bags",
+            "cosmetic packaging",
+            "food packaging",
+        ]
+    return []
+
+
+def _has_forbidden_cross_industry_term(
+    value: str,
+    *,
+    product_family: str,
+    product_profile_json: str,
+) -> bool:
+    if product_family not in {"packaging", "led_lighting"}:
+        return False
+    profile_text = _profile_text(product_profile_json)
+    text = value.lower()
+    for term in _forbidden_cross_industry_terms(product_profile_json):
+        lowered = term.lower()
+        if lowered in text and lowered not in profile_text:
+            return True
+    return False
+
+
+def _profile_seed_terms(product_profile_json: str) -> list[str]:
+    try:
+        data = json.loads(product_profile_json or "{}")
+    except json.JSONDecodeError:
+        data = {}
+    if not isinstance(data, dict):
+        return []
+    seeds: list[str] = []
+    for key in (
+        "product_keywords_en",
+        "product_keywords_cn",
+        "product_categories",
+        "search_keywords",
+        "target_industries",
+    ):
+        value = data.get(key)
+        if isinstance(value, list):
+            seeds.extend(str(item).strip() for item in value if str(item).strip())
+        elif isinstance(value, str) and value.strip():
+            seeds.append(value.strip())
+    deduped: list[str] = []
+    seen: set[str] = set()
+    for seed in seeds:
+        normalized = seed.lower()
+        if normalized in seen:
+            continue
+        seen.add(normalized)
+        deduped.append(_sanitize_search_intent_text(seed, max_length=120))
+    return [seed for seed in deduped if seed][:10]
+
+
+def _first_matching_seed(
+    seeds: list[str],
+    terms: tuple[str, ...],
+    *,
+    fallback: str,
+) -> str:
+    for seed in seeds:
+        lower = seed.lower()
+        if any(term in lower for term in terms):
+            return seed
+    return fallback
+
+
+def _profile_text(product_profile_json: str) -> str:
+    try:
+        data = json.loads(product_profile_json or "{}")
+    except json.JSONDecodeError:
+        return product_profile_json.lower()
+    return json.dumps(data, ensure_ascii=False).lower()
+
+
+_PACKAGING_TERMS = (
+    "packaging",
+    "package",
+    "bag",
+    "bags",
+    "mailer",
+    "pouch",
+    "kraft",
+    "compostable",
+    "biodegradable",
+    "cosmetic packaging",
+    "food packaging",
+)
+_LED_LIGHTING_TERMS = (
+    "led",
+    "lighting",
+    "lamp",
+    "fixture",
+    "fixtures",
+    "luminaire",
+    "electrical wholesaler",
+    "decorative lighting",
+    "commercial led",
+)
 
 
 def _sanitize_search_intent_text(value: object, *, max_length: int) -> str:

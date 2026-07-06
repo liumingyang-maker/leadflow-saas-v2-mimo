@@ -76,12 +76,16 @@
       <article class="lf-panel">
         <h3>{{ t("Product memory") }}</h3>
         <dl class="lf-dl">
+          <dt>{{ t("Current product family") }}</dt>
+          <dd>{{ target_context.product_family }}</dd>
           <dt>{{ t("English keywords") }}</dt>
           <dd>{{ ", ".join(target_context.product_profile_summary.get("product_keywords_en", [])) }}</dd>
           <dt>{{ t("Target countries") }}</dt>
           <dd>{{ ", ".join(target_context.product_profile_summary.get("target_countries", [])) }}</dd>
           <dt>{{ t("Buyer types") }}</dt>
           <dd>{{ ", ".join(target_context.product_profile_summary.get("buyer_types", [])) }}</dd>
+          <dt>{{ t("Product profile fingerprint") }}</dt>
+          <dd><code>{{ target_context.product_profile_hash[:12] }}</code></dd>
         </dl>
       </article>
 
@@ -123,6 +127,12 @@
       </div>
     </form>
 
+    {% if target_context.stale_search_intent_available and not search_intent_plan %}
+      <div class="lf-alert lf-alert-info">
+        {{ t("Current product profile has changed. Please regenerate the AI search strategy.") }}
+      </div>
+    {% endif %}
+
     {% if search_intent_plan %}
       <section class="lf-panel lf-form-stack">
         <div>
@@ -130,6 +140,19 @@
           <h3>{{ t("Search query matrix") }}</h3>
           <p>{{ search_intent_plan.get("intent_summary", "") }}</p>
         </div>
+
+        {% set search_metadata = search_intent_plan.get("metadata", {}) %}
+        {% set product_context_check = search_intent_plan.get("product_context_check", {}) %}
+        <dl class="lf-dl">
+          <dt>{{ t("Current product family") }}</dt>
+          <dd>{{ target_context.product_family }}</dd>
+          <dt>{{ t("AI detected product family") }}</dt>
+          <dd>{{ product_context_check.get("detected_product_family", search_metadata.get("detected_product_family", "")) }}</dd>
+          <dt>{{ t("Strategy updated at") }}</dt>
+          <dd>{{ search_metadata.get("generated_at", "") }}</dd>
+          <dt>{{ t("Product profile fingerprint") }}</dt>
+          <dd><code>{{ search_metadata.get("product_profile_hash", "")[:12] }}</code></dd>
+        </dl>
 
         <div class="lf-grid">
           <article class="lf-panel">

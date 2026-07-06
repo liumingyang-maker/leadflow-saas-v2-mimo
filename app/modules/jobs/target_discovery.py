@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import hashlib
 import json
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from urllib.parse import urlsplit
 
 from flask import Flask
@@ -42,6 +44,7 @@ MAX_MATCH_COUNT = 25
 MAX_PASTED_RESULTS_LENGTH = 10_000
 ADVANCED_WEB_SEARCH_FEATURE = "advanced_web_search"
 SEARCH_INTENT_QUERY_MATRIX_CHANNEL = "search_intent_query_matrix"
+SEARCH_INTENT_QUERY_MATRIX_PROMPT_VERSION = "alpha13a_v2_product_specific"
 ADVANCED_SEARCH_NEGATIVE_KEYWORDS = (
     "manufacturer",
     "factory",
@@ -115,8 +118,11 @@ COUNTRY_QUERY_FALLBACKS = {
 class TargetDiscoveryContext:
     product_profile: TenantProductProfile | None
     product_profile_summary: dict[str, object]
+    product_profile_hash: str
+    product_family: str
     latest_run: TargetCustomerDiscoveryRun | None
     latest_search_intent_run: TargetCustomerDiscoveryRun | None
+    stale_search_intent_available: bool
     candidates: list[TargetCustomerCandidate]
 
 
@@ -145,9 +151,23 @@ def collection_target_context(app: Flask, *, tenant_id: str) -> TargetDiscoveryC
                 .limit(20)
             )
         )
-        latest_search_intent_run = _latest_run_for_channel(
+        product_profile_hash = (
+            build_product_profile_fingerprint(product_profile)
+            if product_profile is not None
+            else ""
+        )
+        latest_search_intent_run = _latest_search_intent_run_for_profile(
             recent_runs,
-            channel_key=SEARCH_INTENT_QUERY_MATRIX_CHANNEL,
+            product_profile_hash=product_profile_hash,
+        )
+        stale_search_intent_available = (
+            product_profile is not None
+            and latest_search_intent_run is None
+            and _latest_run_for_channel(
+                recent_runs,
+                channel_key=SEARCH_INTENT_QUERY_MATRIX_CHANNEL,
+            )
+            is not None
         )
         latest_run = _latest_non_search_intent_run(recent_runs)
         candidates: list[TargetCustomerCandidate] = []
@@ -170,8 +190,11 @@ def collection_target_context(app: Flask, *, tenant_id: str) -> TargetDiscoveryC
         return TargetDiscoveryContext(
             product_profile=product_profile,
             product_profile_summary=summary,
+            product_profile_hash=product_profile_hash,
+            product_family=_detect_product_family_from_profile(product_profile),
             latest_run=latest_run,
             latest_search_intent_run=latest_search_intent_run,
+            stale_search_intent_available=stale_search_intent_available,
             candidates=candidates,
         )
 
@@ -348,6 +371,8 @@ def generate_search_intent_query_matrix_for_collection(
             return TargetDiscoveryResult(success=False, error_code="missing_product_profile")
         product_profile_id = profile.id
         product_profile_json = profile.extracted_profile_json
+        product_profile_hash = build_product_profile_fingerprint(profile)
+        product_family = _detect_product_family_from_profile(profile)
 
     result = generate_search_intent_query_matrix(
         app,
@@ -361,6 +386,19 @@ def generate_search_intent_query_matrix_for_collection(
 
     strategy = dict(result.strategy or {})
     if result.success:
+        product_context_check = strategy.get("product_context_check")
+        detected_family = ""
+        if isinstance(product_context_check, dict):
+            detected_family = str(product_context_check.get("detected_product_family", "") or "")
+        strategy["metadata"] = {
+            "feature": SEARCH_INTENT_QUERY_MATRIX_CHANNEL,
+            "prompt_version": SEARCH_INTENT_QUERY_MATRIX_PROMPT_VERSION,
+            "product_profile_id": product_profile_id,
+            "product_profile_hash": product_profile_hash,
+            "product_family": product_family,
+            "detected_product_family": detected_family or product_family,
+            "generated_at": datetime.now(UTC).isoformat(),
+        }
         strategy["source_channel"] = SEARCH_INTENT_QUERY_MATRIX_CHANNEL
         strategy["test_phase_free"] = True
         strategy["safety_notes"] = [
@@ -767,6 +805,46 @@ def raw_candidate_data(candidate: TargetCustomerCandidate) -> dict[str, object]:
     return data if isinstance(data, dict) else {}
 
 
+def build_product_profile_fingerprint(product_profile: TenantProductProfile) -> str:
+    summary = parse_profile_json(product_profile.extracted_profile_json)
+    payload = {
+        "id": product_profile.id,
+        "version": product_profile.version,
+        "products": summary.get("product_keywords_en", []),
+        "product_keywords_cn": summary.get("product_keywords_cn", []),
+        "product_categories": summary.get("product_categories", []),
+        "target_markets": summary.get("target_countries", []),
+        "advantages": summary.get("selling_points_en", []),
+        "raw_products": (product_profile.raw_products or "")[:1000],
+        "raw_company_intro": (product_profile.raw_company_intro or "")[:1000],
+        "raw_target_markets": (product_profile.raw_target_markets or "")[:500],
+        "updated_at": product_profile.updated_at.isoformat()
+        if product_profile.updated_at is not None
+        else "",
+    }
+    normalized = json.dumps(payload, ensure_ascii=False, sort_keys=True)
+    return hashlib.sha256(normalized.encode("utf-8")).hexdigest()[:32]
+
+
+def _latest_search_intent_run_for_profile(
+    runs: list[TargetCustomerDiscoveryRun],
+    *,
+    product_profile_hash: str,
+) -> TargetCustomerDiscoveryRun | None:
+    if not product_profile_hash:
+        return None
+    for run in runs:
+        if _run_channel(run) != SEARCH_INTENT_QUERY_MATRIX_CHANNEL:
+            continue
+        data = plan_json(run)
+        metadata = data.get("metadata")
+        if not isinstance(metadata, dict):
+            continue
+        if str(metadata.get("product_profile_hash", "") or "") == product_profile_hash:
+            return run
+    return None
+
+
 def _latest_run_for_channel(
     runs: list[TargetCustomerDiscoveryRun], *, channel_key: str
 ) -> TargetCustomerDiscoveryRun | None:
@@ -802,6 +880,54 @@ def _confirmed_product_profile(session: Session, *, tenant_id: str) -> TenantPro
             TenantProductProfile.status == "confirmed",
         )
     )
+
+
+def _detect_product_family_from_profile(product_profile: TenantProductProfile | None) -> str:
+    if product_profile is None:
+        return "unknown"
+    summary = parse_profile_json(product_profile.extracted_profile_json)
+    text = json.dumps(
+        {
+            "summary": summary,
+            "raw_products": product_profile.raw_products,
+            "raw_company_intro": product_profile.raw_company_intro,
+            "raw_target_markets": product_profile.raw_target_markets,
+        },
+        ensure_ascii=False,
+    ).lower()
+    packaging_terms = (
+        "packaging",
+        "package",
+        "bag",
+        "bags",
+        "mailer",
+        "kraft",
+        "compostable",
+        "cosmetic packaging",
+        "food packaging",
+    )
+    led_terms = (
+        "led",
+        "lighting",
+        "lamp",
+        "fixture",
+        "electrical wholesaler",
+        "decorative lighting",
+        "commercial led",
+    )
+    packaging_score = sum(1 for term in packaging_terms if term in text)
+    led_score = sum(1 for term in led_terms if term in text)
+    if packaging_score and led_score:
+        if packaging_score > led_score:
+            return "packaging"
+        if led_score > packaging_score:
+            return "led_lighting"
+        return "mixed"
+    if packaging_score:
+        return "packaging"
+    if led_score:
+        return "led_lighting"
+    return "unknown"
 
 
 def _run_for_match(
