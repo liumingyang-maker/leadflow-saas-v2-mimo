@@ -2174,6 +2174,7 @@ def _normalize_paste_parser_candidates(value: object) -> list[dict[str, object]]
         if not isinstance(item, dict):
             continue
         classification = _normalize_classification(item.get("classification"))
+        raw_text = json.dumps(item, ensure_ascii=False)
         candidate = {
             "source_item_id": _sanitize_paste_parser_text(
                 item.get("source_item_id", ""),
@@ -2223,6 +2224,8 @@ def _normalize_paste_parser_candidates(value: object) -> list[dict[str, object]]
                 item.get("sanitized_snippet", ""),
                 max_length=500,
             ),
+            "ai_safety_risk_score": _paste_safety_risk_score(raw_text),
+            "ai_scoring_v2": _normalize_ai_scoring_v2(item.get("scoring_v2")),
         }
         if candidate["company_name"] or candidate["domain"]:
             rows.append(candidate)
@@ -2260,6 +2263,62 @@ def _normalize_paste_query_feedback(value: object) -> dict[str, object]:
         ),
         "notes": _normalize_paste_public_list(data.get("notes"), limit=8),
     }
+
+
+def _normalize_ai_scoring_v2(value: object) -> dict[str, object]:
+    data = value if isinstance(value, dict) else {}
+    return {
+        "buyer_score": _safe_int(data.get("buyer_score"), 0, 100),
+        "product_fit_score": _safe_int(data.get("product_fit_score"), 0, 100),
+        "confidence_score": _normalize_score_from_any(data.get("confidence_score")),
+        "supplier_risk_score": _safe_int(data.get("supplier_risk_score"), 0, 100),
+        "directory_risk_score": _safe_int(data.get("directory_risk_score"), 0, 100),
+        "marketplace_risk_score": _safe_int(data.get("marketplace_risk_score"), 0, 100),
+        "safety_risk_score": _safe_int(data.get("safety_risk_score"), 0, 100),
+        "positive_signals": _normalize_paste_public_list(data.get("positive_signals"), limit=8),
+        "risk_flags": _normalize_paste_public_list(data.get("risk_flags"), limit=8),
+        "classification_v2": _sanitize_paste_parser_text(
+            data.get("classification_v2", ""),
+            max_length=40,
+        ),
+        "score_band": _sanitize_paste_parser_text(data.get("score_band", ""), max_length=20),
+        "recommended_action": _sanitize_paste_parser_text(
+            data.get("recommended_action", ""),
+            max_length=40,
+        ),
+    }
+
+
+def _normalize_score_from_any(value: object) -> int:
+    try:
+        score = float(value or 0)
+    except (TypeError, ValueError):
+        return 0
+    if 0 < score <= 1:
+        score *= 100
+    elif 1 < score <= 5:
+        score *= 20
+    return max(0, min(int(round(score)), 100))
+
+
+def _paste_safety_risk_score(value: str) -> int:
+    text = value.lower()
+    score = 0
+    if re.search(r"[\w.+-]+@[\w-]+(?:\.[\w-]+)+", value):
+        score += 50
+    if re.search(r"(?:\+?\d[\d\s().-]{7,}\d)", value):
+        score += 40
+    if "whatsapp" in text or "telegram" in text:
+        score += 50
+    if "linkedin.com/in/" in text or "facebook.com/" in text:
+        score += 30
+    if "crawl" in text or "scrape" in text or "scraping" in text:
+        score += 80
+    if "automatic email" in text or "send email" in text or "email campaign" in text:
+        score += 80
+    if "verified buyer" in text or "purchase intent" in text or "confirmed purchasing" in text:
+        score += 60
+    return max(0, min(score, 100))
 
 
 def _normalize_paste_public_list(value: object, *, limit: int) -> list[str]:

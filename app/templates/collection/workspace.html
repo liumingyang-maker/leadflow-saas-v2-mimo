@@ -386,6 +386,7 @@
           <span class="lf-eyebrow">{{ t("Manual search paste parser") }}</span>
           <h3>{{ t("Paste parser results") }}</h3>
           <p>{{ t("Candidates are unverified and require manual confirmation.") }}</p>
+          <p>{{ t("Scores are AI-assisted judgments and do not represent real purchase intent.") }}</p>
         </div>
         <div class="lf-grid">
           <article class="lf-panel">
@@ -422,14 +423,20 @@
               <thead>
                 <tr>
                   <th>{{ t("Item") }}</th>
+                  <th>{{ t("Company") }}</th>
                   <th>{{ t("Reason") }}</th>
+                  <th>{{ t("Risk score") }}</th>
+                  <th>{{ t("Why rejected") }}</th>
                 </tr>
               </thead>
               <tbody>
                 {% for item in target_plan.get("rejected_items", []) %}
                   <tr>
                     <td>{{ item.get("source_item_id", "") }}</td>
+                    <td>{{ item.get("company_name", "") }}</td>
                     <td>{{ item.get("reason", "") }}</td>
+                    <td>{{ item.get("risk_score", "") }}</td>
+                    <td>{{ item.get("why_rejected", "") }}</td>
                   </tr>
                 {% endfor %}
               </tbody>
@@ -509,8 +516,9 @@
       <section class="lf-grid lf-section" aria-label="{{ t('Search candidates') }}">
         {% for candidate in target_context.candidates %}
           {% set extra = raw_candidate_data(candidate) %}
+          {% set scoring = extra.get("scoring_v2", {}) %}
           <article class="lf-panel">
-            <span class="lf-badge">{{ t(candidate.source_channel or "Example customers for testing") }}</span>
+            <span class="lf-badge">{{ t(scoring.get("classification_v2", candidate.source_channel or "Example customers for testing")) }}</span>
             <h3><a href="/collection/candidates/{{ candidate.id }}">{{ candidate.company_name }}</a></h3>
             <dl class="lf-dl">
               <dt>{{ t("Target countries") }}</dt><dd>{{ candidate.country }}</dd>
@@ -518,8 +526,15 @@
               <dt>{{ t("Industry") }}</dt><dd>{{ candidate.industry }}</dd>
               <dt>{{ t("Buyer types") }}</dt><dd>{{ candidate.buyer_type }}</dd>
               <dt>{{ t("Source") }}</dt><dd>{{ candidate.source_channel }}</dd>
-              <dt>{{ t("Confidence") }}</dt><dd>{{ candidate.confidence_score }}</dd>
+              <dt>{{ t("Classification") }}</dt><dd>{{ t(scoring.get("classification_v2", extra.get("classification_v2", ""))) }}</dd>
+              <dt>{{ t("Score band") }}</dt><dd>{{ t(scoring.get("score_band", extra.get("score_band", ""))) }}</dd>
+              <dt>{{ t("Buyer score") }}</dt><dd>{{ scoring.get("buyer_score", extra.get("buyer_score", "")) }}</dd>
+              <dt>{{ t("Confidence") }}</dt><dd>{{ scoring.get("confidence_score", candidate.confidence_score) }}</dd>
+              <dt>{{ t("Product fit score") }}</dt><dd>{{ scoring.get("product_fit_score", extra.get("product_fit_score", "")) }}</dd>
+              <dt>{{ t("Risk badges") }}</dt><dd>{{ ", ".join(scoring.get("risk_flags", [])) }}</dd>
+              <dt>{{ t("Positive signals") }}</dt><dd>{{ ", ".join(scoring.get("positive_signals", [])) }}</dd>
               <dt>{{ t("Match reason") }}</dt><dd>{{ candidate.match_reason }}</dd>
+              <dt>{{ t("Risk reason") }}</dt><dd>{{ extra.get("risk_reason", scoring.get("risk_reason", "")) }}</dd>
               <dt>{{ t("Suggested next action") }}</dt><dd>{{ extra.get("suggested_next_action", "") }}</dd>
             </dl>
             {% if candidate.status == "pending_review" %}

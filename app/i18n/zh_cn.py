@@ -356,6 +356,7 @@ _BASE_TRANSLATIONS = {
     "Carefully use public profiles later, without unauthorized scraping.": (
         "后续谨慎接入公开资料，不做未授权抓取。"
     ),
+    "Classification": "分类判断",
     "Confidence": "置信度",
     "Configured key": "已配置 Key",
     "Coming soon": "即将开放",
@@ -398,6 +399,7 @@ _BASE_TRANSLATIONS = {
     "Generate AI search strategy": "生成 AI 搜索策略",
     "Generate search strategy": "生成搜索策略",
     "Group": "分组",
+    "Buyer score": "买家分",
     "Ideal buyer profile": "理想买家画像",
     (
         "If your website has important information, copy the main company or product "
@@ -455,6 +457,7 @@ _BASE_TRANSLATIONS = {
     "Product memory": "产品记忆",
     "Product profile fingerprint": "产品画像指纹",
     "Product profile saved": "产品资料已保存",
+    "Product fit score": "产品匹配分",
     "Product summary": "产品摘要",
     "Provider": "Provider",
     "Provider settings": "Provider 设置",
@@ -464,6 +467,9 @@ _BASE_TRANSLATIONS = {
     "Reason": "原因",
     "Rejected items": "已拒绝项目",
     "Rejected summary": "拒绝摘要",
+    "Risk badges": "风险标签",
+    "Risk reason": "风险原因",
+    "Risk score": "风险分",
     "Query count": "搜索词数量",
     "Query self-check": "搜索词自检",
     "Review before using": "请审核后使用",
@@ -581,10 +587,15 @@ _BASE_TRANSLATIONS = {
     "Source type": "来源类型",
     "Saved candidates": "已保存候选客户",
     "Safety warnings": "安全提醒",
+    "Score band": "分数档位",
+    "Scores are AI-assisted judgments and do not represent real purchase intent.": (
+        "分数是 AI 辅助判断，不代表真实采购意向。"
+    ),
     "Suggested better queries": "建议优化搜索词",
     "Suggested negative keywords": "建议排除词",
     "Target country, buyer type, or terms to exclude": "目标国家、买家类型或需要排除的词",
     "The system will not automatically visit or crawl webpages.": "系统不会自动访问或抓取网页。",
+    "Why rejected": "拒绝原因",
     "advanced_web_search": "高级自动网页搜索",
     "Plan for directories such as Europages, Kompass, and Thomasnet.": (
         "面向 Europages、Kompass、Thomasnet 等目录。"
@@ -655,6 +666,23 @@ _BASE_TRANSLATIONS = {
     "View company research": "查看背调",
     "Why it may fit you": "为什么可能适合你",
     "target customer credits": "目标客户额度",
+    "article_or_content": "内容/文章页",
+    "directory_risk": "目录站风险",
+    "discard": "建议丢弃",
+    "high": "高匹配客户",
+    "irrelevant": "不相关",
+    "likely_buyer": "较可能买家",
+    "low": "低匹配",
+    "low_fit": "低匹配线索",
+    "marketplace_risk": "平台页风险",
+    "maybe_buyer": "需要人工确认",
+    "medium": "普通线索",
+    "reject": "建议丢弃",
+    "research_next": "建议优先背调",
+    "review_first": "建议人工确认",
+    "strong_buyer": "高匹配客户",
+    "supplier_risk": "供应商风险",
+    "unsafe": "安全风险",
     "示例客户": "示例客户",
     "搜索候选": "搜索候选",
     "待确认客户": "待确认客户",

@@ -532,6 +532,7 @@ def parse_manual_search_results_for_collection(
             return TargetDiscoveryResult(success=False, error_code="missing_product_profile")
         product_profile_id = profile.id
         product_profile_json = profile.extracted_profile_json
+        product_profile_summary = parse_profile_json(profile.extracted_profile_json)
         product_profile_hash = build_product_profile_fingerprint(profile)
         latest_strategy = _latest_search_intent_run_for_profile(
             list(
@@ -601,12 +602,21 @@ def parse_manual_search_results_for_collection(
                         break
                     if not isinstance(candidate, dict):
                         continue
-                    normalized = _normalize_manual_paste_candidate(candidate, filters=filters)
-                    if normalized.get("classification") not in {"buyer", "maybe_buyer"}:
+                    normalized = _normalize_manual_paste_candidate(
+                        candidate,
+                        filters=filters,
+                        product_profile=product_profile_summary,
+                        source_type=source_type,
+                    )
+                    scoring = normalized.get("scoring_v2")
+                    if not isinstance(scoring, dict) or not _should_save_scored_candidate(scoring):
                         rejected_items.append(
                             {
                                 "source_item_id": normalized.get("source_item_id", ""),
-                                "reason": normalized.get("classification", "rejected"),
+                                "company_name": normalized.get("company_name", ""),
+                                "reason": normalized.get("classification_v2", "rejected"),
+                                "risk_score": _max_risk_score(scoring),
+                                "why_rejected": normalized.get("risk_reason", ""),
                             }
                         )
                         continue
@@ -619,7 +629,10 @@ def parse_manual_search_results_for_collection(
                         rejected_items.append(
                             {
                                 "source_item_id": normalized.get("source_item_id", ""),
+                                "company_name": normalized.get("company_name", ""),
                                 "reason": "duplicate",
+                                "risk_score": 0,
+                                "why_rejected": "Duplicate candidate in this tenant.",
                             }
                         )
                         continue
@@ -1114,9 +1127,37 @@ def _candidate_from_ai(
         "risk_reason",
         "fit_score",
         "parser_version",
+        "scoring_version",
+        "classification_v2",
+        "score_band",
+        "buyer_score",
+        "product_fit_score",
+        "supplier_risk_score",
+        "directory_risk_score",
+        "marketplace_risk_score",
+        "safety_risk_score",
+        "recommended_action",
     ):
         if key in data:
             raw_data[key] = _public_text(data.get(key, ""), 500)
+    scoring = data.get("scoring_v2")
+    if isinstance(scoring, dict):
+        raw_data["scoring_v2"] = _safe_scoring_dict(scoring)
+        for key in (
+            "scoring_version",
+            "classification_v2",
+            "score_band",
+            "buyer_score",
+            "product_fit_score",
+            "confidence_score",
+            "supplier_risk_score",
+            "directory_risk_score",
+            "marketplace_risk_score",
+            "safety_risk_score",
+            "recommended_action",
+        ):
+            if key in raw_data["scoring_v2"]:
+                raw_data[key] = raw_data["scoring_v2"][key]
     extra_raw = data.get("raw_data")
     if isinstance(extra_raw, dict):
         for key in ("source_provider", "rank", "domain"):
@@ -1238,12 +1279,14 @@ def _normalize_manual_paste_candidate(
     data: dict[str, object],
     *,
     filters: dict[str, object],
+    product_profile: dict[str, object],
+    source_type: str,
 ) -> dict[str, object]:
     domain = _domain_from_url(str(data.get("domain", "") or data.get("source_url", "")))
     source_url = _public_text(data.get("source_url", ""), 500)
     website = source_url or (f"https://{domain}" if domain else "")
     classification = _public_text(data.get("classification", "unsafe"), 40).lower()
-    normalized = {
+    normalized: dict[str, object] = {
         "company_name": _public_text(data.get("company_name", ""), 300),
         "website": website,
         "country": _public_text(data.get("country", filters.get("country", "")), 120),
@@ -1251,10 +1294,10 @@ def _normalize_manual_paste_candidate(
         "buyer_type": _public_text(data.get("buyer_type", filters.get("buyer_type", "")), 120),
         "source_channel": MANUAL_SEARCH_PASTE_PARSER_CHANNEL,
         "match_reason": _public_text(data.get("match_reason", ""), 1000),
-        "confidence_score": _int_in_range(data.get("confidence_score", 0), 0, 100),
+        "confidence_score": _normalize_raw_score(data.get("confidence_score")),
         "suggested_next_action": _public_text(data.get("next_action", "review"), 500),
         "status": "pending_review",
-        "source_type": "manual_search_paste",
+        "source_type": source_type,
         "source_item_id": _public_text(data.get("source_item_id", ""), 80),
         "source_domain": domain,
         "source_url": source_url,
@@ -1263,14 +1306,370 @@ def _normalize_manual_paste_candidate(
         "product_fit": _public_text(data.get("product_fit", ""), 40),
         "source_quality": _public_text(data.get("source_quality", ""), 80),
         "risk_reason": _public_text(data.get("risk_reason", ""), 700),
-        "fit_score": _int_in_range(data.get("fit_score", 0), 0, 100),
+        "fit_score": _normalize_raw_score(data.get("fit_score")),
         "parser_version": "alpha13b_v2",
+        "ai_safety_risk_score": _int_in_range(data.get("ai_safety_risk_score", 0), 0, 100),
+        "ai_scoring_v2": data.get("ai_scoring_v2", {})
+        if isinstance(data.get("ai_scoring_v2"), dict)
+        else {},
     }
-    normalized["confidence_score"] = max(
-        normalized["confidence_score"],
-        _score_candidate(normalized, filters=filters),
+    scoring = _score_paste_candidate_v2(
+        normalized,
+        product_profile=product_profile,
+        filters=filters,
     )
+    normalized["scoring_v2"] = scoring
+    normalized["scoring_version"] = scoring["scoring_version"]
+    normalized["classification_v2"] = scoring["classification_v2"]
+    normalized["score_band"] = scoring["score_band"]
+    normalized["buyer_score"] = scoring["buyer_score"]
+    normalized["product_fit_score"] = scoring["product_fit_score"]
+    normalized["supplier_risk_score"] = scoring["supplier_risk_score"]
+    normalized["directory_risk_score"] = scoring["directory_risk_score"]
+    normalized["marketplace_risk_score"] = scoring["marketplace_risk_score"]
+    normalized["safety_risk_score"] = scoring["safety_risk_score"]
+    normalized["recommended_action"] = scoring["recommended_action"]
+    normalized["confidence_score"] = scoring["confidence_score"]
+    normalized["fit_score"] = scoring["product_fit_score"]
+    normalized["suggested_next_action"] = scoring["recommended_action"]
     return normalized
+
+
+def _score_paste_candidate_v2(
+    candidate: dict[str, object],
+    *,
+    product_profile: dict[str, object],
+    filters: dict[str, object],
+) -> dict[str, object]:
+    text = _candidate_scoring_text(candidate)
+    positive_signals: list[str] = []
+    risk_flags: list[str] = []
+
+    buyer_score = 0
+    if candidate.get("company_name") or candidate.get("source_domain"):
+        buyer_score += 10
+        positive_signals.append("company_identity")
+    product_terms = _profile_terms(product_profile)
+    product_hits = [term for term in product_terms if term and term in text]
+    if product_hits:
+        buyer_score += 15
+        positive_signals.append("product_keyword_match")
+    country_filter = str(filters.get("country", "") or "").strip().lower()
+    country = str(candidate.get("country", "") or "").strip().lower()
+    if country and (not country_filter or country_filter in country or country in country_filter):
+        buyer_score += 10
+        positive_signals.append("target_market_match")
+
+    buyer_role_score, buyer_role_signal = _buyer_role_score(text)
+    buyer_score += buyer_role_score
+    if buyer_role_signal:
+        positive_signals.append(buyer_role_signal)
+
+    source_quality = str(candidate.get("source_quality", "") or "").lower()
+    if source_quality == "official_site":
+        buyer_score += 10
+        positive_signals.append(source_quality)
+
+    product_fit = str(candidate.get("product_fit", "") or "").lower()
+    if product_fit == "high":
+        buyer_score += 15
+        positive_signals.append("high_product_fit")
+    elif product_fit == "medium":
+        positive_signals.append("medium_product_fit")
+
+    classification = str(candidate.get("classification", "") or "").lower()
+    if classification == "buyer":
+        buyer_score += 20
+        positive_signals.append("ai_buyer_classification")
+    elif classification == "maybe_buyer":
+        buyer_score += 10
+        positive_signals.append("ai_maybe_buyer_classification")
+
+    supplier_risk = _risk_score(
+        text,
+        (
+            ("manufacturer", 35),
+            ("supplier", 30),
+            ("factory", 35),
+            ("oem factory", 25),
+            ("odm factory", 25),
+            ("exporter", 15),
+        ),
+    )
+    if source_quality == "supplier":
+        supplier_risk += 25
+    directory_risk = _risk_score(
+        text,
+        (
+            ("directory", 40),
+            ("list of suppliers", 30),
+            ("b2b directory", 25),
+            ("association", 10),
+            ("member list", 10),
+        ),
+    )
+    if source_quality == "directory":
+        directory_risk += 60
+    marketplace_risk = _risk_score(
+        text,
+        (
+            ("amazon", 40),
+            ("ebay", 40),
+            ("alibaba", 40),
+            ("marketplace", 40),
+            ("product listing", 25),
+        ),
+    )
+    if source_quality == "marketplace":
+        marketplace_risk += 60
+    safety_risk = _safety_risk_from_candidate(candidate)
+
+    supplier_risk = min(supplier_risk, 100)
+    directory_risk = min(directory_risk, 100)
+    marketplace_risk = min(marketplace_risk, 100)
+    safety_risk = min(safety_risk, 100)
+
+    if supplier_risk >= 35:
+        risk_flags.append("supplier_signal")
+    if directory_risk >= 35:
+        risk_flags.append("directory_signal")
+    if marketplace_risk >= 35:
+        risk_flags.append("marketplace_signal")
+    if safety_risk >= 40:
+        risk_flags.append("safety_signal")
+
+    product_fit_score = _product_fit_score(
+        product_fit=product_fit,
+        product_hits=bool(product_hits),
+        buyer_role_score=buyer_role_score,
+    )
+    buyer_score = max(0, min(buyer_score, 100))
+    confidence_score = _candidate_confidence_score(
+        candidate,
+        buyer_score=buyer_score,
+        product_fit_score=product_fit_score,
+        risk_score=max(supplier_risk, directory_risk, marketplace_risk, safety_risk),
+    )
+    classification_v2 = _classification_v2(
+        buyer_score=buyer_score,
+        supplier_risk=supplier_risk,
+        directory_risk=directory_risk,
+        marketplace_risk=marketplace_risk,
+        safety_risk=safety_risk,
+    )
+    return {
+        "parser_version": "alpha13b_v2",
+        "scoring_version": "alpha13c_scoring_v2",
+        "classification_v2": classification_v2,
+        "score_band": _score_band(classification_v2, buyer_score),
+        "buyer_score": buyer_score,
+        "product_fit_score": product_fit_score,
+        "confidence_score": confidence_score,
+        "supplier_risk_score": supplier_risk,
+        "directory_risk_score": directory_risk,
+        "marketplace_risk_score": marketplace_risk,
+        "safety_risk_score": safety_risk,
+        "positive_signals": positive_signals[:8],
+        "risk_flags": risk_flags[:8],
+        "match_reason": _public_text(candidate.get("match_reason", ""), 1000),
+        "risk_reason": _public_text(candidate.get("risk_reason", ""), 700),
+        "recommended_action": _recommended_action(classification_v2),
+    }
+
+
+def _should_save_scored_candidate(scoring: dict[str, object]) -> bool:
+    return (
+        str(scoring.get("classification_v2", ""))
+        in {
+            "strong_buyer",
+            "likely_buyer",
+            "maybe_buyer",
+        }
+        and _max_risk_score(scoring) < 60
+    )
+
+
+def _max_risk_score(scoring: object) -> int:
+    if not isinstance(scoring, dict):
+        return 0
+    return max(
+        _normalize_raw_score(scoring.get("supplier_risk_score")),
+        _normalize_raw_score(scoring.get("directory_risk_score")),
+        _normalize_raw_score(scoring.get("marketplace_risk_score")),
+        _normalize_raw_score(scoring.get("safety_risk_score")),
+    )
+
+
+def _candidate_scoring_text(candidate: dict[str, object]) -> str:
+    fields = (
+        "company_name",
+        "website",
+        "country",
+        "industry",
+        "buyer_type",
+        "match_reason",
+        "risk_reason",
+        "sanitized_snippet",
+        "source_quality",
+        "classification",
+    )
+    return " ".join(str(candidate.get(field, "")) for field in fields).lower()
+
+
+def _profile_terms(product_profile: dict[str, object]) -> list[str]:
+    terms: list[str] = []
+    for key in (
+        "product_keywords_en",
+        "product_keywords_cn",
+        "product_categories",
+        "search_keywords",
+        "target_industries",
+    ):
+        value = product_profile.get(key)
+        if isinstance(value, list):
+            terms.extend(str(item).strip().lower() for item in value if str(item).strip())
+        elif isinstance(value, str) and value.strip():
+            terms.append(value.strip().lower())
+    expanded: list[str] = []
+    for term in terms:
+        expanded.append(term)
+        expanded.extend(part for part in term.split() if len(part) >= 5)
+    return list(dict.fromkeys(expanded))[:40]
+
+
+def _buyer_role_score(text: str) -> tuple[int, str]:
+    role_scores = (
+        ("private label brand", 18),
+        ("importer", 20),
+        ("distributor", 20),
+        ("wholesaler", 15),
+        ("retailer", 12),
+        ("procurement", 12),
+        ("sourcing", 12),
+        ("contractor", 12),
+        ("project supplier", 12),
+    )
+    best_score = 0
+    best_term = ""
+    for term, score in role_scores:
+        if term in text and score > best_score:
+            best_score = score
+            best_term = term.replace(" ", "_")
+    return best_score, best_term
+
+
+def _risk_score(text: str, terms: tuple[tuple[str, int], ...]) -> int:
+    score = 0
+    for term, weight in terms:
+        if term in text:
+            score += weight
+    return max(0, min(score, 100))
+
+
+def _safety_risk_from_candidate(candidate: dict[str, object]) -> int:
+    text = _candidate_scoring_text(candidate)
+    score = _normalize_raw_score(candidate.get("ai_safety_risk_score"))
+    if any(term in text for term in ("private email", "phone enrichment")):
+        score += 50
+    if any(term in text for term in ("whatsapp", "telegram")):
+        score += 50
+    if any(term in text for term in ("crawl", "scrape", "scraping")):
+        score += 80
+    if any(term in text for term in ("automatic email", "send email", "email campaign")):
+        score += 80
+    if any(term in text for term in ("verified buyer", "purchase intent")):
+        score += 60
+    return max(0, min(score, 100))
+
+
+def _product_fit_score(*, product_fit: str, product_hits: bool, buyer_role_score: int) -> int:
+    if product_fit == "high":
+        base = 80
+    elif product_fit == "medium":
+        base = 58
+    elif product_fit == "irrelevant":
+        base = 10
+    else:
+        base = 30
+    if product_hits:
+        base += 10
+    if buyer_role_score:
+        base += 8
+    return max(0, min(base, 100))
+
+
+def _candidate_confidence_score(
+    candidate: dict[str, object],
+    *,
+    buyer_score: int,
+    product_fit_score: int,
+    risk_score: int,
+) -> int:
+    raw = _normalize_raw_score(candidate.get("confidence_score"))
+    identity = 20 if candidate.get("company_name") else 0
+    domain = 15 if candidate.get("website") or candidate.get("source_domain") else 0
+    computed = int(round((buyer_score * 0.35) + (product_fit_score * 0.25) + identity + domain))
+    computed -= max(0, risk_score - 40) // 2
+    if raw and raw > 20:
+        computed = max(computed, int(round((computed + raw) / 2)))
+    return max(0, min(computed, 100))
+
+
+def _classification_v2(
+    *,
+    buyer_score: int,
+    supplier_risk: int,
+    directory_risk: int,
+    marketplace_risk: int,
+    safety_risk: int,
+) -> str:
+    if safety_risk >= 60:
+        return "unsafe"
+    if supplier_risk >= 60:
+        return "supplier_risk"
+    if directory_risk >= 60:
+        return "directory_risk"
+    if marketplace_risk >= 60:
+        return "marketplace_risk"
+    if buyer_score >= 80 and max(supplier_risk, directory_risk, marketplace_risk) < 40:
+        return "strong_buyer"
+    if buyer_score >= 65 and max(supplier_risk, directory_risk, marketplace_risk) < 50:
+        return "likely_buyer"
+    if buyer_score >= 50 and max(supplier_risk, directory_risk, marketplace_risk) < 60:
+        return "maybe_buyer"
+    if 30 <= buyer_score <= 49:
+        return "low_fit"
+    return "irrelevant"
+
+
+def _score_band(classification_v2: str, buyer_score: int) -> str:
+    if classification_v2 == "strong_buyer" or buyer_score >= 80:
+        return "high"
+    if classification_v2 in {"likely_buyer", "maybe_buyer"}:
+        return "medium"
+    if classification_v2 == "low_fit":
+        return "low"
+    return "reject"
+
+
+def _recommended_action(classification_v2: str) -> str:
+    if classification_v2 in {"strong_buyer", "likely_buyer"}:
+        return "research_next"
+    if classification_v2 == "maybe_buyer":
+        return "review_first"
+    return "discard"
+
+
+def _normalize_raw_score(value: object) -> int:
+    try:
+        score = float(value or 0)
+    except (TypeError, ValueError):
+        return 0
+    if 0 < score <= 1:
+        score *= 100
+    elif 1 < score <= 5:
+        score *= 20
+    return max(0, min(int(round(score)), 100))
 
 
 def _manual_paste_plan(
@@ -1321,28 +1720,96 @@ def _finalize_manual_paste_plan(
     summary = plan.get("parse_summary")
     if not isinstance(summary, dict):
         summary = {}
+    safe_rejected = _safe_list_of_dicts(rejected_items, limit=50)
     summary["saved_candidate_count"] = saved_count
     summary["duplicate_count"] = duplicate_count
-    summary["rejected_count"] = len(rejected_items)
+    summary["rejected_count"] = len(safe_rejected)
     plan["parse_summary"] = summary
-    plan["rejected_items"] = _safe_list_of_dicts(rejected_items, limit=50)
+    plan["rejected_items"] = safe_rejected
+    plan["scoring_summary"] = _scoring_summary_from_rejected(
+        saved_count=saved_count,
+        duplicate_count=duplicate_count,
+        rejected_items=plan["rejected_items"],
+    )
     return plan
 
 
 def _safe_list_of_dicts(value: object, *, limit: int) -> list[dict[str, str]]:
     if not isinstance(value, list):
         return []
-    rows: list[dict[str, str]] = []
+    rows_by_key: dict[str, dict[str, str]] = {}
     for item in value[:limit]:
         if not isinstance(item, dict):
             continue
-        rows.append(
-            {
-                "source_item_id": _public_text(item.get("source_item_id", ""), 80),
-                "reason": _public_text(item.get("reason", ""), 240),
-            }
-        )
+        source_item_id = _public_text(item.get("source_item_id", ""), 80)
+        reason = _public_text(item.get("reason", ""), 240) or "rejected"
+        key = source_item_id or reason
+        row = {
+            "source_item_id": source_item_id,
+            "company_name": _public_text(item.get("company_name", ""), 300),
+            "reason": reason,
+            "risk_score": str(_normalize_raw_score(item.get("risk_score", 0))),
+            "why_rejected": _public_text(item.get("why_rejected", ""), 500),
+        }
+        current = rows_by_key.get(key)
+        if (
+            current is None
+            or row["company_name"]
+            or int(row["risk_score"]) > int(current.get("risk_score", "0") or "0")
+        ):
+            rows_by_key[key] = row
+    return list(rows_by_key.values())[:limit]
+
+
+def _safe_scoring_dict(scoring: dict[str, object]) -> dict[str, object]:
+    return {
+        "parser_version": "alpha13b_v2",
+        "scoring_version": "alpha13c_scoring_v2",
+        "classification_v2": _public_text(scoring.get("classification_v2", ""), 40),
+        "score_band": _public_text(scoring.get("score_band", ""), 20),
+        "buyer_score": _normalize_raw_score(scoring.get("buyer_score")),
+        "product_fit_score": _normalize_raw_score(scoring.get("product_fit_score")),
+        "confidence_score": _normalize_raw_score(scoring.get("confidence_score")),
+        "supplier_risk_score": _normalize_raw_score(scoring.get("supplier_risk_score")),
+        "directory_risk_score": _normalize_raw_score(scoring.get("directory_risk_score")),
+        "marketplace_risk_score": _normalize_raw_score(scoring.get("marketplace_risk_score")),
+        "safety_risk_score": _normalize_raw_score(scoring.get("safety_risk_score")),
+        "positive_signals": _public_list(scoring.get("positive_signals"), limit=8),
+        "risk_flags": _public_list(scoring.get("risk_flags"), limit=8),
+        "match_reason": _public_text(scoring.get("match_reason", ""), 1000),
+        "risk_reason": _public_text(scoring.get("risk_reason", ""), 700),
+        "recommended_action": _public_text(scoring.get("recommended_action", ""), 40),
+    }
+
+
+def _public_list(value: object, *, limit: int) -> list[str]:
+    if not isinstance(value, list):
+        return []
+    rows: list[str] = []
+    for item in value[:limit]:
+        clean = _public_text(item, 160)
+        if clean:
+            rows.append(clean)
     return rows
+
+
+def _scoring_summary_from_rejected(
+    *,
+    saved_count: int,
+    duplicate_count: int,
+    rejected_items: list[dict[str, str]],
+) -> dict[str, object]:
+    by_reason: dict[str, int] = {}
+    for item in rejected_items:
+        reason = item.get("reason", "rejected") or "rejected"
+        by_reason[reason] = by_reason.get(reason, 0) + 1
+    return {
+        "scoring_version": "alpha13c_scoring_v2",
+        "saved_count": saved_count,
+        "duplicate_count": duplicate_count,
+        "rejected_count": len(rejected_items),
+        "rejected_by_reason": by_reason,
+    }
 
 
 def _advanced_search_provider(app: Flask, *, settings_provider: str):

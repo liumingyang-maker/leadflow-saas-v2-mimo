@@ -270,8 +270,15 @@ def test_success_saves_buyer_and_maybe_buyer_candidates_only(monkeypatch) -> Non
     assert "粘贴解析结果" in html
     assert "已保存候选客户" in html
     assert "已拒绝项目" in html
-    assert "GreenPack Distribution" in html
-    assert "North Market Import" in html
+    assert "EcoPack Retail Group" in html
+    assert "Green Mailer GmbH" in html
+    assert "Custom Brand Packaging Ltd" in html
+    assert "高匹配客户" in html
+    assert "较可能买家" in html
+    assert "买家分" in html
+    assert "分数是 AI 辅助判断，不代表真实采购意向" in html
+    assert ">12<" not in html
+    assert ">14<" not in html
     assert "Add to CRM" not in html
     assert "加入 CRM" in html
     assert "verified buyer" not in html.lower()
@@ -299,12 +306,32 @@ def test_success_saves_buyer_and_maybe_buyer_candidates_only(monkeypatch) -> Non
     assert all(
         candidate.source_channel == "manual_search_paste_parser_v2" for candidate in candidates
     )
+    raw_rows = [json.loads(candidate.raw_data_json) for candidate in candidates]
+    assert {row["classification_v2"] for row in raw_rows} == {
+        "strong_buyer",
+        "likely_buyer",
+        "maybe_buyer",
+    }
+    assert all(row["scoring_version"] == "alpha13c_scoring_v2" for row in raw_rows)
+    assert all(isinstance(row["buyer_score"], int) for row in raw_rows)
+    assert all(0 <= row["buyer_score"] <= 100 for row in raw_rows)
+    assert all(0 <= row["confidence_score"] <= 100 for row in raw_rows)
+    assert {row["score_band"] for row in raw_rows} == {"high", "medium"}
+    assert raw_rows[0]["confidence_score"] >= 60
+    assert raw_rows[1]["confidence_score"] >= 60
+    assert raw_rows[2]["confidence_score"] >= 60
     assert run is not None
     assert run.status == "matched"
     assert run.generated_count == 3
     plan = json.loads(run.generated_plan_json)
     assert plan["parse_summary"]["saved_candidate_count"] == 3
     assert plan["parse_summary"]["rejected_count"] == 3
+    assert plan["scoring_summary"]["scoring_version"] == "alpha13c_scoring_v2"
+    assert {item["reason"] for item in plan["rejected_items"]} == {
+        "supplier_risk",
+        "directory_risk",
+        "marketplace_risk",
+    }
     assert "pasted text" not in run.generated_plan_json.lower()
     assert "full_prompt" not in run.generated_plan_json
     assert "full_response" not in run.generated_plan_json
@@ -340,8 +367,8 @@ def test_duplicate_domain_and_company_country_are_skipped(monkeypatch) -> None:
             TargetCustomerCandidate(
                 tenant_id=tenant_id,
                 run_id=existing_run.id,
-                company_name="GreenPack Distribution",
-                website="https://greenpack-distribution.example",
+                company_name="EcoPack Retail Group",
+                website="https://ecopack-retail.example",
                 country="United States",
                 source_channel="existing",
                 status="pending_review",
@@ -472,20 +499,22 @@ def test_safety_sanitizes_private_contact_social_scrape_and_verified_claims(monk
 
     assert response.status_code == 200
     with Session(engine) as session:
-        candidate = session.scalar(
-            select(TargetCustomerCandidate).where(TargetCustomerCandidate.tenant_id == tenant_id)
+        candidate_count = session.scalar(
+            select(func.count(TargetCustomerCandidate.id)).where(
+                TargetCustomerCandidate.tenant_id == tenant_id
+            )
         )
         run = session.scalar(
             select(TargetCustomerDiscoveryRun).where(
                 TargetCustomerDiscoveryRun.tenant_id == tenant_id
             )
         )
-    assert candidate is not None
     assert run is not None
-    saved = (
-        f"{candidate.company_name} {candidate.match_reason} "
-        f"{candidate.raw_data_json} {run.generated_plan_json}"
-    ).lower()
+    assert candidate_count == 0
+    plan = json.loads(run.generated_plan_json)
+    assert plan["parse_summary"]["saved_candidate_count"] == 0
+    assert any(item["reason"] == "unsafe" for item in plan["rejected_items"])
+    saved = run.generated_plan_json.lower()
     assert "buyer@example.com" not in saved
     assert "+1 555" not in saved
     assert "linkedin" not in saved
