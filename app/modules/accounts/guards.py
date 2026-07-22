@@ -7,7 +7,7 @@ from typing import Any
 
 from flask import Flask, redirect, session
 
-from app.modules.accounts.models import Tenant
+from app.modules.accounts.models import Tenant, User
 from app.modules.accounts.repository import session_scope
 
 
@@ -18,6 +18,7 @@ def tenant_required(
         @wraps(view)
         def wrapped(*args: Any, **kwargs: Any) -> Any:
             tenant_id = session.get("tenant_id")
+            user_id = session.get("user_id")
             if not tenant_id:
                 return redirect("/login")
             with session_scope(app) as db_session:
@@ -28,6 +29,12 @@ def tenant_required(
                 if tenant.status == "suspended":
                     session.clear()
                     return redirect("/login")
+                # Verify user is still active
+                if user_id:
+                    user = db_session.get(User, user_id)
+                    if user is None or not user.is_active or user.status == "disabled":
+                        session.clear()
+                        return redirect("/login")
                 if not allow_expired and tenant_is_expired(tenant):
                     return redirect("/upgrade")
             return view(*args, **kwargs)

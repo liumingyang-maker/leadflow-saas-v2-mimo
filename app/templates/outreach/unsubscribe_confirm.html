@@ -6,6 +6,7 @@
     <h1>Unsubscribe</h1>
     <p>Are you sure you want to unsubscribe {{ email }}?</p>
     <form method="post" action="/unsubscribe/{{ token }}">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}"/>
       {{ button("Confirm unsubscribe", "primary", "submit") }}
     </form>
     <p style="margin-top:1rem"><a href="/" class="lf-button">Cancel</a></p>

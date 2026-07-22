@@ -69,9 +69,10 @@ def _lead(engine, tenant_id: str, email: str = "buyer@example.com") -> str:
 
 
 def _unsubscribe_token(tracking_id: str, email: str) -> str:
-    sig = hmac.new(b"unsub-key-v1", f"{tracking_id}:{email}".encode(), hashlib.sha256).hexdigest()[
-        :16
-    ]
+    import os
+
+    key = os.environ.get("UNSUBSCRIBE_SIGNING_KEY", "dev-unsub-key-not-for-prod").encode()
+    sig = hmac.new(key, f"{tracking_id}:{email}".encode(), hashlib.sha256).hexdigest()[:32]
     return urlsafe_b64encode(f"{tracking_id}:{email}:{sig}".encode()).decode()
 
 

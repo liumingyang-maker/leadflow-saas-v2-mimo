@@ -79,6 +79,17 @@ def resolve_config(config_name: str | None = None) -> type[BaseConfig]:
             raise RuntimeError("TENANT_SECRET_KEY is required for production configuration")
         if len(tenant_secret_key) < 32:
             raise RuntimeError("TENANT_SECRET_KEY is weak for production configuration")
+        # Fail closed for all cryptographic keys
+        for key_name in (
+            "TRACKING_SIGNING_KEY",
+            "UNSUBSCRIBE_SIGNING_KEY",
+            "INBOUND_TOKEN_KEY",
+        ):
+            value = os.environ.get(key_name, "")
+            if not value or len(value) < 32:
+                raise RuntimeError(
+                    f"{key_name} is required (>=32 chars) for production configuration"
+                )
         ProductionConfig.SECRET_KEY = secret_key
 
     return config_class

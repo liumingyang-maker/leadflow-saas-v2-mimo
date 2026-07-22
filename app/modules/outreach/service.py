@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import hmac
+import os
 from datetime import UTC, datetime
 
 from flask import Flask
@@ -198,12 +199,19 @@ def track_open(app: Flask, *, tracking_id: str) -> None:
             )
 
 
-TRACKING_SIGNING_KEY = "tracking-sign-key-v1"
+def _tracking_signing_key() -> str:
+    """Return the tracking signing key from environment.
+
+    Falls back to a dev-only default; production config validation
+    in ``resolve_config`` rejects startup when the key is missing.
+    """
+    return os.environ.get("TRACKING_SIGNING_KEY", "dev-tracking-sign-key-not-for-prod")
 
 
 def sign_redirect(tracking_id: str, target_url: str, expires_at: int) -> str:
     msg = f"{tracking_id}:{target_url}:{expires_at}"
-    return hmac.new(TRACKING_SIGNING_KEY.encode(), msg.encode(), hashlib.sha256).hexdigest()[:16]
+    key = _tracking_signing_key()
+    return hmac.new(key.encode(), msg.encode(), hashlib.sha256).hexdigest()[:32]
 
 
 def verify_redirect(tracking_id: str, target_url: str, expires_at: int, sig: str) -> bool:

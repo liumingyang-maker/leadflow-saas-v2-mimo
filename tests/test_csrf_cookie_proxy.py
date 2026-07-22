@@ -169,6 +169,9 @@ def test_session_cookie_secure_in_production(monkeypatch) -> None:
     """Production config forces Secure flag."""
     monkeypatch.setenv("SECRET_KEY", "a-32-char-production-key-that-is-ok!")
     monkeypatch.setenv("TENANT_SECRET_KEY", "a-32-char-tenant-secret-key-ok!!!")
+    monkeypatch.setenv("TRACKING_SIGNING_KEY", "a-32-char-tracking-signing-key-ok!")
+    monkeypatch.setenv("UNSUBSCRIBE_SIGNING_KEY", "a-32-char-unsubscribe-signing-key!")
+    monkeypatch.setenv("INBOUND_TOKEN_KEY", "a-32-char-inbound-token-key-ok!!!!")
     from app.config import resolve_config
 
     config = resolve_config("production")

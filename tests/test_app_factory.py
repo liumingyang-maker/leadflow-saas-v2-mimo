@@ -61,6 +61,9 @@ def test_production_config_requires_strong_secret_key(
         resolve_config("production")
 
     monkeypatch.setenv("TENANT_SECRET_KEY", "a-32-char-tenant-secret-key-ok!!!")
+    monkeypatch.setenv("TRACKING_SIGNING_KEY", "a-32-char-tracking-signing-key-ok!")
+    monkeypatch.setenv("UNSUBSCRIBE_SIGNING_KEY", "a-32-char-unsubscribe-signing-key!")
+    monkeypatch.setenv("INBOUND_TOKEN_KEY", "a-32-char-inbound-token-key-ok!!!!")
     assert resolve_config("production").SESSION_COOKIE_SECURE is True
 
 

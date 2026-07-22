@@ -25,8 +25,23 @@ def load_json(path: Path) -> dict[str, Any]:
 
 
 def save_json(path: Path, data: dict[str, Any]) -> None:
+    """Atomically write JSON using temp file + os.replace()."""
+    import os
+    import tempfile
+
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
+    content = json.dumps(data, ensure_ascii=False, indent=2)
+    fd, tmp = tempfile.mkstemp(dir=str(path.parent), suffix=".tmp")
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            f.write(content)
+        os.replace(tmp, str(path))
+    except BaseException:
+        try:
+            os.unlink(tmp)
+        except OSError:
+            pass
+        raise
 
 
 def config() -> dict[str, Any]:
@@ -174,6 +189,8 @@ def cmd_prepare(_: argparse.Namespace) -> int:
 
 
 def cmd_verify(_: argparse.Namespace) -> int:
+    import platform
+
     cfg = config()
     s = state()
     _, task = current_task(cfg, s)
@@ -188,9 +205,25 @@ def cmd_verify(_: argparse.Namespace) -> int:
             "stderr": p.stderr[-12000:],
         }
         passed = passed and p.returncode == 0
+
+    # Collect environment metadata for audit trail
+    commit_sha = run(["git", "rev-parse", "HEAD"]).stdout.strip()
+    tree_sha = run(["git", "rev-parse", "HEAD^{tree}"]).stdout.strip()
+    workspace_clean = run(["git", "status", "--porcelain"]).stdout.strip() == ""
+    metadata = {
+        "commit_sha": commit_sha,
+        "tree_sha": tree_sha,
+        "workspace_clean": workspace_clean,
+        "python_version": platform.python_version(),
+        "platform": platform.platform(),
+    }
+
     stamp = dt.datetime.now().strftime("%Y%m%d-%H%M%S")
     path = STATE_DIR / "evidence" / f"{task['id']}-gates-{stamp}.json"
-    save_json(path, {"task": task["id"], "passed": passed, "results": results})
+    save_json(
+        path,
+        {"task": task["id"], "passed": passed, "metadata": metadata, "results": results},
+    )
     s["last_gate_run"] = {"at": now(), "passed": passed, "path": str(path.relative_to(ROOT))}
     s["phase"] = "REVIEWING" if passed else "WORKER_FIX"
     write_state(s)

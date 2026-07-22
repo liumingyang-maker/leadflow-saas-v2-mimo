@@ -6,6 +6,7 @@ from typing import Any
 
 from flask import Flask, Response, jsonify, redirect, render_template, request, session
 
+from app.extensions import csrf
 from app.modules.accounts.guards import tenant_required
 from app.modules.inbound.service import (
     MAX_BODY_SIZE,
@@ -82,6 +83,7 @@ def register_inbound_routes(app: Flask) -> None:
     # ------------------------------------------------------------------
 
     @app.route("/api/inbound/<token>", methods=["OPTIONS", "POST"])
+    @csrf.exempt
     def inbound_api(token: str):
         if request.method == "OPTIONS":
             return _handle_preflight(app, token)

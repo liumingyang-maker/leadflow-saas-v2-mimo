@@ -115,6 +115,8 @@ def authenticate(app: Flask, *, email: str, password: str) -> LoginIdentity:
         user = session.scalar(select(User).where(User.email == clean_email))
         if user is None or not check_password_hash(user.password_hash, password or ""):
             raise AccountError("invalid_credentials", "Email or password is incorrect")
+        if not user.is_active or user.status == "disabled":
+            raise AccountError("account_disabled", "Account is disabled")
         if user.email_verified_at is None:
             raise AccountError("verification_required", "Email verification required")
         membership = session.scalar(

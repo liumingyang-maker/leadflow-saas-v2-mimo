@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import hmac
+import os
 import time
 
 from flask import Flask, Response, redirect, render_template, request, session
@@ -221,8 +222,10 @@ def register_outreach_routes(app: Flask) -> None:
                 return "Invalid unsubscribe link", 400
             tracking_id, email, sig = parts
             expected = hmac.new(
-                b"unsub-key-v1", f"{tracking_id}:{email}".encode(), hashlib.sha256
-            ).hexdigest()[:16]
+                os.environ.get("UNSUBSCRIBE_SIGNING_KEY", "dev-unsub-key-not-for-prod").encode(),
+                f"{tracking_id}:{email}".encode(),
+                hashlib.sha256,
+            ).hexdigest()[:32]
             if not hmac.compare_digest(sig, expected):
                 return "Invalid unsubscribe link", 400
         except Exception:

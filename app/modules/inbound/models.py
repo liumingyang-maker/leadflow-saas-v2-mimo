@@ -52,6 +52,7 @@ class InboundAllowedOrigin(Base):
 
 class InboundRateLimit(Base):
     __tablename__ = "inbound_rate_limits"
+    __table_args__ = (UniqueConstraint("scope", "bucket", name="uq_rate_limits_scope_bucket"),)
 
     id: Mapped[str] = mapped_column(String(64), primary_key=True, default=_hex)
     scope: Mapped[str] = mapped_column(String(120), nullable=False, index=True)
@@ -68,6 +69,14 @@ class InboundRateLimit(Base):
 
 class InboundIdempotency(Base):
     __tablename__ = "inbound_idempotency"
+    __table_args__ = (
+        UniqueConstraint(
+            "tenant_id",
+            "token_digest",
+            "idempotency_key",
+            name="uq_idempotency_tenant_token_key",
+        ),
+    )
 
     id: Mapped[str] = mapped_column(String(64), primary_key=True, default=_hex)
     tenant_id: Mapped[str] = mapped_column(String(36), nullable=False, index=True)
