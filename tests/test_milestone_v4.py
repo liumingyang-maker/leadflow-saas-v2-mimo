@@ -28,6 +28,7 @@ def test_all_migrations_from_empty(monkeypatch) -> None:
         monkeypatch.setenv("SECRET_KEY", "test-secret-key")
 
         cfg = Config(os.path.join(os.path.dirname(__file__), "..", "alembic.ini"))
+        cfg.set_main_option("sqlalchemy.url", f"sqlite:///{db_path}")
         command.upgrade(cfg, "head")
         command.downgrade(cfg, "-1")
         command.upgrade(cfg, "head")

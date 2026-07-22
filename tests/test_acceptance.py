@@ -386,6 +386,7 @@ def test_migration_runs_from_empty_db(monkeypatch) -> None:
         monkeypatch.setenv("SECRET_KEY", "test-secret-key-that-is-long-enough")
 
         alembic_cfg = Config(os.path.join(os.path.dirname(__file__), "..", "alembic.ini"))
+        alembic_cfg.set_main_option("sqlalchemy.url", f"sqlite:///{db_path}")
         command.upgrade(alembic_cfg, "head")
         command.downgrade(alembic_cfg, "-1")
         command.upgrade(alembic_cfg, "head")

@@ -153,6 +153,7 @@ RATE_LIMIT_WINDOW_SECONDS = 3600
 def check_rate_limit(app: Flask, *, scope: str, bucket: str) -> bool:
     """Atomic rate limit check using UPDATE ... WHERE to prevent lost updates."""
     from sqlalchemy import update
+    from sqlalchemy.exc import IntegrityError
 
     now = datetime.now(UTC)
     window_end = now + timedelta(seconds=RATE_LIMIT_WINDOW_SECONDS)
@@ -173,37 +174,60 @@ def check_rate_limit(app: Flask, *, scope: str, bucket: str) -> bool:
             session.commit()
             return True
 
-        # Check if record exists but is expired -> reset it
+        # Try atomic reset of expired window
+        reset_result = session.execute(
+            update(InboundRateLimit)
+            .where(
+                InboundRateLimit.scope == scope,
+                InboundRateLimit.bucket == bucket,
+                InboundRateLimit.reset_at <= now,
+            )
+            .values(count=1, reset_at=window_end)
+        )
+        if reset_result.rowcount > 0:
+            session.commit()
+            return True
+
+        # Check if record exists and limit reached
         record = session.scalar(
             select(InboundRateLimit).where(
                 InboundRateLimit.scope == scope, InboundRateLimit.bucket == bucket
             )
         )
         if record is not None:
-            if _as_utc(record.reset_at) <= now:
-                # Expired: reset atomically
-                record.count = 1
-                record.reset_at = window_end
-                session.commit()
-                return True
-            # Limit reached
+            # Limit reached (record exists, not expired, count >= limit)
             return False
 
-        # No record: create new bucket
-        try:
-            new_record = InboundRateLimit(
-                scope=scope,
-                bucket=bucket,
-                count=1,
-                reset_at=window_end,
-            )
-            session.add(new_record)
-            session.commit()
-            return True
-        except Exception:
-            # Unique constraint violation: another process created it first, retry
-            session.rollback()
-            return check_rate_limit(app, scope=scope, bucket=bucket)
+        # No record: create new bucket (bounded retry for race)
+        for _attempt in range(3):
+            try:
+                new_record = InboundRateLimit(
+                    scope=scope,
+                    bucket=bucket,
+                    count=1,
+                    reset_at=window_end,
+                )
+                session.add(new_record)
+                session.commit()
+                return True
+            except IntegrityError:
+                session.rollback()
+                # Another process created it; retry the atomic increment
+                retry_result = session.execute(
+                    update(InboundRateLimit)
+                    .where(
+                        InboundRateLimit.scope == scope,
+                        InboundRateLimit.bucket == bucket,
+                        InboundRateLimit.reset_at > now,
+                        InboundRateLimit.count < RATE_LIMIT_COUNT,
+                    )
+                    .values(count=InboundRateLimit.count + 1)
+                )
+                if retry_result.rowcount > 0:
+                    session.commit()
+                    return True
+        # Exhausted retries
+        return False
 
 
 # ---------------------------------------------------------------------------
@@ -234,6 +258,8 @@ def check_idempotency(
 
     with _session(app) as session:
         # Try to pre-occupy: insert a "processing" record
+        from sqlalchemy.exc import IntegrityError
+
         try:
             record = InboundIdempotency(
                 tenant_id=tenant_id,
@@ -247,7 +273,7 @@ def check_idempotency(
             session.add(record)
             session.commit()
             return "new", None
-        except Exception:
+        except IntegrityError:
             session.rollback()
 
         # Record already exists - read it

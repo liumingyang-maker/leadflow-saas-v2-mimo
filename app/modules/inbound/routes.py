@@ -157,6 +157,8 @@ def register_inbound_routes(app: Flask) -> None:
             return Response(idem_response, mimetype="application/json"), 200
         if idem_status == "conflict":
             return jsonify({"error": "idempotency_key_conflict"}), 409
+        if idem_status == "processing":
+            return jsonify({"error": "request_in_progress"}), 409
 
         # Process
         result = process_inbound(
