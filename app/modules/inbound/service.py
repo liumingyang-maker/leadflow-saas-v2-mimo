@@ -151,33 +151,59 @@ RATE_LIMIT_WINDOW_SECONDS = 3600
 
 
 def check_rate_limit(app: Flask, *, scope: str, bucket: str) -> bool:
+    """Atomic rate limit check using UPDATE ... WHERE to prevent lost updates."""
+    from sqlalchemy import update
+
     now = datetime.now(UTC)
+    window_end = now + timedelta(seconds=RATE_LIMIT_WINDOW_SECONDS)
+
     with _session(app) as session:
+        # Try atomic increment: only succeeds if record exists, not expired, under limit
+        result = session.execute(
+            update(InboundRateLimit)
+            .where(
+                InboundRateLimit.scope == scope,
+                InboundRateLimit.bucket == bucket,
+                InboundRateLimit.reset_at > now,
+                InboundRateLimit.count < RATE_LIMIT_COUNT,
+            )
+            .values(count=InboundRateLimit.count + 1)
+        )
+        if result.rowcount > 0:
+            session.commit()
+            return True
+
+        # Check if record exists but is expired -> reset it
         record = session.scalar(
             select(InboundRateLimit).where(
                 InboundRateLimit.scope == scope, InboundRateLimit.bucket == bucket
             )
         )
-        if record is None:
-            record = InboundRateLimit(
+        if record is not None:
+            if _as_utc(record.reset_at) <= now:
+                # Expired: reset atomically
+                record.count = 1
+                record.reset_at = window_end
+                session.commit()
+                return True
+            # Limit reached
+            return False
+
+        # No record: create new bucket
+        try:
+            new_record = InboundRateLimit(
                 scope=scope,
                 bucket=bucket,
                 count=1,
-                reset_at=now + timedelta(seconds=RATE_LIMIT_WINDOW_SECONDS),
+                reset_at=window_end,
             )
-            session.add(record)
+            session.add(new_record)
             session.commit()
             return True
-        if _as_utc(record.reset_at) < now:
-            record.count = 1
-            record.reset_at = now + timedelta(seconds=RATE_LIMIT_WINDOW_SECONDS)
-            session.commit()
-            return True
-        if record.count >= RATE_LIMIT_COUNT:
-            return False
-        record.count += 1
-        session.commit()
-        return True
+        except Exception:
+            # Unique constraint violation: another process created it first, retry
+            session.rollback()
+            return check_rate_limit(app, scope=scope, bucket=bucket)
 
 
 # ---------------------------------------------------------------------------
@@ -190,40 +216,65 @@ FINGERPRINT_WINDOW_MINUTES = 5
 def check_idempotency(
     app: Flask, *, tenant_id: str, token_digest: str, idempotency_key: str, payload: dict[str, Any]
 ) -> tuple[str, str | None]:
-    """Returns (status, response_json or None). 'new' means proceed."""
+    """Pre-occupy pattern: atomically claim processing rights.
+
+    Returns (status, response_json or None).
+    'new' means this caller owns processing rights.
+    'replayed' means a completed result exists.
+    'processing' means another caller is currently processing.
+    'conflict' means same key but different payload.
+    """
     now = datetime.now(UTC)
     payload_str = json.dumps(payload, sort_keys=True)
     payload_digest = hashlib.sha256(payload_str.encode()).hexdigest()
 
-    if idempotency_key:
-        with _session(app) as session:
-            existing = session.scalar(
-                select(InboundIdempotency).where(
-                    InboundIdempotency.tenant_id == tenant_id,
-                    InboundIdempotency.token_digest == token_digest,
-                    InboundIdempotency.idempotency_key == idempotency_key,
-                )
-            )
-            if existing:
-                if existing.payload_digest == payload_digest and _as_utc(existing.expires_at) > now:
-                    return "replayed", existing.response_json
-                return "conflict", None
-        return "new", None
+    effective_key = idempotency_key or inbound_fingerprint_key(
+        token_digest=token_digest, payload=payload
+    )
 
-    fingerprint = inbound_fingerprint_key(token_digest=token_digest, payload=payload)
     with _session(app) as session:
+        # Try to pre-occupy: insert a "processing" record
+        try:
+            record = InboundIdempotency(
+                tenant_id=tenant_id,
+                token_digest=token_digest,
+                idempotency_key=effective_key,
+                payload_digest=payload_digest,
+                status="processing",
+                response_json="{}",
+                expires_at=now + timedelta(hours=IDEMPOTENCY_TTL_HOURS),
+            )
+            session.add(record)
+            session.commit()
+            return "new", None
+        except Exception:
+            session.rollback()
+
+        # Record already exists - read it
         existing = session.scalar(
             select(InboundIdempotency).where(
                 InboundIdempotency.tenant_id == tenant_id,
                 InboundIdempotency.token_digest == token_digest,
-                InboundIdempotency.idempotency_key == fingerprint,
+                InboundIdempotency.idempotency_key == effective_key,
             )
         )
-        if existing and _as_utc(existing.created_at) > now - timedelta(
-            minutes=FINGERPRINT_WINDOW_MINUTES
-        ):
+        if existing is None:
+            # Race: was deleted between our insert failure and read
+            return "new", None
+
+        if existing.status == "processing":
+            return "processing", None
+        if existing.payload_digest != payload_digest:
+            return "conflict", None
+        if _as_utc(existing.expires_at) > now:
             return "replayed", existing.response_json
-    return "new", None
+        # Expired: allow re-processing by updating in place
+        existing.payload_digest = payload_digest
+        existing.status = "processing"
+        existing.response_json = "{}"
+        existing.expires_at = now + timedelta(hours=IDEMPOTENCY_TTL_HOURS)
+        session.commit()
+        return "new", None
 
 
 def inbound_fingerprint_key(*, token_digest: str, payload: dict[str, Any]) -> str:
@@ -241,19 +292,27 @@ def store_idempotency(
     status: str,
     response: dict[str, Any],
 ) -> None:
+    """Update the pre-occupied idempotency record with the final result."""
+    from sqlalchemy import update
+
     now = datetime.now(UTC)
-    payload_digest = hashlib.sha256(json.dumps(payload, sort_keys=True).encode()).hexdigest()
+    effective_key = idempotency_key or inbound_fingerprint_key(
+        token_digest=token_digest, payload=payload
+    )
     with _session(app) as session:
-        record = InboundIdempotency(
-            tenant_id=tenant_id,
-            token_digest=token_digest,
-            idempotency_key=idempotency_key,
-            payload_digest=payload_digest,
-            status=status,
-            response_json=json.dumps(response),
-            expires_at=now + timedelta(hours=IDEMPOTENCY_TTL_HOURS),
+        session.execute(
+            update(InboundIdempotency)
+            .where(
+                InboundIdempotency.tenant_id == tenant_id,
+                InboundIdempotency.token_digest == token_digest,
+                InboundIdempotency.idempotency_key == effective_key,
+            )
+            .values(
+                status=status,
+                response_json=json.dumps(response),
+                expires_at=now + timedelta(hours=IDEMPOTENCY_TTL_HOURS),
+            )
         )
-        session.add(record)
         session.commit()
 
 

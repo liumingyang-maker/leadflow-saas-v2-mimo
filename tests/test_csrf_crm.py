@@ -38,11 +38,13 @@ def _dev_client(monkeypatch):
         session.commit()
         _tenant_id = tenant.id
         _user_id = user.id
+        _auth_version = user.auth_version
 
     client = flask_app.test_client()
     with client.session_transaction() as sess:
         sess["tenant_id"] = _tenant_id
         sess["user_id"] = _user_id
+        sess["auth_version"] = _auth_version
         sess["tenant_email"] = "owner@example.com"
 
     return client, engine, flask_app, _tenant_id

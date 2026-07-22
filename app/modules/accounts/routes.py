@@ -51,6 +51,7 @@ def register_account_routes(app: Flask) -> None:
         session["tenant_email"] = identity.email
         session["user_id"] = identity.user_id
         session["auth_session_id"] = uuid.uuid4().hex
+        session["auth_version"] = identity.auth_version
         return redirect("/workbench")
 
     @app.get("/verify-email/<token>")

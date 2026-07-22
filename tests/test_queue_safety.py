@@ -158,11 +158,13 @@ def _dev_client(monkeypatch):
         session.commit()
         tid = tenant.id
         uid = user.id
+        av = user.auth_version
 
     client = app.test_client()
     with client.session_transaction() as sess:
         sess["tenant_id"] = tid
         sess["user_id"] = uid
+        sess["auth_version"] = av
         sess["tenant_email"] = user.email
 
     return client, engine, app

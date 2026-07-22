@@ -55,6 +55,9 @@ WEAK_SECRET_KEYS = {
     "change-me",
     "dev-only-change-me",
     "testing-secret-key-not-for-production",
+    "dev-tracking-sign-key-not-for-prod",
+    "dev-unsub-key-not-for-prod",
+    "dev-inbound-key-32-chars-min!!",
 }
 
 
@@ -90,6 +93,8 @@ def resolve_config(config_name: str | None = None) -> type[BaseConfig]:
                 raise RuntimeError(
                     f"{key_name} is required (>=32 chars) for production configuration"
                 )
+            if value.strip().lower() in WEAK_SECRET_KEYS:
+                raise RuntimeError(f"{key_name} uses a known development default value")
         ProductionConfig.SECRET_KEY = secret_key
 
     return config_class

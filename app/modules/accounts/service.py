@@ -23,6 +23,7 @@ class LoginIdentity:
     user_id: str
     tenant_id: str
     email: str
+    auth_version: int
 
 
 def register_account(app: Flask, *, email: str, password: str, company_name: str) -> EmailToken:
@@ -106,6 +107,7 @@ def reset_password(app: Flask, *, token: str, password: str) -> None:
             raise AccountError("invalid_token", "Reset link is invalid")
 
         user.password_hash = generate_password_hash(password)
+        user.auth_version += 1  # Revoke all existing sessions
         email_token.used_at = _now()
 
 
@@ -129,7 +131,12 @@ def authenticate(app: Flask, *, email: str, password: str) -> LoginIdentity:
         user.last_login_at = now
         membership.tenant.last_activity_at = now
         session.flush()
-        return LoginIdentity(user_id=user.id, tenant_id=membership.tenant_id, email=user.email)
+        return LoginIdentity(
+            user_id=user.id,
+            tenant_id=membership.tenant_id,
+            email=user.email,
+            auth_version=user.auth_version,
+        )
 
 
 def complete_onboarding(app: Flask, *, tenant_id: str, industry: str) -> None:

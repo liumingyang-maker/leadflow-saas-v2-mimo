@@ -39,7 +39,7 @@ def test_workbench_shell_renders_primary_information_architecture(
     from sqlalchemy.orm import Session
 
     from app.extensions import get_engine
-    from app.modules.accounts.models import Tenant, User
+    from app.modules.accounts.models import Tenant, TenantMembership, User
 
     client = _client(monkeypatch)
     engine = get_engine(database_uri="sqlite:///:memory:")
@@ -56,9 +56,14 @@ def test_workbench_shell_renders_primary_information_architecture(
         session.add(user)
         session.commit()
         user_id = user.id
+        auth_version = user.auth_version
+        membership = TenantMembership(tenant_id=tenant_id, user_id=user_id, role="owner")
+        session.add(membership)
+        session.commit()
     with client.session_transaction() as session_data:
         session_data["tenant_id"] = tenant_id
         session_data["user_id"] = user_id
+        session_data["auth_version"] = auth_version
 
     response = client.get("/workbench")
     html = response.get_data(as_text=True)

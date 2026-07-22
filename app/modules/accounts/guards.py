@@ -6,8 +6,9 @@ from functools import wraps
 from typing import Any
 
 from flask import Flask, redirect, session
+from sqlalchemy import select
 
-from app.modules.accounts.models import Tenant, User
+from app.modules.accounts.models import Tenant, TenantMembership, User
 from app.modules.accounts.repository import session_scope
 
 
@@ -19,24 +20,48 @@ def tenant_required(
         def wrapped(*args: Any, **kwargs: Any) -> Any:
             tenant_id = session.get("tenant_id")
             user_id = session.get("user_id")
-            if not tenant_id:
+            # Both tenant_id and user_id are required
+            if not tenant_id or not user_id:
+                session.clear()
                 return redirect("/login")
+
             with session_scope(app) as db_session:
-                tenant = db_session.get(Tenant, tenant_id)
-                if tenant is None:
+                # Single join query: verify membership + user + tenant
+                membership = db_session.scalar(
+                    select(TenantMembership)
+                    .join(User, TenantMembership.user_id == User.id)
+                    .join(Tenant, TenantMembership.tenant_id == Tenant.id)
+                    .where(
+                        TenantMembership.tenant_id == tenant_id,
+                        TenantMembership.user_id == user_id,
+                    )
+                )
+                if membership is None:
                     session.clear()
                     return redirect("/login")
+
+                user = membership.user
+                tenant = membership.tenant
+
+                # User must be active (not invited, not disabled)
+                if not user.is_active or user.status != "active":
+                    session.clear()
+                    return redirect("/login")
+
+                # Verify auth_version (session revocation)
+                session_version = session.get("auth_version")
+                if session_version is None or session_version != user.auth_version:
+                    session.clear()
+                    return redirect("/login")
+
+                # Tenant must not be suspended
                 if tenant.status == "suspended":
                     session.clear()
                     return redirect("/login")
-                # Verify user is still active
-                if user_id:
-                    user = db_session.get(User, user_id)
-                    if user is None or not user.is_active or user.status == "disabled":
-                        session.clear()
-                        return redirect("/login")
+
                 if not allow_expired and tenant_is_expired(tenant):
                     return redirect("/upgrade")
+
             return view(*args, **kwargs)
 
         return wrapped

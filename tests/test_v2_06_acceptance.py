@@ -53,11 +53,12 @@ def _seed(engine) -> tuple[str, str, str, str]:
         return tenant_a.id, tenant_b.id, user_a.id, admin.id
 
 
-def _tenant_session(client, *, tenant_id: str, user_id: str) -> None:
+def _tenant_session(client, *, tenant_id: str, user_id: str, auth_version: int = 1) -> None:
     with client.session_transaction() as sess:
         sess.clear()
         sess["tenant_id"] = tenant_id
         sess["user_id"] = user_id
+        sess["auth_version"] = auth_version
         sess["tenant_email"] = "owner-a@example.com"
 
 

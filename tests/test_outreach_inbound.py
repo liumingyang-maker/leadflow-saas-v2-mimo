@@ -42,11 +42,13 @@ def _login_client(app, engine):
         session.commit()
         tenant_id = tenant.id
         user_id = user.id
+        auth_version = user.auth_version
 
     client = app.test_client()
     with client.session_transaction() as sess:
         sess["tenant_id"] = tenant_id
         sess["user_id"] = user_id
+        sess["auth_version"] = auth_version
         sess["tenant_email"] = "owner@example.com"
     return client, tenant_id
 
