@@ -1,0 +1,5 @@
+{% from "components/_shell.html" import shell %}{% from "components/_badges.html" import badge %}
+{% call shell("System diagnostics") %}
+<header class="lf-page-header"><div><span class="lf-eyebrow">Admin</span><h1 class="lf-page-title">System diagnostics</h1></div></header>
+<section class="lf-panel"><dl class="lf-dl"><dt>Python version</dt><dd>{{ info.python_version }}</dd><dt>Environment</dt><dd>{{ info.env }}</dd><dt>Database</dt><dd><span class="lf-badge {% if info.db_connected %}lf-badge-success{% endif %}">{{ "Connected" if info.db_connected else "Not connected" }}</span></dd><dt>Redis configured</dt><dd>{{ info.redis_url_configured }}</dd></dl></section>
+{% endcall %}

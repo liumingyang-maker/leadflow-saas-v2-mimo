@@ -1,0 +1,44 @@
+{% from "components/_shell.html" import shell %}
+{% from "components/_buttons.html" import button %}
+{% from "components/_badges.html" import badge %}
+{% from "components/_empty_states.html" import empty_state %}
+
+{% call shell("Job: " ~ job.job_type) %}
+<header class="lf-page-header">
+  <div>
+    <span class="lf-eyebrow">Collection job</span>
+    <h1 class="lf-page-title">{{ job.job_type }}</h1>
+    <p>{{ job.progress_message or "Job created" }}</p>
+  </div>
+  <a href="/collection" class="lf-button">Back</a>
+</header>
+
+<div id="job-status-container"
+     hx-get="/collection/jobs/{{ job.id }}/status"
+     hx-trigger="every 3s"
+     hx-swap="innerHTML"
+     hx-target="#job-status-container">
+  {% include "collection/_job_status.html" %}
+</div>
+
+{% if job.status == "succeeded" %}
+<div class="lf-section">
+  <a href="/leads" class="lf-button lf-button-primary">View leads</a>
+</div>
+{% endif %}
+
+<script>
+// Stop polling when job reaches terminal state
+document.body.addEventListener('htmx:afterSwap', function(evt) {
+  if (evt.detail.target && evt.detail.target.id === 'job-status-container') {
+    var el = document.getElementById('job-status-container');
+    if (el && el.getAttribute('hx-trigger')) {
+      var terminal = el.querySelector('[data-terminal]');
+      if (terminal) {
+        htmx.remove(el);
+      }
+    }
+  }
+});
+</script>
+{% endcall %}

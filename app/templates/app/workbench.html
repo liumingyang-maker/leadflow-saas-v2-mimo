@@ -1,0 +1,49 @@
+{% from "components/_shell.html" import shell %}
+{% from "components/_buttons.html" import button %}
+{% from "components/_badges.html" import badge %}
+{% from "components/_empty_states.html" import empty_state %}
+{% from "components/_stats.html" import stat %}
+{% from "components/_jobs.html" import job_progress %}
+{% from "components/_alerts.html" import inline_notice %}
+
+{% call shell("Workbench") %}
+<header class="lf-page-header">
+  <div>
+    <span class="lf-eyebrow">Workbench</span>
+    <h1 class="lf-page-title">LeadFlow command center</h1>
+    <p>Review today&apos;s lead signals, blocked setup, and follow-up work.</p>
+  </div>
+  {{ button("Find customers", "primary") }}
+</header>
+
+<nav class="lf-top-nav" aria-label="Primary navigation">
+  <a href="/workbench" aria-current="page">Workbench</a>
+  <a href="/collect">Find customers</a>
+  <a href="/leads">Lead review</a>
+  <a href="/crm">CRM</a>
+  <a href="/outreach">Outreach</a>
+  <a href="/settings">Settings</a>
+</nav>
+
+<section class="lf-grid" aria-label="Key metrics">
+  {{ stat("Accepted leads", "0", "Waiting for first review") }}
+  {{ stat("Tasks running", "0", "Loading current tasks") }}
+  {{ stat("Follow-ups due", "0", "No overdue work") }}
+</section>
+
+<section class="lf-grid lf-section">
+  <article class="lf-panel">
+    <h2>Current task</h2>
+    {{ job_progress("Loading current tasks", 35) }}
+  </article>
+  <article class="lf-panel">
+    <h2>Review queue</h2>
+    {{ empty_state("No reviewed leads yet", "Imported and collected leads will wait here for review.", "Import leads") }}
+  </article>
+  <article class="lf-panel">
+    <h2>Pipeline</h2>
+    {{ inline_notice("Unable to load pipeline", "Connect the data layer in the next milestone.") }}
+    {{ badge("Setup required") }}
+  </article>
+</section>
+{% endcall %}

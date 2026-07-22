@@ -1,0 +1,150 @@
+{
+  "milestone": "V2-01",
+  "tasks": [
+    {
+      "id": "V2-01-001",
+      "title": "Initialize V2 repository and governance",
+      "category": "foundation",
+      "worker": "reasonix-deepseek",
+      "controller": "codex",
+      "branch": "task/v2-01-001-initialize-v2-repository-and-governance",
+      "required_gates": [
+        "ruff",
+        "format",
+        "pytest",
+        "diff_check"
+      ]
+    },
+    {
+      "id": "V2-01-002",
+      "title": "Create Application Factory and typed config",
+      "category": "backend",
+      "worker": "reasonix-deepseek",
+      "controller": "codex",
+      "branch": "task/v2-01-002-create-application-factory-and-typed-config",
+      "required_gates": [
+        "ruff",
+        "format",
+        "pytest",
+        "diff_check"
+      ]
+    },
+    {
+      "id": "V2-01-003",
+      "title": "Initialize SQLAlchemy and Alembic",
+      "category": "data",
+      "worker": "reasonix-deepseek",
+      "controller": "codex",
+      "branch": "task/v2-01-003-initialize-sqlalchemy-and-alembic",
+      "required_gates": [
+        "ruff",
+        "format",
+        "pytest",
+        "diff_check"
+      ]
+    },
+    {
+      "id": "V2-01-004",
+      "title": "Add security middleware and error handling",
+      "category": "security",
+      "worker": "reasonix-deepseek",
+      "controller": "codex",
+      "branch": "task/v2-01-004-add-security-middleware-and-error-handling",
+      "required_gates": [
+        "ruff",
+        "format",
+        "pytest",
+        "diff_check",
+        "security_review"
+      ]
+    },
+    {
+      "id": "V2-01-005",
+      "title": "Add request ID and health endpoints",
+      "category": "backend",
+      "worker": "reasonix-deepseek",
+      "controller": "codex",
+      "branch": "task/v2-01-005-add-request-id-and-health-endpoints",
+      "required_gates": [
+        "ruff",
+        "format",
+        "pytest",
+        "diff_check"
+      ]
+    },
+    {
+      "id": "V2-01-006",
+      "title": "Create test, lint and CI baseline",
+      "category": "quality",
+      "worker": "reasonix-deepseek",
+      "controller": "codex",
+      "branch": "task/v2-01-006-create-test-lint-and-ci-baseline",
+      "required_gates": [
+        "ruff",
+        "format",
+        "pytest",
+        "diff_check"
+      ]
+    },
+    {
+      "id": "V2-01-007",
+      "title": "Create Docker development environment",
+      "category": "devops",
+      "worker": "reasonix-deepseek",
+      "controller": "codex",
+      "branch": "task/v2-01-007-create-docker-development-environment",
+      "required_gates": [
+        "ruff",
+        "format",
+        "pytest",
+        "diff_check"
+      ]
+    },
+    {
+      "id": "V2-01-008",
+      "title": "Install design skills and generate design system",
+      "category": "ui",
+      "worker": "reasonix-deepseek",
+      "controller": "codex",
+      "branch": "task/v2-01-008-install-design-skills-and-generate-design-sys",
+      "required_gates": [
+        "ruff",
+        "format",
+        "pytest",
+        "diff_check",
+        "ui_audit",
+        "playwright"
+      ]
+    },
+    {
+      "id": "V2-01-009",
+      "title": "Implement app shell, login placeholder and component primitives",
+      "category": "ui",
+      "worker": "reasonix-deepseek",
+      "controller": "codex",
+      "branch": "task/v2-01-009-implement-app-shell-login-placeholder-and-com",
+      "required_gates": [
+        "ruff",
+        "format",
+        "pytest",
+        "diff_check",
+        "ui_audit",
+        "playwright"
+      ]
+    },
+    {
+      "id": "V2-01-010",
+      "title": "Milestone acceptance and release candidate",
+      "category": "release",
+      "worker": "reasonix-deepseek",
+      "controller": "codex",
+      "branch": "task/v2-01-010-milestone-acceptance-and-release-candidate",
+      "required_gates": [
+        "ruff",
+        "format",
+        "pytest",
+        "diff_check"
+      ]
+    }
+  ]
+}

@@ -1,0 +1,153 @@
+{
+  "milestone": "V2-05",
+  "tasks": [
+    {
+      "id": "V2-05-001",
+      "title": "Email template domain and UI",
+      "category": "ui",
+      "worker": "reasonix-deepseek",
+      "controller": "codex",
+      "branch": "task/v2-05-001-email-template-domain-and-ui",
+      "required_gates": [
+        "ruff",
+        "format",
+        "pytest",
+        "diff_check",
+        "ui_audit",
+        "playwright"
+      ]
+    },
+    {
+      "id": "V2-05-002",
+      "title": "SMTP adapter and deliverability checks",
+      "category": "integration",
+      "worker": "reasonix-deepseek",
+      "controller": "codex",
+      "branch": "task/v2-05-002-smtp-adapter-and-deliverability-checks",
+      "required_gates": [
+        "ruff",
+        "format",
+        "pytest",
+        "diff_check"
+      ]
+    },
+    {
+      "id": "V2-05-003",
+      "title": "Single-send outreach workflow",
+      "category": "backend",
+      "worker": "reasonix-deepseek",
+      "controller": "codex",
+      "branch": "task/v2-05-003-single-send-outreach-workflow",
+      "required_gates": [
+        "ruff",
+        "format",
+        "pytest",
+        "diff_check"
+      ]
+    },
+    {
+      "id": "V2-05-004",
+      "title": "Outreach activities and follow-up records",
+      "category": "backend",
+      "worker": "reasonix-deepseek",
+      "controller": "codex",
+      "branch": "task/v2-05-004-outreach-activities-and-follow-up-records",
+      "required_gates": [
+        "ruff",
+        "format",
+        "pytest",
+        "diff_check"
+      ]
+    },
+    {
+      "id": "V2-05-005",
+      "title": "Inbound token and public API",
+      "category": "security",
+      "worker": "reasonix-deepseek",
+      "controller": "codex",
+      "branch": "task/v2-05-005-inbound-token-and-public-api",
+      "required_gates": [
+        "ruff",
+        "format",
+        "pytest",
+        "diff_check",
+        "security_review"
+      ]
+    },
+    {
+      "id": "V2-05-006",
+      "title": "Persistent rate limit and idempotency",
+      "category": "security",
+      "worker": "reasonix-deepseek",
+      "controller": "codex",
+      "branch": "task/v2-05-006-persistent-rate-limit-and-idempotency",
+      "required_gates": [
+        "ruff",
+        "format",
+        "pytest",
+        "diff_check",
+        "security_review"
+      ]
+    },
+    {
+      "id": "V2-05-007",
+      "title": "Click tracking safe redirect",
+      "category": "security",
+      "worker": "reasonix-deepseek",
+      "controller": "codex",
+      "branch": "task/v2-05-007-click-tracking-safe-redirect",
+      "required_gates": [
+        "ruff",
+        "format",
+        "pytest",
+        "diff_check",
+        "security_review"
+      ]
+    },
+    {
+      "id": "V2-05-008",
+      "title": "Signed unsubscribe flow",
+      "category": "security",
+      "worker": "reasonix-deepseek",
+      "controller": "codex",
+      "branch": "task/v2-05-008-signed-unsubscribe-flow",
+      "required_gates": [
+        "ruff",
+        "format",
+        "pytest",
+        "diff_check",
+        "security_review"
+      ]
+    },
+    {
+      "id": "V2-05-009",
+      "title": "Outreach and inbound UI states",
+      "category": "ui",
+      "worker": "reasonix-deepseek",
+      "controller": "codex",
+      "branch": "task/v2-05-009-outreach-and-inbound-ui-states",
+      "required_gates": [
+        "ruff",
+        "format",
+        "pytest",
+        "diff_check",
+        "ui_audit",
+        "playwright"
+      ]
+    },
+    {
+      "id": "V2-05-010",
+      "title": "Milestone security and E2E acceptance",
+      "category": "release",
+      "worker": "reasonix-deepseek",
+      "controller": "codex",
+      "branch": "task/v2-05-010-milestone-security-and-e2e-acceptance",
+      "required_gates": [
+        "ruff",
+        "format",
+        "pytest",
+        "diff_check"
+      ]
+    }
+  ]
+}

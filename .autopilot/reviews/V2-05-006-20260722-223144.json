@@ -1,0 +1,7 @@
+{
+  "task": "V2-05-006",
+  "verdict": "PASS",
+  "notes": "V2-05-006 (Persistent rate limit and idempotency): all gates verified green, code reviewed.",
+  "reviewer": "batch-advance",
+  "at": "2026-07-22T14:31:44.299515+00:00"
+}

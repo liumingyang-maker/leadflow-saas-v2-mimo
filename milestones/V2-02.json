@@ -1,0 +1,151 @@
+{
+  "milestone": "V2-02",
+  "tasks": [
+    {
+      "id": "V2-02-001",
+      "title": "Tenant, user, admin and plan models",
+      "category": "data",
+      "worker": "reasonix-deepseek",
+      "controller": "codex",
+      "branch": "task/v2-02-001-tenant-user-admin-and-plan-models",
+      "required_gates": [
+        "ruff",
+        "format",
+        "pytest",
+        "diff_check"
+      ]
+    },
+    {
+      "id": "V2-02-002",
+      "title": "Registration, verification and login",
+      "category": "backend",
+      "worker": "reasonix-deepseek",
+      "controller": "codex",
+      "branch": "task/v2-02-002-registration-verification-and-login",
+      "required_gates": [
+        "ruff",
+        "format",
+        "pytest",
+        "diff_check"
+      ]
+    },
+    {
+      "id": "V2-02-003",
+      "title": "Password reset and session rotation",
+      "category": "security",
+      "worker": "reasonix-deepseek",
+      "controller": "codex",
+      "branch": "task/v2-02-003-password-reset-and-session-rotation",
+      "required_gates": [
+        "ruff",
+        "format",
+        "pytest",
+        "diff_check",
+        "security_review"
+      ]
+    },
+    {
+      "id": "V2-02-004",
+      "title": "Tenant isolation policies and repositories",
+      "category": "security",
+      "worker": "reasonix-deepseek",
+      "controller": "codex",
+      "branch": "task/v2-02-004-tenant-isolation-policies-and-repositories",
+      "required_gates": [
+        "ruff",
+        "format",
+        "pytest",
+        "diff_check",
+        "security_review"
+      ]
+    },
+    {
+      "id": "V2-02-005",
+      "title": "Tenant state and plan guards",
+      "category": "backend",
+      "worker": "reasonix-deepseek",
+      "controller": "codex",
+      "branch": "task/v2-02-005-tenant-state-and-plan-guards",
+      "required_gates": [
+        "ruff",
+        "format",
+        "pytest",
+        "diff_check"
+      ]
+    },
+    {
+      "id": "V2-02-006",
+      "title": "Administrator lifecycle and console foundation",
+      "category": "backend",
+      "worker": "reasonix-deepseek",
+      "controller": "codex",
+      "branch": "task/v2-02-006-administrator-lifecycle-and-console-foundatio",
+      "required_gates": [
+        "ruff",
+        "format",
+        "pytest",
+        "diff_check"
+      ]
+    },
+    {
+      "id": "V2-02-007",
+      "title": "Secret encryption and rotation service",
+      "category": "security",
+      "worker": "reasonix-deepseek",
+      "controller": "codex",
+      "branch": "task/v2-02-007-secret-encryption-and-rotation-service",
+      "required_gates": [
+        "ruff",
+        "format",
+        "pytest",
+        "diff_check",
+        "security_review"
+      ]
+    },
+    {
+      "id": "V2-02-008",
+      "title": "CSRF, cookie and trusted proxy configuration",
+      "category": "security",
+      "worker": "reasonix-deepseek",
+      "controller": "codex",
+      "branch": "task/v2-02-008-csrf-cookie-and-trusted-proxy-configuration",
+      "required_gates": [
+        "ruff",
+        "format",
+        "pytest",
+        "diff_check",
+        "security_review"
+      ]
+    },
+    {
+      "id": "V2-02-009",
+      "title": "Account, onboarding and admin UI",
+      "category": "ui",
+      "worker": "reasonix-deepseek",
+      "controller": "codex",
+      "branch": "task/v2-02-009-account-onboarding-and-admin-ui",
+      "required_gates": [
+        "ruff",
+        "format",
+        "pytest",
+        "diff_check",
+        "ui_audit",
+        "playwright"
+      ]
+    },
+    {
+      "id": "V2-02-010",
+      "title": "Account and tenant E2E acceptance",
+      "category": "release",
+      "worker": "reasonix-deepseek",
+      "controller": "codex",
+      "branch": "task/v2-02-010-account-and-tenant-e2e-acceptance",
+      "required_gates": [
+        "ruff",
+        "format",
+        "pytest",
+        "diff_check"
+      ]
+    }
+  ]
+}

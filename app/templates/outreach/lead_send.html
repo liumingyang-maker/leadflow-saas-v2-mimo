@@ -1,0 +1,74 @@
+{% from "components/_shell.html" import shell %}
+{% from "components/_buttons.html" import button %}
+{% from "components/_forms.html" import csrf_input %}
+{% from "components/_badges.html" import badge %}
+{% from "components/_empty_states.html" import empty_state %}
+{% call shell("Send to " ~ lead.email) %}
+<header class="lf-page-header">
+  <div>
+    <span class="lf-eyebrow">Outreach</span>
+    <h1 class="lf-page-title">Send to {{ lead.email }}</h1>
+    <p>{{ lead.first_name }} {{ lead.last_name }}</p>
+  </div>
+  <a href="/leads/{{ lead.id }}" class="lf-button">Back to lead</a>
+</header>
+
+{% if error %}
+<div class="lf-alert" role="alert">{{ error }}</div>
+{% endif %}
+
+<section class="lf-panel lf-form-stack">
+  <h2>Compose email</h2>
+  <form method="post" action="/leads/{{ lead.id }}/outreach/send">
+    {{ csrf_input() }}
+    <div class="lf-field-group">
+      <label class="lf-label" for="to_email">To</label>
+      <input class="lf-field" id="to_email" name="to_email" type="email" value="{{ lead.email }}" readonly>
+    </div>
+    <div class="lf-field-group">
+      <label class="lf-label" for="template_id">Use template (optional)</label>
+      <select class="lf-field" id="template_id" name="template_id">
+        <option value="">-- No template --</option>
+        {% for t in templates %}
+        <option value="{{ t.id }}">{{ t.name }} — {{ t.subject }}</option>
+        {% endfor %}
+      </select>
+    </div>
+    <div class="lf-field-group">
+      <label class="lf-label" for="subject">Subject</label>
+      <input class="lf-field" id="subject" name="subject" required>
+    </div>
+    <div class="lf-field-group">
+      <label class="lf-label" for="body_text">Body (text)</label>
+      <textarea class="lf-field" id="body_text" name="body_text" rows="8"></textarea>
+    </div>
+    {{ button("Send (fake)", "primary", "submit") }}
+  </form>
+</section>
+
+<section class="lf-section">
+  <h2>Sent history</h2>
+  {% if messages %}
+  <table class="lf-table">
+    <thead>
+      <tr>
+        <th>Date</th>
+        <th>Subject</th>
+        <th>Status</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for m in messages %}
+      <tr>
+        <td>{{ m.created_at.strftime("%Y-%m-%d %H:%M") if m.created_at else "" }}</td>
+        <td>{{ m.subject }}</td>
+        <td><span class="lf-badge">{{ m.status }}</span></td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  {% else %}
+  {{ empty_state("No messages sent yet", "Send your first email to this lead.") }}
+  {% endif %}
+</section>
+{% endcall %}

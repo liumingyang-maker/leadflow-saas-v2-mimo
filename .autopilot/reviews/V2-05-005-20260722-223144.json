@@ -1,0 +1,7 @@
+{
+  "task": "V2-05-005",
+  "verdict": "PASS",
+  "notes": "V2-05-005 (Inbound token and public API): all gates verified green, code reviewed.",
+  "reviewer": "batch-advance",
+  "at": "2026-07-22T14:31:44.289003+00:00"
+}

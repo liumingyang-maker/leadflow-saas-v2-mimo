@@ -1,0 +1,22 @@
+{% from "components/_shell.html" import shell %}
+{% from "components/_buttons.html" import button %}
+{% from "components/_forms.html" import field, csrf_input %}
+
+{% call shell("Google Search collection") %}
+<header class="lf-page-header">
+  <div>
+    <span class="lf-eyebrow">Collection</span>
+    <h1 class="lf-page-title">Google Search</h1>
+    <p>Find leads by keyword search across the web.</p>
+  </div>
+</header>
+
+<form class="lf-panel lf-form-stack" method="post" action="/collection/search">
+  {{ csrf_input() }}
+  {% if error %}<div class="lf-alert" role="alert">{{ error }}</div>{% endif %}
+  {{ field("query", "Search query", "text", "", "e.g. software companies in San Francisco") }}
+  {{ field("max_results", "Max results", "number", "20", "Up to 100") }}
+  {{ button("Start collection", "primary", "submit") }}
+  <p class="lf-muted"><a href="/collection">Back to workspace</a></p>
+</form>
+{% endcall %}

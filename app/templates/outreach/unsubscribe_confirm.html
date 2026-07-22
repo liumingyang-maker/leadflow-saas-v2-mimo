@@ -1,0 +1,14 @@
+{% from "components/_shell.html" import shell %}
+{% from "components/_buttons.html" import button %}
+{% call shell("Unsubscribe confirmation") %}
+<main class="lf-main" id="main">
+  <div class="lf-empty-state">
+    <h1>Unsubscribe</h1>
+    <p>Are you sure you want to unsubscribe {{ email }}?</p>
+    <form method="post" action="/unsubscribe/{{ token }}">
+      {{ button("Confirm unsubscribe", "primary", "submit") }}
+    </form>
+    <p style="margin-top:1rem"><a href="/" class="lf-button">Cancel</a></p>
+  </div>
+</main>
+{% endcall %}

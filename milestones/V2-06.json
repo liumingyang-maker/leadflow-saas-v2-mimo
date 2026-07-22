@@ -1,0 +1,180 @@
+{
+  "milestone": "V2-06",
+  "tasks": [
+    {
+      "id": "V2-06-001",
+      "title": "Administrator tenant management",
+      "category": "backend",
+      "worker": "reasonix-deepseek",
+      "controller": "codex",
+      "branch": "task/v2-06-001-administrator-tenant-management",
+      "required_gates": [
+        "ruff",
+        "format",
+        "pytest",
+        "diff_check"
+      ]
+    },
+    {
+      "id": "V2-06-002",
+      "title": "Plan, coupon and payment domain",
+      "category": "backend",
+      "worker": "reasonix-deepseek",
+      "controller": "codex",
+      "branch": "task/v2-06-002-plan-coupon-and-payment-domain",
+      "required_gates": [
+        "ruff",
+        "format",
+        "pytest",
+        "diff_check"
+      ]
+    },
+    {
+      "id": "V2-06-003",
+      "title": "Payment adapter and webhook safety",
+      "category": "security",
+      "worker": "reasonix-deepseek",
+      "controller": "codex",
+      "branch": "task/v2-06-003-payment-adapter-and-webhook-safety",
+      "required_gates": [
+        "ruff",
+        "format",
+        "pytest",
+        "diff_check",
+        "security_review"
+      ]
+    },
+    {
+      "id": "V2-06-004",
+      "title": "Complete shared component system",
+      "category": "ui",
+      "worker": "reasonix-deepseek",
+      "controller": "codex",
+      "branch": "task/v2-06-004-complete-shared-component-system",
+      "required_gates": [
+        "ruff",
+        "format",
+        "pytest",
+        "diff_check",
+        "ui_audit",
+        "playwright"
+      ]
+    },
+    {
+      "id": "V2-06-005",
+      "title": "Dashboard and analytics polish",
+      "category": "ui",
+      "worker": "reasonix-deepseek",
+      "controller": "codex",
+      "branch": "task/v2-06-005-dashboard-and-analytics-polish",
+      "required_gates": [
+        "ruff",
+        "format",
+        "pytest",
+        "diff_check",
+        "ui_audit",
+        "playwright"
+      ]
+    },
+    {
+      "id": "V2-06-006",
+      "title": "Dark mode and responsive polish",
+      "category": "ui",
+      "worker": "reasonix-deepseek",
+      "controller": "codex",
+      "branch": "task/v2-06-006-dark-mode-and-responsive-polish",
+      "required_gates": [
+        "ruff",
+        "format",
+        "pytest",
+        "diff_check",
+        "ui_audit",
+        "playwright"
+      ]
+    },
+    {
+      "id": "V2-06-007",
+      "title": "Legacy-to-V2 migration tools",
+      "category": "data",
+      "worker": "reasonix-deepseek",
+      "controller": "codex",
+      "branch": "task/v2-06-007-legacy-to-v2-migration-tools",
+      "required_gates": [
+        "ruff",
+        "format",
+        "pytest",
+        "diff_check"
+      ]
+    },
+    {
+      "id": "V2-06-008",
+      "title": "Staging environment and smoke tests",
+      "category": "devops",
+      "worker": "reasonix-deepseek",
+      "controller": "codex",
+      "branch": "task/v2-06-008-staging-environment-and-smoke-tests",
+      "required_gates": [
+        "ruff",
+        "format",
+        "pytest",
+        "diff_check"
+      ]
+    },
+    {
+      "id": "V2-06-009",
+      "title": "Backup and restore tooling",
+      "category": "devops",
+      "worker": "reasonix-deepseek",
+      "controller": "codex",
+      "branch": "task/v2-06-009-backup-and-restore-tooling",
+      "required_gates": [
+        "ruff",
+        "format",
+        "pytest",
+        "diff_check"
+      ]
+    },
+    {
+      "id": "V2-06-010",
+      "title": "Old-vs-V2 acceptance matrix",
+      "category": "quality",
+      "worker": "reasonix-deepseek",
+      "controller": "codex",
+      "branch": "task/v2-06-010-old-vs-v2-acceptance-matrix",
+      "required_gates": [
+        "ruff",
+        "format",
+        "pytest",
+        "diff_check"
+      ]
+    },
+    {
+      "id": "V2-06-011",
+      "title": "Release and rollback scripts",
+      "category": "devops",
+      "worker": "reasonix-deepseek",
+      "controller": "codex",
+      "branch": "task/v2-06-011-release-and-rollback-scripts",
+      "required_gates": [
+        "ruff",
+        "format",
+        "pytest",
+        "diff_check"
+      ]
+    },
+    {
+      "id": "V2-06-012",
+      "title": "Final staging acceptance",
+      "category": "release",
+      "worker": "reasonix-deepseek",
+      "controller": "codex",
+      "branch": "task/v2-06-012-final-staging-acceptance",
+      "required_gates": [
+        "ruff",
+        "format",
+        "pytest",
+        "diff_check"
+      ]
+    }
+  ]
+}

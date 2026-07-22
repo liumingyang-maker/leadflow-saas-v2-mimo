@@ -1,0 +1,124 @@
+{% from "components/_shell.html" import shell %}
+{% from "components/_buttons.html" import button %}
+{% from "components/_badges.html" import badge %}
+{% from "components/_forms.html" import field, csrf_input %}
+{% from "components/_empty_states.html" import empty_state %}
+{% from "components/_alerts.html" import inline_notice %}
+
+{% call shell("Lead: " ~ lead.email) %}
+<header class="lf-page-header">
+  <div>
+    <span class="lf-eyebrow">CRM</span>
+    <h1 class="lf-page-title">{{ lead.email }}</h1>
+    <p>{{ lead.first_name }} {{ lead.last_name }}{% if lead.title %} &mdash; {{ lead.title }}{% endif %}</p>
+  </div>
+  <a href="/leads" class="lf-button">Back to leads</a>
+</header>
+
+<div class="lf-grid lf-section">
+  <!-- Contact info -->
+  <section class="lf-panel">
+    <h2>Contact</h2>
+    <dl class="lf-dl">
+      <dt>Email</dt><dd>{{ lead.email }}</dd>
+      <dt>Phone</dt><dd>{{ lead.phone or "N/A" }}</dd>
+      <dt>Website</dt><dd>{% if lead.website %}<a href="{{ lead.website }}">{{ lead.website }}</a>{% else %}N/A{% endif %}</dd>
+      <dt>LinkedIn</dt><dd>{% if lead.linkedin_url %}<a href="{{ lead.linkedin_url }}">{{ lead.linkedin_url }}</a>{% else %}N/A{% endif %}</dd>
+    </dl>
+  </section>
+
+  <!-- Status & stage -->
+  <section class="lf-panel">
+    <h2>Pipeline</h2>
+    <dl class="lf-dl">
+      <dt>Status</dt><dd><span class="lf-badge">{{ lead.status }}</span></dd>
+      <dt>Stage</dt>
+      <dd>
+        <form method="post" action="/leads/{{ lead.id }}/stage">
+          {{ csrf_input() }}
+          <select class="lf-field" name="stage">
+              <option value="new" {% if lead.stage == 'new' %}selected{% endif %}>New</option>
+              <option value="contacted" {% if lead.stage == 'contacted' %}selected{% endif %}>Contacted</option>
+              <option value="qualified" {% if lead.stage == 'qualified' %}selected{% endif %}>Qualified</option>
+              <option value="proposal" {% if lead.stage == 'proposal' %}selected{% endif %}>Proposal</option>
+              <option value="negotiation" {% if lead.stage == 'negotiation' %}selected{% endif %}>Negotiation</option>
+              <option value="won" {% if lead.stage == 'won' %}selected{% endif %}>Won</option>
+              <option value="lost" {% if lead.stage == 'lost' %}selected{% endif %}>Lost</option>
+            </select>
+            <button class="lf-button" type="submit">Update stage</button>
+          </form>
+        </dd>
+      <dt>Source</dt><dd>{{ lead.source }}</dd>
+    </dl>
+
+    <div class="lf-status-row">
+      <form method="post" action="/leads/{{ lead.id }}/review">
+        {{ csrf_input() }}
+        <input type="hidden" name="decision" value="accepted">
+        <button class="lf-button lf-button-primary" type="submit">Accept</button>
+      </form>
+      <form method="post" action="/leads/{{ lead.id }}/review">
+        {{ csrf_input() }}
+        <input type="hidden" name="decision" value="rejected">
+        <button class="lf-button" type="submit">Reject</button>
+      </form>
+    </div>
+  </section>
+
+  <!-- Tags -->
+  <section class="lf-panel">
+    <h2>Tags</h2>
+    <div class="lf-status-row">
+      {% for t in tags %}
+      <span class="lf-badge" style="border-color: {{ t.color }}">{{ t.name }}</span>
+      {% else %}
+      <p class="lf-muted">No tags yet</p>
+      {% endfor %}
+    </div>
+    <form class="lf-form-stack" method="post" action="/leads/{{ lead.id }}/tag">
+      {{ csrf_input() }}
+      <div class="lf-field-group">
+        <label class="lf-label" for="tag_name">Add tag</label>
+        <input class="lf-field" id="tag_name" name="tag_name" placeholder="e.g. VIP">
+      </div>
+      {{ button("Add", "primary", "submit") }}
+    </form>
+  </section>
+</div>
+
+<!-- Notes -->
+<section class="lf-panel lf-section">
+  <h2>Notes</h2>
+  {% if lead.notes %}
+  <pre class="lf-notes">{{ lead.notes }}</pre>
+  {% else %}
+  <p class="lf-muted">No notes yet.</p>
+  {% endif %}
+  <form class="lf-form-stack" method="post" action="/leads/{{ lead.id }}/note">
+    {{ csrf_input() }}
+    <div class="lf-field-group">
+      <label class="lf-label" for="note">Add note</label>
+      <textarea class="lf-field" id="note" name="note" rows="3"></textarea>
+    </div>
+    {{ button("Save note", "primary", "submit") }}
+  </form>
+</section>
+
+<!-- Activity timeline -->
+<section class="lf-panel lf-section">
+  <h2>Activity timeline</h2>
+  {% if timeline %}
+  <ol class="lf-timeline">
+    {% for a in timeline %}
+    <li class="lf-timeline-item">
+      <time class="lf-timeline-time">{{ a.created_at.strftime("%Y-%m-%d %H:%M") if a.created_at else "" }}</time>
+      <span class="lf-badge">{{ a.action }}</span>
+      <span>{{ a.description }}</span>
+    </li>
+    {% endfor %}
+  </ol>
+  {% else %}
+  {{ empty_state("No activity yet", "Lead actions will appear here.") }}
+  {% endif %}
+</section>
+{% endcall %}

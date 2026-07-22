@@ -1,0 +1,67 @@
+{
+  "project_name": "leadflow-saas-v2",
+  "repo_path": "C:/Users/97020/Desktop/leadflow-saas-v2",
+  "old_repo_path": "C:/Users/97020/Desktop/leads-saas",
+  "reasonix_mcp_tool_hint": "reasonix",
+  "controller": {
+    "command": [
+      "codex",
+      "exec",
+      "--sandbox",
+      "workspace-write",
+      "--ask-for-approval",
+      "on-request",
+      "-c",
+      "approvals_reviewer=auto_review",
+      "-"
+    ],
+    "direct_feature_code_max_changed_lines": 30
+  },
+  "worker": {
+    "mode": "mcp_delegated",
+    "name": "Reasonix/DeepSeek",
+    "max_fix_rounds": 4
+  },
+  "milestones": [
+    "V2-01",
+    "V2-02",
+    "V2-03",
+    "V2-04",
+    "V2-05",
+    "V2-06"
+  ],
+  "gates": {
+    "ruff": [
+      "python",
+      "-m",
+      "ruff",
+      "check",
+      "."
+    ],
+    "format": [
+      "python",
+      "-m",
+      "ruff",
+      "format",
+      "--check",
+      "."
+    ],
+    "pytest": [
+      "python",
+      "-m",
+      "pytest"
+    ],
+    "diff_check": [
+      "git",
+      "diff",
+      "--check"
+    ]
+  },
+  "git": {
+    "remote": "origin",
+    "base_branch": "main",
+    "allow_auto_merge": true,
+    "allow_production_deploy": false
+  },
+  "preserve_paths": []
+}

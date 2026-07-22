@@ -1,0 +1,97 @@
+{
+  "task": "V2-01-009",
+  "passed": true,
+  "checkedAt": "2026-06-17T04:46:14.643Z",
+  "results": [
+    {
+      "name": "login-desktop",
+      "url": "http://127.0.0.1:5000/login",
+      "viewport": {
+        "width": 1440,
+        "height": 900
+      },
+      "status": 200,
+      "screenshot": ".autopilot/evidence/screenshots/V2-01-009/login-desktop.png",
+      "focusedText": "Skip to content",
+      "title": "Sign in to LeadFlow",
+      "hasH1": true,
+      "horizontalOverflow": false,
+      "reducedMotion": true,
+      "mainExists": true,
+      "disabledPlaceholderAction": true,
+      "labels": [
+        "Email",
+        "Password"
+      ],
+      "tapTargetsTooSmall": [],
+      "consoleMessages": [],
+      "pageErrors": []
+    },
+    {
+      "name": "login-mobile-375",
+      "url": "http://127.0.0.1:5000/login",
+      "viewport": {
+        "width": 375,
+        "height": 812
+      },
+      "status": 200,
+      "screenshot": ".autopilot/evidence/screenshots/V2-01-009/login-mobile-375.png",
+      "focusedText": "Skip to content",
+      "title": "Sign in to LeadFlow",
+      "hasH1": true,
+      "horizontalOverflow": false,
+      "reducedMotion": true,
+      "mainExists": true,
+      "disabledPlaceholderAction": true,
+      "labels": [
+        "Email",
+        "Password"
+      ],
+      "tapTargetsTooSmall": [],
+      "consoleMessages": [],
+      "pageErrors": []
+    },
+    {
+      "name": "workbench-desktop",
+      "url": "http://127.0.0.1:5000/workbench",
+      "viewport": {
+        "width": 1440,
+        "height": 900
+      },
+      "status": 200,
+      "screenshot": ".autopilot/evidence/screenshots/V2-01-009/workbench-desktop.png",
+      "focusedText": "Skip to content",
+      "title": "Workbench",
+      "hasH1": true,
+      "horizontalOverflow": false,
+      "reducedMotion": true,
+      "mainExists": true,
+      "disabledPlaceholderAction": false,
+      "labels": [],
+      "tapTargetsTooSmall": [],
+      "consoleMessages": [],
+      "pageErrors": []
+    },
+    {
+      "name": "workbench-mobile-375",
+      "url": "http://127.0.0.1:5000/workbench",
+      "viewport": {
+        "width": 375,
+        "height": 812
+      },
+      "status": 200,
+      "screenshot": ".autopilot/evidence/screenshots/V2-01-009/workbench-mobile-375.png",
+      "focusedText": "Skip to content",
+      "title": "Workbench",
+      "hasH1": true,
+      "horizontalOverflow": false,
+      "reducedMotion": true,
+      "mainExists": true,
+      "disabledPlaceholderAction": false,
+      "labels": [],
+      "tapTargetsTooSmall": [],
+      "consoleMessages": [],
+      "pageErrors": []
+    }
+  ]
+}

@@ -1,0 +1,6 @@
+{% macro job_progress(label, value=0) -%}
+<div class="lf-job-progress">
+  <span>{{ label }}</span>
+  <progress max="100" value="{{ value }}">{{ value }}%</progress>
+</div>
+{%- endmacro %}

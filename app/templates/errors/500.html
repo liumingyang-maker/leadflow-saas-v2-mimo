@@ -1,0 +1,4 @@
+{% from "components/_shell.html" import shell %}{% from "components/_buttons.html" import button %}
+{% call shell("Server error") %}
+<section class="lf-panel"><span class="lf-eyebrow">500</span><h1 class="lf-page-title">Something went wrong</h1><p>An unexpected error occurred. Our team has been notified.</p><a href="/" class="lf-button lf-button-primary">Go home</a></section>
+{% endcall %}

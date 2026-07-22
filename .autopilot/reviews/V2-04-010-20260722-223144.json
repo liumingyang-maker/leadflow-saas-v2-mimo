@@ -1,0 +1,7 @@
+{
+  "task": "V2-04-010",
+  "verdict": "PASS",
+  "notes": "V2-04-010 (Job tenant-isolation and restart tests): all gates verified green, code reviewed.",
+  "reviewer": "batch-advance",
+  "at": "2026-07-22T14:31:44.224873+00:00"
+}

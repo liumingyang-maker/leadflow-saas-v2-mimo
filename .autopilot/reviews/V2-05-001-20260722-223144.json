@@ -1,0 +1,7 @@
+{
+  "task": "V2-05-001",
+  "verdict": "PASS",
+  "notes": "V2-05-001 (Email template domain and UI): all gates verified green, code reviewed.",
+  "reviewer": "batch-advance",
+  "at": "2026-07-22T14:31:44.245700+00:00"
+}

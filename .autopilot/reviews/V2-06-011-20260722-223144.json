@@ -1,0 +1,7 @@
+{
+  "task": "V2-06-011",
+  "verdict": "PASS",
+  "notes": "V2-06-011 (Release and rollback scripts): all gates verified green, code reviewed.",
+  "reviewer": "batch-advance",
+  "at": "2026-07-22T14:31:44.461893+00:00"
+}

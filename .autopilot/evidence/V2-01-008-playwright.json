@@ -1,0 +1,94 @@
+[
+  {
+    "name": "desktop",
+    "width": 1440,
+    "height": 900,
+    "screenshot": "C:\\Users\\97020\\Desktop\\leadflow-saas-v2\\.autopilot\\evidence\\screenshots\\V2-01-008\\desktop.png",
+    "errors": [],
+    "metrics": {
+      "title": "Signal Workspace Design System",
+      "h1": "Signal Workspace",
+      "scrollWidth": 1440,
+      "clientWidth": 1440,
+      "hasReducedMotion": true,
+      "focusables": [
+        {
+          "tag": "A",
+          "text": "Skip to content"
+        },
+        {
+          "tag": "BUTTON",
+          "text": "Open filters"
+        },
+        {
+          "tag": "BUTTON",
+          "text": "Start search"
+        },
+        {
+          "tag": "BUTTON",
+          "text": "Save view"
+        },
+        {
+          "tag": "INPUT",
+          "text": "demo-email"
+        },
+        {
+          "tag": "BUTTON",
+          "text": "Review leads"
+        }
+      ]
+    },
+    "focusAfterTab": {
+      "tag": "A",
+      "text": "Skip to content",
+      "cls": "lf-skip-link"
+    },
+    "noHorizontalOverflow": true
+  },
+  {
+    "name": "mobile-375",
+    "width": 375,
+    "height": 812,
+    "screenshot": "C:\\Users\\97020\\Desktop\\leadflow-saas-v2\\.autopilot\\evidence\\screenshots\\V2-01-008\\mobile-375.png",
+    "errors": [],
+    "metrics": {
+      "title": "Signal Workspace Design System",
+      "h1": "Signal Workspace",
+      "scrollWidth": 375,
+      "clientWidth": 375,
+      "hasReducedMotion": true,
+      "focusables": [
+        {
+          "tag": "A",
+          "text": "Skip to content"
+        },
+        {
+          "tag": "BUTTON",
+          "text": "Open filters"
+        },
+        {
+          "tag": "BUTTON",
+          "text": "Start search"
+        },
+        {
+          "tag": "BUTTON",
+          "text": "Save view"
+        },
+        {
+          "tag": "INPUT",
+          "text": "demo-email"
+        },
+        {
+          "tag": "BUTTON",
+          "text": "Review leads"
+        }
+      ]
+    },
+    "focusAfterTab": {
+      "tag": "A",
+      "text": "Skip to content",
+      "cls": "lf-skip-link"
+    },
+    "noHorizontalOverflow": true
+  }
+]

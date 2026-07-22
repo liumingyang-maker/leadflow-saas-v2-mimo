@@ -1,0 +1,538 @@
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  overflow-x: clip;
+  background: var(--lf-canvas);
+  color: var(--lf-text-strong);
+  font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  font-size: var(--lf-font-sm);
+  line-height: 1.5;
+}
+
+.lf-skip-link {
+  position: absolute;
+  left: var(--lf-space-4);
+  top: var(--lf-space-4);
+  transform: translateY(-140%);
+  min-height: 40px;
+  display: inline-flex;
+  align-items: center;
+  background: var(--lf-text-strong);
+  color: var(--lf-surface);
+  padding: var(--lf-space-2) var(--lf-space-3);
+  border-radius: var(--lf-radius-sm);
+  transition: transform var(--lf-motion-fast) var(--lf-ease-standard);
+}
+
+.lf-skip-link:focus {
+  transform: translateY(0);
+}
+
+.lf-shell {
+  display: grid;
+  grid-template-columns: var(--lf-sidebar-width) minmax(0, 1fr);
+  min-height: 100dvh;
+}
+
+.lf-sidebar {
+  border-right: 1px solid var(--lf-border);
+  background: var(--lf-surface);
+  padding: var(--lf-space-5);
+}
+
+.lf-main {
+  width: min(100%, var(--lf-content-max));
+  min-width: 0;
+  padding: var(--lf-space-6);
+}
+
+.lf-page-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--lf-space-4);
+  margin-bottom: var(--lf-space-5);
+}
+
+.lf-page-title {
+  margin: 0;
+  font-size: var(--lf-font-xl);
+  line-height: 1.2;
+  letter-spacing: 0;
+}
+
+.lf-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: var(--lf-space-4);
+}
+
+.lf-section {
+  margin-top: var(--lf-space-5);
+}
+
+.lf-top-nav {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--lf-space-2);
+  margin-bottom: var(--lf-space-5);
+}
+
+.lf-top-nav a {
+  min-height: 40px;
+  display: inline-flex;
+  align-items: center;
+  border-radius: var(--lf-radius-sm);
+  padding: 0 var(--lf-space-3);
+  color: var(--lf-text-muted);
+  text-decoration: none;
+}
+
+.lf-top-nav a[aria-current="page"] {
+  background: var(--lf-info-bg);
+  color: var(--lf-primary);
+  font-weight: 700;
+}
+
+.lf-panel {
+  background: var(--lf-surface);
+  border: 1px solid var(--lf-border);
+  border-radius: var(--lf-radius-md);
+  box-shadow: var(--lf-shadow-sm);
+  padding: var(--lf-space-5);
+}
+
+.lf-button {
+  min-height: 40px;
+  border: 1px solid var(--lf-border);
+  border-radius: var(--lf-radius-sm);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--lf-space-2);
+  padding: 0 var(--lf-space-4);
+  background: var(--lf-surface);
+  color: var(--lf-text-strong);
+  font: inherit;
+  text-decoration: none;
+  transition:
+    background-color var(--lf-motion-fast) var(--lf-ease-standard),
+    border-color var(--lf-motion-fast) var(--lf-ease-standard),
+    color var(--lf-motion-fast) var(--lf-ease-standard),
+    box-shadow var(--lf-motion-fast) var(--lf-ease-standard);
+}
+
+.lf-button-primary {
+  background: var(--lf-primary);
+  border-color: var(--lf-primary);
+  color: var(--lf-surface);
+}
+
+.lf-button:disabled {
+  cursor: not-allowed;
+  opacity: 0.56;
+}
+
+.lf-button:focus-visible,
+.lf-field:focus-visible,
+.lf-top-nav a:focus-visible {
+  outline: 0;
+  box-shadow: var(--lf-focus-ring);
+}
+
+.lf-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--lf-space-1);
+  border-radius: 999px;
+  border: 1px solid var(--lf-border);
+  padding: var(--lf-space-1) var(--lf-space-2);
+  font-size: var(--lf-font-xs);
+  font-weight: 600;
+}
+
+.lf-badge-success {
+  border-color: rgba(22, 138, 91, 0.35);
+  color: var(--lf-success);
+  background: rgba(22, 138, 91, 0.08);
+}
+
+.lf-field-group {
+  display: grid;
+  gap: var(--lf-space-2);
+}
+
+.lf-label {
+  font-weight: 600;
+}
+
+.lf-field {
+  min-height: 40px;
+  border: 1px solid var(--lf-border);
+  border-radius: var(--lf-radius-sm);
+  padding: 0 var(--lf-space-3);
+  font: inherit;
+}
+
+.lf-empty-state {
+  display: grid;
+  gap: var(--lf-space-2);
+  place-items: start;
+  background: var(--lf-elevated);
+  border: 1px dashed var(--lf-border);
+  border-radius: var(--lf-radius-md);
+  padding: var(--lf-space-5);
+}
+
+.lf-status-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--lf-space-3);
+  align-items: center;
+}
+
+.lf-loading {
+  color: var(--lf-text-muted);
+}
+
+.lf-error {
+  color: var(--lf-danger);
+}
+
+.lf-auth {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(280px, 420px);
+  gap: var(--lf-space-6);
+  align-items: start;
+}
+
+.lf-form-stack {
+  display: grid;
+  gap: var(--lf-space-4);
+}
+
+.lf-eyebrow,
+.lf-muted {
+  color: var(--lf-text-muted);
+}
+
+.lf-stat {
+  display: grid;
+  gap: var(--lf-space-1);
+}
+
+.lf-stat strong {
+  font-size: var(--lf-font-xl);
+  font-variant-numeric: tabular-nums;
+}
+
+.lf-job-progress {
+  display: grid;
+  gap: var(--lf-space-2);
+}
+
+.lf-job-progress progress {
+  width: 100%;
+  accent-color: var(--lf-primary);
+}
+
+.lf-alert {
+  display: grid;
+  gap: var(--lf-space-1);
+  border: 1px solid rgba(200, 59, 72, 0.35);
+  border-radius: var(--lf-radius-md);
+  background: rgba(200, 59, 72, 0.08);
+  color: var(--lf-danger);
+  padding: var(--lf-space-3);
+}
+
+.lf-alert-success {
+  border-color: rgba(22, 138, 91, 0.35);
+  background: rgba(22, 138, 91, 0.08);
+  color: var(--lf-success);
+}
+
+@media (max-width: 767px) {
+  .lf-shell {
+    grid-template-columns: 1fr;
+  }
+
+  .lf-sidebar {
+    border-right: 0;
+    border-bottom: 1px solid var(--lf-border);
+  }
+
+  .lf-main {
+    padding: var(--lf-space-4);
+  }
+
+  .lf-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .lf-auth {
+    grid-template-columns: 1fr;
+  }
+
+  .lf-table-wrap {
+    margin: 0;
+    max-width: 100%;
+  }
+
+  .lf-table th,
+  .lf-table td {
+    padding: var(--lf-space-2);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    scroll-behavior: auto !important;
+    transition-duration: 0.01ms !important;
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+  }
+}
+
+/* Table styles */
+.lf-table-wrap {
+  overflow-x: auto;
+}
+
+.lf-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: var(--lf-font-sm);
+}
+
+.lf-table th,
+.lf-table td {
+  text-align: left;
+  padding: var(--lf-space-3);
+  border-bottom: 1px solid var(--lf-border);
+  white-space: nowrap;
+}
+
+.lf-table th {
+  font-weight: 600;
+  color: var(--lf-text-muted);
+  font-size: var(--lf-font-xs);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.lf-table tbody tr:hover {
+  background: var(--lf-elevated);
+}
+
+/* Onboarding checklist */
+.lf-checklist {
+  list-style: none;
+  padding: 0;
+  display: grid;
+  gap: var(--lf-space-2);
+  margin: var(--lf-space-4) 0;
+}
+
+.lf-checklist li {
+  display: flex;
+  align-items: center;
+  gap: var(--lf-space-2);
+  color: var(--lf-text-muted);
+}
+
+.lf-checklist li::before {
+  content: "○";
+  font-size: var(--lf-font-lg);
+  line-height: 1;
+}
+
+.lf-checked {
+  color: var(--lf-success) !important;
+}
+
+.lf-checked::before {
+  content: "●" !important;
+}
+
+.lf-current {
+  color: var(--lf-text-strong) !important;
+  font-weight: 600;
+}
+
+.lf-current::before {
+  content: "▶" !important;
+  color: var(--lf-primary);
+}
+
+/* Definition list for lead detail */
+.lf-dl {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: var(--lf-space-2) var(--lf-space-4);
+  margin: 0;
+}
+
+.lf-dl dt {
+  font-weight: 600;
+  color: var(--lf-text-muted);
+  font-size: var(--lf-font-xs);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.lf-dl dd {
+  margin: 0;
+}
+
+/* Notes pre block */
+.lf-notes {
+  white-space: pre-wrap;
+  font-family: inherit;
+  font-size: inherit;
+  background: var(--lf-elevated);
+  border-radius: var(--lf-radius-sm);
+  padding: var(--lf-space-3);
+  max-height: 200px;
+  overflow-y: auto;
+}
+
+/* Timeline */
+.lf-timeline {
+  list-style: none;
+  padding: 0;
+  display: grid;
+  gap: var(--lf-space-3);
+}
+
+.lf-timeline-item {
+  display: grid;
+  grid-template-columns: auto auto 1fr;
+  gap: var(--lf-space-2);
+  align-items: center;
+  padding-bottom: var(--lf-space-2);
+  border-bottom: 1px solid var(--lf-border);
+}
+
+.lf-timeline-time {
+  font-size: var(--lf-font-xs);
+  color: var(--lf-text-muted);
+  white-space: nowrap;
+}
+
+@media (max-width: 767px) {
+  .lf-timeline-item {
+    grid-template-columns: 1fr;
+    gap: var(--lf-space-1);
+  }
+}
+
+/* Drawer */
+.lf-drawer-container {
+  position: fixed;
+  inset: 0;
+  z-index: 100;
+  display: flex;
+  justify-content: flex-end;
+  pointer-events: none;
+}
+
+.lf-drawer-closed .lf-drawer-backdrop,
+.lf-drawer-closed .lf-drawer {
+  pointer-events: none;
+}
+
+.lf-drawer-open .lf-drawer-backdrop,
+.lf-drawer-open .lf-drawer {
+  pointer-events: auto;
+}
+
+.lf-drawer-backdrop {
+  position: absolute;
+  inset: 0;
+  background: rgba(21, 32, 51, 0.4);
+}
+
+.lf-drawer {
+  position: relative;
+  width: min(100%, 480px);
+  height: 100%;
+  background: var(--lf-surface);
+  box-shadow: var(--lf-shadow-md);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.lf-drawer-enter {
+  transition: transform var(--lf-motion-standard) var(--lf-ease-standard);
+  transform: translateX(0);
+}
+
+.lf-drawer-leave {
+  transition: transform var(--lf-motion-fast) var(--lf-ease-standard);
+  transform: translateX(100%);
+}
+
+.lf-drawer-close {
+  position: absolute;
+  top: var(--lf-space-3);
+  right: var(--lf-space-3);
+  width: 40px;
+  height: 40px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: none;
+  background: transparent;
+  font-size: var(--lf-font-lg);
+  cursor: pointer;
+  border-radius: var(--lf-radius-sm);
+  z-index: 2;
+}
+
+.lf-drawer-close:focus-visible {
+  box-shadow: var(--lf-focus-ring);
+}
+
+.lf-drawer-content {
+  flex: 1;
+  overflow-y: auto;
+  padding: var(--lf-space-5);
+}
+
+.lf-drawer-inner {
+  display: grid;
+  gap: var(--lf-space-4);
+}
+
+.lf-drawer-header {
+  padding-bottom: var(--lf-space-4);
+  border-bottom: 1px solid var(--lf-border);
+}
+
+.lf-drawer-body {
+  display: grid;
+  gap: var(--lf-space-4);
+}
+
+.lf-drawer-footer {
+  padding-top: var(--lf-space-4);
+  border-top: 1px solid var(--lf-border);
+}
+
+body.lf-drawer-active {
+  overflow: hidden;
+}
+
+@media (max-width: 767px) {
+  .lf-drawer {
+    width: 100%;
+    max-width: 100%;
+  }
+}

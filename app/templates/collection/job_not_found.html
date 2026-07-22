@@ -1,0 +1,16 @@
+{% from "components/_shell.html" import shell %}
+{% from "components/_buttons.html" import button %}
+{% from "components/_empty_states.html" import empty_state %}
+
+{% call shell("Job not found") %}
+<header class="lf-page-header">
+  <div>
+    <span class="lf-eyebrow">Collection job</span>
+    <h1 class="lf-page-title">Job not found</h1>
+  </div>
+</header>
+<div class="lf-panel">
+  <p class="lf-muted">This job does not exist or you do not have access to it.</p>
+  <a href="/collection" class="lf-button">Back to workspace</a>
+</div>
+{% endcall %}

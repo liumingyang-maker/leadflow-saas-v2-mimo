@@ -1,0 +1,51 @@
+{
+  "task": "V2-03-001",
+  "passed": false,
+  "results": {
+    "ruff": {
+      "command": [
+        "python",
+        "-m",
+        "ruff",
+        "check",
+        "."
+      ],
+      "returncode": 1,
+      "stdout": "F401 [*] `json` imported but unused\n  --> tools\\batch_advance.py:11:8\n   |\n10 | import datetime as dt\n11 | import json\n   |        ^^^^\n12 | import sys\n13 | from pathlib import Path\n   |\nhelp: Remove unused import: `json`\n\nI001 [*] Import block is un-sorted or un-formatted\n  --> tools\\batch_advance.py:18:1\n   |\n16 |   sys.path.insert(0, str(ROOT / \"tools\"))\n17 |\n18 | / import argparse  # noqa: E402\n19 | |\n20 | | from autopilot import (  # noqa: E402\n21 | |     cmd_prepare,\n22 | |     cmd_verify,\n23 | |     config,\n24 | |     current_task,\n25 | |     load_json,\n26 | |     now,\n27 | |     save_json,\n28 | |     state,\n29 | |     write_state,\n30 | |     STATE_DIR,\n31 | | )\n   | |_^\n   |\nhelp: Organize imports\n\nFound 2 errors.\n[*] 2 fixable with the `--fix` option.\n",
+      "stderr": ""
+    },
+    "format": {
+      "command": [
+        "python",
+        "-m",
+        "ruff",
+        "format",
+        "--check",
+        "."
+      ],
+      "returncode": 1,
+      "stdout": "Would reformat: tools\\batch_advance.py\n1 file would be reformatted, 107 files already formatted\n",
+      "stderr": ""
+    },
+    "pytest": {
+      "command": [
+        "python",
+        "-m",
+        "pytest"
+      ],
+      "returncode": 0,
+      "stdout": "........................................................................ [ 26%]\n........................................................................ [ 52%]\n........................................................................ [ 79%]\n.........................................................                [100%]\n273 passed in 63.90s (0:01:03)\n",
+      "stderr": ""
+    },
+    "diff_check": {
+      "command": [
+        "git",
+        "diff",
+        "--check"
+      ],
+      "returncode": 0,
+      "stdout": "",
+      "stderr": ""
+    }
+  }
+}

@@ -1,0 +1,11 @@
+{
+  "task": "V2-01-007",
+  "docker_compose_config": "SKIPPED",
+  "docker_runtime_smoke": "SKIPPED",
+  "reason": "Docker CLI is not available on PATH in the current Windows environment.",
+  "compensating_evidence": [
+    "tests/test_docker_baseline.py",
+    ".autopilot/evidence/V2-01-007-gates-20260617-121442.json"
+  ],
+  "production_deployed": false
+}

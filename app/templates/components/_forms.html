@@ -1,0 +1,11 @@
+{% macro field(id, label, type="text", value="", help_text="") -%}
+<div class="lf-field-group">
+  <label class="lf-label" for="{{ id }}">{{ label }}</label>
+  <input class="lf-field" id="{{ id }}" name="{{ id }}" type="{{ type }}" value="{{ value }}">
+  {% if help_text %}<span class="lf-help">{{ help_text }}</span>{% endif %}
+</div>
+{%- endmacro %}
+
+{% macro csrf_input() -%}
+<input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+{%- endmacro %}

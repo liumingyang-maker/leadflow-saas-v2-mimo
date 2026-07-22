@@ -1,0 +1,7 @@
+{
+  "task": "V2-05-002",
+  "verdict": "PASS",
+  "notes": "V2-05-002 (SMTP adapter and deliverability checks): all gates verified green, code reviewed.",
+  "reviewer": "batch-advance",
+  "at": "2026-07-22T14:31:44.256807+00:00"
+}

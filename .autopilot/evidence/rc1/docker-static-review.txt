@@ -1,0 +1,30 @@
+Docker runtime was not executed because `docker` is not available on this host.
+
+Static review:
+
+- Dockerfile base image: `python:3.12-slim`.
+- Dockerfile uses `FLASK_APP=app:create_app`.
+- Dockerfile installs `requirements.lock` when present, otherwise `requirements.txt`.
+- Dockerfile healthcheck calls `/health/live`.
+- Compose services: web, worker, redis, db.
+- Redis image pinned: `redis:7.4.2-alpine`.
+- DB placeholder image pinned: `alpine:3.21.3`.
+- Web and worker share `/data` volume for the local SQLite development database.
+- Worker command: `python run_worker.py default`.
+- Worker startup runs stale-job recovery unless `--skip-recovery` is passed.
+- Worker uses RQ `JSONSerializer`.
+
+Not executed:
+
+- `docker compose config`
+- `docker compose pull`
+- `docker compose up`
+- container health checks
+- container Alembic migration
+- worker recovery inside Docker
+
+Staging note:
+
+The current compose file is a local/development baseline with placeholder secrets.
+Aliyun staging must provide real staging secrets through environment/secret management
+and should place HTTPS reverse proxy and backup procedures around the stack.

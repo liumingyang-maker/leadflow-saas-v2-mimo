@@ -1,0 +1,3 @@
+{% macro button(label, variant="secondary", type="button", aria_label=None, disabled=False) -%}
+<button class="lf-button{% if variant == 'primary' %} lf-button-primary{% endif %}" type="{{ type }}"{% if aria_label %} aria-label="{{ aria_label }}"{% endif %}{% if disabled %} disabled{% endif %}>{{ label }}</button>
+{%- endmacro %}
