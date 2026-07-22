@@ -198,36 +198,36 @@ def check_rate_limit(app: Flask, *, scope: str, bucket: str) -> bool:
             # Limit reached (record exists, not expired, count >= limit)
             return False
 
-        # No record: create new bucket (bounded retry for race)
-        for _attempt in range(3):
-            try:
-                new_record = InboundRateLimit(
-                    scope=scope,
-                    bucket=bucket,
-                    count=1,
-                    reset_at=window_end,
+        # No record: create new bucket
+        from sqlalchemy.exc import IntegrityError
+
+        try:
+            new_record = InboundRateLimit(
+                scope=scope,
+                bucket=bucket,
+                count=1,
+                reset_at=window_end,
+            )
+            session.add(new_record)
+            session.commit()
+            return True
+        except IntegrityError:
+            session.rollback()
+            # Another process created it; try atomic increment once
+            retry_result = session.execute(
+                update(InboundRateLimit)
+                .where(
+                    InboundRateLimit.scope == scope,
+                    InboundRateLimit.bucket == bucket,
+                    InboundRateLimit.reset_at > now,
+                    InboundRateLimit.count < RATE_LIMIT_COUNT,
                 )
-                session.add(new_record)
+                .values(count=InboundRateLimit.count + 1)
+            )
+            if retry_result.rowcount > 0:
                 session.commit()
                 return True
-            except IntegrityError:
-                session.rollback()
-                # Another process created it; retry the atomic increment
-                retry_result = session.execute(
-                    update(InboundRateLimit)
-                    .where(
-                        InboundRateLimit.scope == scope,
-                        InboundRateLimit.bucket == bucket,
-                        InboundRateLimit.reset_at > now,
-                        InboundRateLimit.count < RATE_LIMIT_COUNT,
-                    )
-                    .values(count=InboundRateLimit.count + 1)
-                )
-                if retry_result.rowcount > 0:
-                    session.commit()
-                    return True
-        # Exhausted retries
-        return False
+            return False
 
 
 # ---------------------------------------------------------------------------
@@ -237,29 +237,37 @@ IDEMPOTENCY_TTL_HOURS = 24
 FINGERPRINT_WINDOW_MINUTES = 5
 
 
+PROCESSING_LEASE_SECONDS = 30
+
+
 def check_idempotency(
     app: Flask, *, tenant_id: str, token_digest: str, idempotency_key: str, payload: dict[str, Any]
-) -> tuple[str, str | None]:
-    """Pre-occupy pattern: atomically claim processing rights.
+) -> tuple[str, str | None, str]:
+    """Pre-occupy pattern with lease and claim_token.
 
-    Returns (status, response_json or None).
-    'new' means this caller owns processing rights.
+    Returns (status, response_json or None, claim_token).
+    'new' means this caller owns processing rights (claim_token is valid).
     'replayed' means a completed result exists.
-    'processing' means another caller is currently processing.
+    'processing' means another caller holds a valid lease.
     'conflict' means same key but different payload.
     """
+    import uuid
+
+    from sqlalchemy import update
+    from sqlalchemy.exc import IntegrityError
+
     now = datetime.now(UTC)
     payload_str = json.dumps(payload, sort_keys=True)
     payload_digest = hashlib.sha256(payload_str.encode()).hexdigest()
+    lease_end = now + timedelta(seconds=PROCESSING_LEASE_SECONDS)
 
     effective_key = idempotency_key or inbound_fingerprint_key(
         token_digest=token_digest, payload=payload
     )
+    claim = uuid.uuid4().hex
 
     with _session(app) as session:
-        # Try to pre-occupy: insert a "processing" record
-        from sqlalchemy.exc import IntegrityError
-
+        # Try to pre-occupy: insert a "processing" record with lease
         try:
             record = InboundIdempotency(
                 tenant_id=tenant_id,
@@ -267,12 +275,14 @@ def check_idempotency(
                 idempotency_key=effective_key,
                 payload_digest=payload_digest,
                 status="processing",
+                claim_token=claim,
                 response_json="{}",
                 expires_at=now + timedelta(hours=IDEMPOTENCY_TTL_HOURS),
+                processing_expires_at=lease_end,
             )
             session.add(record)
             session.commit()
-            return "new", None
+            return "new", None, claim
         except IntegrityError:
             session.rollback()
 
@@ -285,22 +295,65 @@ def check_idempotency(
             )
         )
         if existing is None:
-            # Race: was deleted between our insert failure and read
-            return "new", None
+            return "new", None, claim
 
+        # Payload conflict takes priority
+        if existing.payload_digest != payload_digest and existing.status != "processing":
+            return "conflict", None, ""
+
+        # Processing with valid lease
         if existing.status == "processing":
-            return "processing", None
-        if existing.payload_digest != payload_digest:
-            return "conflict", None
+            proc_expires = existing.processing_expires_at
+            if proc_expires is not None and _as_utc(proc_expires) > now:
+                return "processing", None, ""
+            # Lease expired: try to take over with conditional UPDATE
+            result = session.execute(
+                update(InboundIdempotency)
+                .where(
+                    InboundIdempotency.tenant_id == tenant_id,
+                    InboundIdempotency.token_digest == token_digest,
+                    InboundIdempotency.idempotency_key == effective_key,
+                    InboundIdempotency.status == "processing",
+                    InboundIdempotency.processing_expires_at <= now,
+                )
+                .values(
+                    claim_token=claim,
+                    payload_digest=payload_digest,
+                    processing_expires_at=lease_end,
+                )
+            )
+            if result.rowcount > 0:
+                session.commit()
+                return "new", None, claim
+            # Another process took over first
+            return "processing", None, ""
+
+        # Completed and not expired: replay
         if _as_utc(existing.expires_at) > now:
-            return "replayed", existing.response_json
-        # Expired: allow re-processing by updating in place
-        existing.payload_digest = payload_digest
-        existing.status = "processing"
-        existing.response_json = "{}"
-        existing.expires_at = now + timedelta(hours=IDEMPOTENCY_TTL_HOURS)
-        session.commit()
-        return "new", None
+            return "replayed", existing.response_json, ""
+
+        # Expired completed: re-claim with conditional UPDATE
+        result = session.execute(
+            update(InboundIdempotency)
+            .where(
+                InboundIdempotency.tenant_id == tenant_id,
+                InboundIdempotency.token_digest == token_digest,
+                InboundIdempotency.idempotency_key == effective_key,
+                InboundIdempotency.expires_at <= now,
+            )
+            .values(
+                status="processing",
+                claim_token=claim,
+                payload_digest=payload_digest,
+                response_json="{}",
+                expires_at=now + timedelta(hours=IDEMPOTENCY_TTL_HOURS),
+                processing_expires_at=lease_end,
+            )
+        )
+        if result.rowcount > 0:
+            session.commit()
+            return "new", None, claim
+        return "processing", None, ""
 
 
 def inbound_fingerprint_key(*, token_digest: str, payload: dict[str, Any]) -> str:
@@ -317,8 +370,9 @@ def store_idempotency(
     payload: dict[str, Any],
     status: str,
     response: dict[str, Any],
+    claim_token: str = "",
 ) -> None:
-    """Update the pre-occupied idempotency record with the final result."""
+    """Update the pre-occupied record with final result, verifying ownership."""
     from sqlalchemy import update
 
     now = datetime.now(UTC)
@@ -326,19 +380,25 @@ def store_idempotency(
         token_digest=token_digest, payload=payload
     )
     with _session(app) as session:
-        session.execute(
+        stmt = (
             update(InboundIdempotency)
             .where(
                 InboundIdempotency.tenant_id == tenant_id,
                 InboundIdempotency.token_digest == token_digest,
                 InboundIdempotency.idempotency_key == effective_key,
+                InboundIdempotency.status == "processing",
             )
             .values(
                 status=status,
                 response_json=json.dumps(response),
                 expires_at=now + timedelta(hours=IDEMPOTENCY_TTL_HOURS),
+                processing_expires_at=None,
             )
         )
+        # Verify ownership if claim_token provided
+        if claim_token:
+            stmt = stmt.where(InboundIdempotency.claim_token == claim_token)
+        session.execute(stmt)
         session.commit()
 
 

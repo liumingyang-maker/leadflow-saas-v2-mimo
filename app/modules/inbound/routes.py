@@ -146,7 +146,7 @@ def register_inbound_routes(app: Flask) -> None:
             "Idempotency-Key", ""
         )
         storage_key = idempotency_key or inbound_fingerprint_key(token_digest=digest, payload=body)
-        idem_status, idem_response = check_idempotency(
+        idem_status, idem_response, claim_token = check_idempotency(
             app,
             tenant_id=tenant_id,
             token_digest=digest,
@@ -154,11 +154,24 @@ def register_inbound_routes(app: Flask) -> None:
             payload=body,
         )
         if idem_status == "replayed":
-            return Response(idem_response, mimetype="application/json"), 200
+            resp = Response(idem_response, mimetype="application/json")
+            if origin:
+                resp.headers["Access-Control-Allow-Origin"] = origin
+                resp.headers["Vary"] = "Origin"
+            return resp, 200
         if idem_status == "conflict":
-            return jsonify({"error": "idempotency_key_conflict"}), 409
+            resp = jsonify({"error": "idempotency_key_conflict"})
+            if origin:
+                resp.headers["Access-Control-Allow-Origin"] = origin
+                resp.headers["Vary"] = "Origin"
+            return resp, 409
         if idem_status == "processing":
-            return jsonify({"error": "request_in_progress"}), 409
+            resp = jsonify({"error": "request_in_progress", "retry_after_seconds": 1})
+            resp.headers["Retry-After"] = "1"
+            if origin:
+                resp.headers["Access-Control-Allow-Origin"] = origin
+                resp.headers["Vary"] = "Origin"
+            return resp, 409
 
         # Process
         result = process_inbound(
@@ -169,7 +182,7 @@ def register_inbound_routes(app: Flask) -> None:
             idempotency_key=idempotency_key,
         )
 
-        # Store idempotency
+        # Store idempotency with ownership verification
         store_idempotency(
             app,
             tenant_id=tenant_id,
@@ -178,6 +191,7 @@ def register_inbound_routes(app: Flask) -> None:
             payload=body,
             status="completed" if result.get("ok") else "failed",
             response=result,
+            claim_token=claim_token,
         )
 
         # CORS headers

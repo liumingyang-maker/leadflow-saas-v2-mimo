@@ -84,8 +84,10 @@ class InboundIdempotency(Base):
     idempotency_key: Mapped[str] = mapped_column(String(128), default="", nullable=False)
     payload_digest: Mapped[str] = mapped_column(String(64), default="", nullable=False)
     status: Mapped[str] = mapped_column(String(24), default="", nullable=False)
+    claim_token: Mapped[str] = mapped_column(String(64), default="", nullable=False)
     response_json: Mapped[str] = mapped_column(Text, default="{}", nullable=False)
     expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    processing_expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=_now, nullable=False
     )
