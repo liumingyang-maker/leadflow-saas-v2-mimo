@@ -90,6 +90,20 @@ class LeadRepository:
         self.session.add(lead)
         return lead
 
+    def find_by_email(self, email: str, *, tenant_id: str) -> Lead | None:
+        """Exact email lookup (normalized: stripped, lowercased). Tenant-scoped."""
+        tenant_id = _require_tenant(tenant_id)
+        normalized = (email or "").strip().lower()
+        if not normalized:
+            return None
+        return self.session.scalar(
+            _tenant_scope(
+                select(Lead).where(Lead.email == normalized),
+                Lead,
+                tenant_id,
+            )
+        )
+
     def update(self, lead: Lead, *, tenant_id: str, **fields: Any) -> Lead:
         tenant_id = _require_tenant(tenant_id)
         if lead.tenant_id != tenant_id:

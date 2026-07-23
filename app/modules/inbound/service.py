@@ -461,10 +461,10 @@ def _process_inbound_inner(
         return {"ok": False, "error": "invalid_email"}
 
     lead_repo = LeadRepository(session)
-    # Dedup by email
-    existing = list(lead_repo.list(tenant_id=tenant_id, search=email, limit=1))
+    # Exact email dedup (not fuzzy search)
+    existing = lead_repo.find_by_email(email, tenant_id=tenant_id)
     if existing:
-        lead = existing[0]
+        lead = existing
     else:
         name = (data.get("name") or data.get("first_name") or "").strip()
         parts = name.split(" ", 1) if name else ("", "")
