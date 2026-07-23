@@ -265,6 +265,12 @@ def check_idempotency(
         token_digest=token_digest, payload=payload
     )
     claim = uuid.uuid4().hex
+    # Explicit keys get 24h TTL; fingerprints get 5min window
+    ttl = (
+        timedelta(hours=IDEMPOTENCY_TTL_HOURS)
+        if idempotency_key
+        else timedelta(minutes=FINGERPRINT_WINDOW_MINUTES)
+    )
 
     with _session(app) as session:
         # Try to pre-occupy: insert a "processing" record with lease
@@ -277,7 +283,7 @@ def check_idempotency(
                 status="processing",
                 claim_token=claim,
                 response_json="{}",
-                expires_at=now + timedelta(hours=IDEMPOTENCY_TTL_HOURS),
+                expires_at=now + ttl,
                 processing_expires_at=lease_end,
             )
             session.add(record)
@@ -351,7 +357,7 @@ def check_idempotency(
                 claim_token=claim,
                 payload_digest=payload_digest,
                 response_json="{}",
-                expires_at=now + timedelta(hours=IDEMPOTENCY_TTL_HOURS),
+                expires_at=now + ttl,
                 processing_expires_at=lease_end,
             )
         )
@@ -435,14 +441,10 @@ ALLOWED_FIELDS = {
 }
 
 
-def process_inbound(
-    app: Flask,
-    *,
-    tenant_id: str,
-    token_digest: str,
-    body: dict[str, Any],
-    idempotency_key: str = "",
+def _process_inbound_inner(
+    session: Session, *, tenant_id: str, body: dict[str, Any]
 ) -> dict[str, Any]:
+    """Core inbound logic within an existing session. Does NOT commit."""
     # Honeypot
     if body.get("hp_field"):
         return {"ok": True, "id": "accepted"}
@@ -458,45 +460,138 @@ def process_inbound(
     if not email or "@" not in email:
         return {"ok": False, "error": "invalid_email"}
 
-    with _session(app) as session:
-        lead_repo = LeadRepository(session)
-        # Dedup by email
-        existing = list(lead_repo.list(tenant_id=tenant_id, search=email, limit=1))
-        if existing:
-            lead = existing[0]
-        else:
-            name = (data.get("name") or data.get("first_name") or "").strip()
-            parts = name.split(" ", 1) if name else ("", "")
-            lead = Lead(
-                tenant_id=tenant_id,
-                email=email,
-                first_name=(data.get("first_name") or parts[0] or "")[:120],
-                last_name=(data.get("last_name") or (parts[1] if len(parts) > 1 else "") or "")[
-                    :120
-                ],
-                phone=(data.get("phone") or "")[:60],
-                website=(data.get("website") or "")[:500],
-                source="inbound",
-                status="pending_review",
-                notes=_inbound_notes(data),
-            )
-            lead_repo.add(lead, tenant_id=tenant_id)
-            session.flush()
+    lead_repo = LeadRepository(session)
+    # Dedup by email
+    existing = list(lead_repo.list(tenant_id=tenant_id, search=email, limit=1))
+    if existing:
+        lead = existing[0]
+    else:
+        name = (data.get("name") or data.get("first_name") or "").strip()
+        parts = name.split(" ", 1) if name else ("", "")
+        lead = Lead(
+            tenant_id=tenant_id,
+            email=email,
+            first_name=(data.get("first_name") or parts[0] or "")[:120],
+            last_name=(data.get("last_name") or (parts[1] if len(parts) > 1 else "") or "")[:120],
+            phone=(data.get("phone") or "")[:60],
+            website=(data.get("website") or "")[:500],
+            source="inbound",
+            status="pending_review",
+            notes=_inbound_notes(data),
+        )
+        lead_repo.add(lead, tenant_id=tenant_id)
+        session.flush()
 
-        session.add(
-            Activity(
-                tenant_id=tenant_id,
-                lead_id=lead.id,
-                action="inbound_received",
-                description=(
-                    "Inbound inquiry" + (" from " + data.get("source", ""))
-                    if data.get("source")
-                    else ""
-                )[:500],
+    session.add(
+        Activity(
+            tenant_id=tenant_id,
+            lead_id=lead.id,
+            action="inbound_received",
+            description=(
+                "Inbound inquiry" + (" from " + data.get("source", ""))
+                if data.get("source")
+                else ""
+            )[:500],
+        )
+    )
+    return {"ok": True, "id": lead.id}
+
+
+def process_inbound(
+    app: Flask,
+    *,
+    tenant_id: str,
+    token_digest: str,
+    body: dict[str, Any],
+    idempotency_key: str = "",
+) -> dict[str, Any]:
+    """Standalone inbound processing (commits independently). Legacy interface."""
+    if body.get("hp_field"):
+        return {"ok": True, "id": "accepted"}
+    data = {
+        k: v
+        for k, v in body.items()
+        if k in ALLOWED_FIELDS and k not in ("idempotency_key", "hp_field")
+    }
+    email = (data.get("email") or "").strip().lower()
+    if not email or "@" not in email:
+        return {"ok": False, "error": "invalid_email"}
+
+    with _session(app) as session:
+        result = _process_inbound_inner(session, tenant_id=tenant_id, body=body)
+        if result.get("ok"):
+            session.commit()
+        return result
+
+
+def process_and_finalize(
+    app: Flask,
+    *,
+    tenant_id: str,
+    token_digest: str,
+    body: dict[str, Any],
+    idempotency_key: str,
+    storage_key: str,
+    claim_token: str,
+) -> tuple[dict[str, Any], bool]:
+    """Single transaction: renew lease + business logic + idempotency finalize.
+
+    Returns (result, ownership_held). If ownership_held is False, the
+    transaction was rolled back and no side effects occurred.
+    """
+    from sqlalchemy import update
+
+    now = datetime.now(UTC)
+    ttl = (
+        timedelta(hours=IDEMPOTENCY_TTL_HOURS)
+        if idempotency_key
+        else timedelta(minutes=FINGERPRINT_WINDOW_MINUTES)
+    )
+
+    with _session(app) as session:
+        # 1. Renew lease (prevents expiry during processing)
+        renew = session.execute(
+            update(InboundIdempotency)
+            .where(
+                InboundIdempotency.tenant_id == tenant_id,
+                InboundIdempotency.token_digest == token_digest,
+                InboundIdempotency.idempotency_key == storage_key,
+                InboundIdempotency.status == "processing",
+                InboundIdempotency.claim_token == claim_token,
+            )
+            .values(processing_expires_at=now + timedelta(seconds=PROCESSING_LEASE_SECONDS))
+        )
+        if renew.rowcount != 1:
+            session.rollback()
+            return {"ok": False, "error": "lease_lost"}, False
+
+        # 2. Execute business logic (no independent commit)
+        result = _process_inbound_inner(session, tenant_id=tenant_id, body=body)
+
+        # 3. Finalize idempotency record
+        final = session.execute(
+            update(InboundIdempotency)
+            .where(
+                InboundIdempotency.tenant_id == tenant_id,
+                InboundIdempotency.token_digest == token_digest,
+                InboundIdempotency.idempotency_key == storage_key,
+                InboundIdempotency.status == "processing",
+                InboundIdempotency.claim_token == claim_token,
+            )
+            .values(
+                status="completed" if result.get("ok") else "failed",
+                response_json=json.dumps(result),
+                expires_at=now + ttl,
+                processing_expires_at=None,
             )
         )
+        if final.rowcount != 1:
+            session.rollback()
+            return result, False
+
+        # 4. Commit everything atomically
         session.commit()
-        return {"ok": True, "id": lead.id}
+        return result, True
 
 
 def _inbound_notes(data: dict[str, Any]) -> str:

@@ -19,10 +19,29 @@ from app.modules.inbound.service import (
     inbound_fingerprint_key,
     list_origins,
     lookup_token,
-    process_inbound,
+    process_and_finalize,
     remove_origin,
-    store_idempotency,
 )
+
+
+def _inbound_response(
+    payload: dict[str, Any] | str,
+    status: int,
+    origin: str | None,
+    headers: dict[str, str] | None = None,
+) -> tuple[Response, int]:
+    """Unified response helper with CORS for all inbound API replies."""
+    if isinstance(payload, str):
+        resp = Response(payload, mimetype="application/json")
+    else:
+        resp = jsonify(payload)
+    if origin:
+        resp.headers["Access-Control-Allow-Origin"] = origin
+        resp.headers["Vary"] = "Origin"
+    if headers:
+        for k, v in headers.items():
+            resp.headers[k] = v
+    return resp, status
 
 
 def register_inbound_routes(app: Flask) -> None:
@@ -115,7 +134,7 @@ def register_inbound_routes(app: Flask) -> None:
     def _handle_post(app: Flask, token: str) -> Response:
         tok = lookup_token(app, plaintext=token)
         if tok is None:
-            return jsonify({"error": "invalid_request"}), 404
+            return _inbound_response({"error": "invalid_request"}, 404, None)
 
         tenant_id = tok.tenant_id
         digest = tok.token_digest
@@ -125,19 +144,19 @@ def register_inbound_routes(app: Flask) -> None:
         if origin:
             origins = list_origins(app, tenant_id=tenant_id)
             if not any(o.origin == origin for o in origins):
-                return jsonify({"error": "origin_not_allowed"}), 403
+                return _inbound_response({"error": "origin_not_allowed"}, 403, origin)
 
         # Rate limit
         if not check_rate_limit(app, scope=f"inbound:{digest[:16]}", bucket=ip):
-            return jsonify({"error": "rate_limited"}), 429
+            return _inbound_response({"error": "rate_limited"}, 429, origin)
 
         # Content type
         if not request.is_json:
-            return jsonify({"error": "json_required"}), 415
+            return _inbound_response({"error": "json_required"}, 415, origin)
 
         # Body size
         if request.content_length and request.content_length > MAX_BODY_SIZE:
-            return jsonify({"error": "body_too_large"}), 413
+            return _inbound_response({"error": "body_too_large"}, 413, origin)
 
         body: dict[str, Any] = request.get_json(silent=True) or {}
 
@@ -154,51 +173,35 @@ def register_inbound_routes(app: Flask) -> None:
             payload=body,
         )
         if idem_status == "replayed":
-            resp = Response(idem_response, mimetype="application/json")
-            if origin:
-                resp.headers["Access-Control-Allow-Origin"] = origin
-                resp.headers["Vary"] = "Origin"
-            return resp, 200
+            return _inbound_response(idem_response or "{}", 200, origin)
         if idem_status == "conflict":
-            resp = jsonify({"error": "idempotency_key_conflict"})
-            if origin:
-                resp.headers["Access-Control-Allow-Origin"] = origin
-                resp.headers["Vary"] = "Origin"
-            return resp, 409
+            return _inbound_response({"error": "idempotency_key_conflict"}, 409, origin)
         if idem_status == "processing":
-            resp = jsonify({"error": "request_in_progress", "retry_after_seconds": 1})
-            resp.headers["Retry-After"] = "1"
-            if origin:
-                resp.headers["Access-Control-Allow-Origin"] = origin
-                resp.headers["Vary"] = "Origin"
-            return resp, 409
+            return _inbound_response(
+                {"error": "request_in_progress", "retry_after_seconds": 1},
+                409,
+                origin,
+                headers={"Retry-After": "1"},
+            )
 
-        # Process
-        result = process_inbound(
+        # Process + finalize in a single transaction (exactly-once)
+        result, ownership_held = process_and_finalize(
             app,
             tenant_id=tenant_id,
             token_digest=digest,
             body=body,
             idempotency_key=idempotency_key,
-        )
-
-        # Store idempotency with ownership verification
-        store_idempotency(
-            app,
-            tenant_id=tenant_id,
-            token_digest=digest,
-            idempotency_key=storage_key,
-            payload=body,
-            status="completed" if result.get("ok") else "failed",
-            response=result,
+            storage_key=storage_key,
             claim_token=claim_token,
         )
 
-        # CORS headers
-        resp = jsonify(result)
-        if origin:
-            resp.headers["Access-Control-Allow-Origin"] = origin
-            resp.headers["Vary"] = "Origin"
+        if not ownership_held:
+            return _inbound_response(
+                {"error": "lease_lost", "retry": True},
+                409,
+                origin,
+                headers={"Retry-After": "1"},
+            )
 
         status = 200 if result.get("ok") else 400
-        return resp, status
+        return _inbound_response(result, status, origin)
