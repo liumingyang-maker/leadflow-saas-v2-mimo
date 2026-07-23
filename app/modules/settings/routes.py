@@ -38,7 +38,7 @@ def register_settings_routes(app: Flask) -> None:
         return render_template("settings/index.html", tenant=tenant, env_status=env_status)
 
     @app.get("/admin/system")
-    @admin_required
+    @admin_required(app)
     def admin_system():
         import platform
 

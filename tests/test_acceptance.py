@@ -190,18 +190,19 @@ def test_admin_console_not_blocked_by_tenant_state(monkeypatch) -> None:
 
     from app.modules.accounts.admin_service import create_admin
 
-    create_admin(
+    admin = create_admin(
         flask_app,
         email="admin@example.com",
         password="temporary-safe-password-123",
         must_change_password=False,
     )
 
-    # Login as admin
+    # Login as admin with proper session data
     with client.session_transaction() as sess:
         sess["is_admin"] = True
-        sess["admin_id"] = "admin-1"
+        sess["admin_id"] = admin.id
         sess["admin_email"] = "admin@example.com"
+        sess["admin_auth_version"] = admin.auth_version
 
     resp = client.get("/admin")
     assert resp.status_code == 200

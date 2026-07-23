@@ -23,6 +23,7 @@ class AdminIdentity:
     admin_id: str
     email: str
     must_change_password: bool
+    auth_version: int
 
 
 def create_admin(
@@ -58,6 +59,7 @@ def authenticate_admin(app: Flask, *, email: str, password: str) -> AdminIdentit
             admin_id=admin.id,
             email=admin.email,
             must_change_password=admin.must_change_password,
+            auth_version=admin.auth_version,
         )
 
 

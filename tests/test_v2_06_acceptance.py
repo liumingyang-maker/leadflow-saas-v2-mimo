@@ -62,12 +62,13 @@ def _tenant_session(client, *, tenant_id: str, user_id: str, auth_version: int =
         sess["tenant_email"] = "owner-a@example.com"
 
 
-def _admin_session(client, *, admin_id: str) -> None:
+def _admin_session(client, *, admin_id: str, auth_version: int = 1) -> None:
     with client.session_transaction() as sess:
         sess.clear()
         sess["is_admin"] = True
         sess["admin_id"] = admin_id
         sess["admin_email"] = "admin@example.com"
+        sess["admin_auth_version"] = auth_version
 
 
 def test_system_diagnostics_requires_admin_session(monkeypatch) -> None:

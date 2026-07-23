@@ -18,7 +18,7 @@ def register_audit_routes(app: Flask) -> None:
         return render_template("audit/list.html", events=events)
 
     @app.get("/admin/audit")
-    @admin_required
+    @admin_required(app)
     def admin_audit():
         events = list_events(app)
         return render_template("audit/admin_list.html", events=events)

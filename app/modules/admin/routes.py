@@ -12,7 +12,7 @@ from app.modules.accounts.models import Tenant
 
 def register_admin_dashboard_routes(app: Flask) -> None:
     @app.get("/admin/dashboard")
-    @admin_required
+    @admin_required(app)
     def admin_dashboard():
         """Admin overview with tenant stats."""
         engine = get_engine(app)

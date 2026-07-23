@@ -1,5 +1,9 @@
 """Batch-advance all remaining autopilot tasks.
 
+DEPRECATED: This tool is deprecated for production use. It bypasses
+independent review and should not be used to generate release evidence.
+Requires explicit --unsafe-bulk-state-mutation flag to run.
+
 Strategy: run gates ONCE (code doesn't change between tasks), then
 advance the state machine through all remaining tasks with proper
 audit trail (prepare -> review -> advance for each).
@@ -7,6 +11,7 @@ audit trail (prepare -> review -> advance for each).
 
 from __future__ import annotations
 
+import argparse as _argparse_mod
 import datetime as dt
 import sys
 from pathlib import Path
@@ -31,6 +36,24 @@ from autopilot import (  # noqa: E402
 
 
 def main() -> int:
+    # Safety guard: require explicit flag to prevent accidental use
+    parser = _argparse_mod.ArgumentParser(description="DEPRECATED: batch advance tasks")
+    parser.add_argument(
+        "--unsafe-bulk-state-mutation",
+        action="store_true",
+        required=False,
+        help="Required to run this deprecated tool",
+    )
+    args, _ = parser.parse_known_args()
+    if not args.unsafe_bulk_state_mutation:
+        print(
+            "ERROR: batch_advance.py is DEPRECATED and disabled by default.\n"
+            "It bypasses independent review and must NOT be used for release evidence.\n"
+            "If you must run it, pass --unsafe-bulk-state-mutation explicitly.\n"
+            "See docs/INTERNAL_PRODUCT_ROADMAP.md INT-003 for details."
+        )
+        return 1
+
     # Phase 1: Run gates once to prove code is green
     print("=== Phase 1: Running gates (once) ===")
     cfg = config()
@@ -70,9 +93,9 @@ def main() -> int:
         # Record review
         review = {
             "task": task_id,
-            "verdict": "PASS",
-            "notes": f"{task_id} ({title}): all gates verified green, code reviewed.",
-            "reviewer": "batch-advance",
+            "verdict": "GATES_PASSED",
+            "notes": f"{task_id} ({title}): automated gates passed. NOT an independent review.",
+            "reviewer": "batch-advance-deprecated",
             "at": now(),
         }
         review_path = (
