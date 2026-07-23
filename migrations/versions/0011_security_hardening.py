@@ -25,16 +25,9 @@ def upgrade() -> None:
         sa.Column("auth_version", sa.Integer(), nullable=False, server_default="1"),
     )
 
-    # 2. Add unique constraints and new columns to inbound tables (batch mode for SQLite)
+    # 2. Add unique constraints to inbound tables (batch mode for SQLite)
     with op.batch_alter_table("inbound_rate_limits") as batch_op:
         batch_op.create_unique_constraint("uq_rate_limits_scope_bucket", ["scope", "bucket"])
-    with op.batch_alter_table("inbound_idempotency") as batch_op:
-        batch_op.add_column(
-            sa.Column("claim_token", sa.String(64), nullable=False, server_default="")
-        )
-        batch_op.add_column(
-            sa.Column("processing_expires_at", sa.DateTime(timezone=True), nullable=True)
-        )
     with op.batch_alter_table("inbound_idempotency") as batch_op:
         batch_op.create_unique_constraint(
             "uq_idempotency_tenant_token_key",
@@ -103,8 +96,6 @@ def downgrade() -> None:
     op.drop_table("coupons")
     with op.batch_alter_table("inbound_idempotency") as batch_op:
         batch_op.drop_constraint("uq_idempotency_tenant_token_key")
-        batch_op.drop_column("processing_expires_at")
-        batch_op.drop_column("claim_token")
     with op.batch_alter_table("inbound_rate_limits") as batch_op:
         batch_op.drop_constraint("uq_rate_limits_scope_bucket")
     op.drop_column("users", "auth_version")

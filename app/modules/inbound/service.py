@@ -295,10 +295,11 @@ def check_idempotency(
             )
         )
         if existing is None:
-            return "new", None, claim
+            # Fail closed: cannot verify ownership without a record
+            return "processing", None, ""
 
-        # Payload conflict takes priority
-        if existing.payload_digest != payload_digest and existing.status != "processing":
+        # Payload conflict is unconditional (same key must mean same content)
+        if existing.payload_digest != payload_digest:
             return "conflict", None, ""
 
         # Processing with valid lease
@@ -306,7 +307,9 @@ def check_idempotency(
             proc_expires = existing.processing_expires_at
             if proc_expires is not None and _as_utc(proc_expires) > now:
                 return "processing", None, ""
-            # Lease expired: try to take over with conditional UPDATE
+            # Lease expired or NULL: try to take over with conditional UPDATE
+            from sqlalchemy import or_
+
             result = session.execute(
                 update(InboundIdempotency)
                 .where(
@@ -314,11 +317,13 @@ def check_idempotency(
                     InboundIdempotency.token_digest == token_digest,
                     InboundIdempotency.idempotency_key == effective_key,
                     InboundIdempotency.status == "processing",
-                    InboundIdempotency.processing_expires_at <= now,
+                    or_(
+                        InboundIdempotency.processing_expires_at.is_(None),
+                        InboundIdempotency.processing_expires_at <= now,
+                    ),
                 )
                 .values(
                     claim_token=claim,
-                    payload_digest=payload_digest,
                     processing_expires_at=lease_end,
                 )
             )
@@ -370,23 +375,31 @@ def store_idempotency(
     payload: dict[str, Any],
     status: str,
     response: dict[str, Any],
-    claim_token: str = "",
-) -> None:
-    """Update the pre-occupied record with final result, verifying ownership."""
+    claim_token: str,
+) -> bool:
+    """Update the pre-occupied record with final result, verifying ownership.
+
+    Returns True if the update succeeded (ownership confirmed).
+    Returns False if the lease was lost (another process took over).
+    """
     from sqlalchemy import update
+
+    if not claim_token:
+        raise ValueError("claim_token is required for store_idempotency")
 
     now = datetime.now(UTC)
     effective_key = idempotency_key or inbound_fingerprint_key(
         token_digest=token_digest, payload=payload
     )
     with _session(app) as session:
-        stmt = (
+        result = session.execute(
             update(InboundIdempotency)
             .where(
                 InboundIdempotency.tenant_id == tenant_id,
                 InboundIdempotency.token_digest == token_digest,
                 InboundIdempotency.idempotency_key == effective_key,
                 InboundIdempotency.status == "processing",
+                InboundIdempotency.claim_token == claim_token,
             )
             .values(
                 status=status,
@@ -395,11 +408,11 @@ def store_idempotency(
                 processing_expires_at=None,
             )
         )
-        # Verify ownership if claim_token provided
-        if claim_token:
-            stmt = stmt.where(InboundIdempotency.claim_token == claim_token)
-        session.execute(stmt)
+        if result.rowcount != 1:
+            session.rollback()
+            return False
         session.commit()
+        return True
 
 
 # ---------------------------------------------------------------------------
