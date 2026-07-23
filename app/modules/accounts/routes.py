@@ -2,8 +2,9 @@ from __future__ import annotations
 
 import uuid
 
-from flask import Flask, redirect, render_template, request, session
+from flask import Flask, abort, redirect, render_template, request, session
 
+from app.core.capabilities import Capability, is_enabled
 from app.modules.accounts.service import (
     AccountError,
     authenticate,
@@ -17,10 +18,14 @@ from app.modules.accounts.service import (
 def register_account_routes(app: Flask) -> None:
     @app.get("/register")
     def register_form():
+        if not is_enabled(app, Capability.PUBLIC_REGISTRATION):
+            abort(404)
         return render_template("auth/register.html", error="")
 
     @app.post("/register")
     def register_submit():
+        if not is_enabled(app, Capability.PUBLIC_REGISTRATION):
+            abort(404)
         try:
             register_account(
                 app,

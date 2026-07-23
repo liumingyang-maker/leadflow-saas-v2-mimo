@@ -17,7 +17,22 @@ HTTP_ERROR_CODES = {
 }
 
 
+class FeatureDisabledError(Exception):
+    """Raised when a route is accessed but the capability is disabled."""
+
+    def __init__(self, feature: str) -> None:
+        self.feature = feature
+        super().__init__(f"Feature '{feature}' is disabled in this deployment")
+
+
 def register_error_handlers(app: Flask) -> None:
+    @app.errorhandler(FeatureDisabledError)
+    def handle_feature_disabled(error: FeatureDisabledError):
+        return (
+            jsonify({"ok": False, "error": "feature_disabled", "feature": error.feature}),
+            404,
+        )
+
     @app.errorhandler(HTTPException)
     def handle_http_exception(error: HTTPException):
         code = error.code or 500

@@ -4,8 +4,9 @@ from __future__ import annotations
 
 from typing import Any
 
-from flask import Flask, Response, jsonify, redirect, render_template, request, session
+from flask import Flask, Response, abort, jsonify, redirect, render_template, request, session
 
+from app.core.capabilities import Capability, is_enabled
 from app.extensions import csrf
 from app.modules.accounts.guards import tenant_required
 from app.modules.inbound.service import (
@@ -104,6 +105,8 @@ def register_inbound_routes(app: Flask) -> None:
     @app.route("/api/inbound/<token>", methods=["OPTIONS", "POST"])
     @csrf.exempt
     def inbound_api(token: str):
+        if not is_enabled(app, Capability.INBOUND_API):
+            abort(404)
         if request.method == "OPTIONS":
             return _handle_preflight(app, token)
 

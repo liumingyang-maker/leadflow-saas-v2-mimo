@@ -5,6 +5,7 @@ import json
 from flask import Flask
 
 from app.config import resolve_config
+from app.core.capabilities import init_capabilities
 from app.core.design_system import register_design_system_routes
 from app.core.errors import register_error_handlers
 from app.core.health import register_health_routes
@@ -28,6 +29,7 @@ def create_app(config_name: str | None = None) -> Flask:
     flask_app = Flask(__name__)
     flask_app.config.from_object(resolve_config(config_name))
     init_extensions(flask_app)
+    init_capabilities(flask_app)
     register_proxy_middleware(flask_app)
     register_request_id_hooks(flask_app)
     register_security_hooks(flask_app)
