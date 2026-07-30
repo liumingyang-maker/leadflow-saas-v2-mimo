@@ -1,606 +1,437 @@
-# LeadFlow SaaS V2 - AI 交接文档
+# LeadFlow SaaS V2 — Codex 交接文档
 
-**日期**: 2026-06-30  
-**交接人**: MiMoCode  
-**任务**: DeepSeek 审查集成 + 项目继续开发  
-**状态**: DeepSeek 集成已完成，可直接使用
+**日期**: 2026-07-22
+**交接人**: MiMo (AI Assistant)
+**仓库**: https://github.com/liumingyang-maker/leadflow-saas-v2-mimo
+**分支**: main
+**基线提交**: `bbcb2cfbe748ea06926858102eb71bea15b35dd2`
+**Tree SHA**: `5c66a090da32c7bfd2c076def0b4c3aa0c93e274`
+**环境**: Python 3.11.15, Windows 10
 
 ---
 
 ## 一、项目概述
 
-**LeadFlow SaaS V2** 是一个外贸中小企业CRM系统，核心功能：
-- 寻找潜在客户 (Google Search/Maps)
-- 整理线索 (导入、清洗、去重)
-- 跟进触达 (邮件)
-- 接收询盘 (Inbound API)
+LeadFlow SaaS V2 是一个外贸中小企业 CRM 系统，核心功能：寻找潜在客户、整理线索、跟进触达、接收询盘。
 
-### 技术栈
-- **后端**: Python 3.12 + Flask + SQLAlchemy 2 + Alembic + PostgreSQL + Redis/RQ
-- **前端**: Jinja + HTMX + Alpine.js + Tabler/Bootstrap 5
-- **工具**: pytest + Ruff + mypy + Playwright + Docker
+**当前定位**: 内部团队使用工具（Internal Mode），不对外商业化，邀请制账户。
+
+**技术栈**:
+- 后端: Python 3.11/3.12 + Flask + SQLAlchemy 2 + Alembic + PostgreSQL/SQLite + Redis/RQ
+- 前端: Jinja + HTMX + Alpine.js + Tabler/Bootstrap 5
+- 工具: pytest + Ruff + Playwright + Docker
 
 ---
 
-## 二、自动化架构（重要）
+## 二、当前状态
 
-这个项目使用 **三模型协作** 的自动化开发流水线：
+### 门禁结果
+| 门禁 | 结果 |
+|------|------|
+| `python -m ruff check .` | All checks passed |
+| `python -m ruff format --check .` | 114 files formatted |
+| `python -m pytest` | 286 passed (0 failed) |
+| `git diff --check` | 无错误 |
 
+### Git 状态
+- 当前分支: `main`
+- 最新提交: `bbcb2cf` fix(inbound): use exact email lookup instead of fuzzy search [INT-102]
+- 远程: `origin` → https://github.com/liumingyang-maker/leadflow-saas-v2-mimo.git
+- 工作区: 干净，无未提交变更
+
+### 已完成的里程碑（旧系统）
+V2-01 至 V2-06 共 65 个任务已通过 autopilot 推进完成。详见 `.autopilot/state.json`。
+
+### 已完成的 Internal Mode 任务（新系统）
+| 任务 ID | 标题 | 提交 SHA |
+|---------|------|----------|
+| INT-001 | Deployment Profile 和 Capability Service | de8d247 |
+| INT-002 | 禁用公开注册和商业化页面 | de8d247 |
+| INT-003 | 停用 batch_advance 合成 PASS | 5c66a09 |
+| INT-101 | 管理员 session revocation (auth_version) | 5c66a09 |
+| INT-102 | Inbound 精确邮箱查找 | bbcb2cf |
+
+---
+
+## 三、关键架构决策
+
+### 3.1 Capability Service (`app/core/capabilities.py`)
+
+所有功能开关集中管理，不散布在路由中：
+
+```python
+from app.core.capabilities import Capability, is_enabled, require_capability
+
+# 检查
+if not is_enabled(app, Capability.PUBLIC_REGISTRATION):
+    abort(404)
+
+# 或使用装饰器（需实现）
+# @require_capability(app, Capability.INBOUND_API)
 ```
-┌─────────────────────────────────────────────────────────────┐
-│                    LeadFlow V2 Autopilot                     │
-├─────────────────────────────────────────────────────────────┤
-│  ┌──────────┐     ┌──────────────┐     ┌──────────────┐     │
-│  │  GLM     │────▶│    User      │────▶│   MiMoCode   │     │
-│  │ (外部)   │     │  (手动转发)  │     │  Controller  │     │
-│  └──────────┘     └──────────────┘     └──────┬───────┘     │
-│                                               │              │
-│                           ┌───────────────────┼──────────┐   │
-│                           ▼                   ▼          │   │
-│                    ┌──────────────┐    ┌──────────────┐   │   │
-│                    │   DeepSeek   │    │    MiMo      │   │   │
-│                    │   Reviewer   │    │   Worker     │   │   │
-│                    │  (4轮审查)   │    │  (编码实现)  │   │   │
-│                    └──────────────┘    └──────────────┘   │   │
-└───────────────────────────────────────────────────────────┘
+
+环境变量控制（见附录 A）：
+- `DEPLOYMENT_MODE=internal` — 内部模式
+- `ALLOW_PUBLIC_REGISTRATION=false` — 禁用注册
+- `BILLING_ENABLED=false` — 禁用计费
+- `INBOUND_API_ENABLED=false` — 禁用入站 API
+
+**重要**: 非 production 环境（testing/debug）默认启用所有能力，除非显式设置环境变量。
+
+### 3.2 管理员 Session Revocation (`app/modules/accounts/admin_routes.py`)
+
+`admin_required` 改为装饰器工厂模式：
+
+```python
+@app.get("/admin")
+@admin_required(app)  # 必须传入 app
+def admin_console():
+    ...
 ```
 
-| 角色 | 模型 | 职责 |
-|------|------|------|
-| Controller/Architect | MiMoCode | 架构决策、任务拆分、协调、发布 |
-| Worker | MiMo | 功能代码、测试、迁移、返工 |
-| Reviewer | DeepSeek | 架构/安全/UI/发布四轮审查 |
-| External | GLM | 用户手动转发任务 |
+每次请求从数据库查询管理员，验证：
+- 管理员存在且未被禁用
+- `admin_auth_version` 匹配 session 中的版本
+- `must_change_password` 标记
+
+### 3.3 幂等 exactly-once (`app/modules/inbound/service.py`)
+
+`process_and_finalize()` 在单事务中完成：
+1. 续租 claim (30秒)
+2. 执行业务逻辑（不 commit）
+3. Finalize 幂等记录（验证 claim_token）
+4. 原子 commit 或 rollback
+
+```python
+result, ownership_held = process_and_finalize(
+    app, tenant_id=..., token_digest=..., body=...,
+    idempotency_key=..., storage_key=..., claim_token=...,
+)
+if not ownership_held:
+    return 409 + Retry-After
+```
+
+### 3.4 租户隔离
+
+所有业务表保留 `tenant_id`。Repository 和 Service 必须显式传入 `tenant_id`。不允许硬编码唯一租户 ID。
 
 ---
 
-## 三、当前进度
+## 四、待完成任务清单
 
-### 已完成
+按优先级和依赖顺序排列（来自 `docs/INTERNAL_PRODUCT_ROADMAP.md`）：
 
-| 里程碑 | 状态 | 完成情况 |
-|--------|------|----------|
-| V2-01 Foundation | ✅ 已完成 | 10/10 任务 |
-| V2-02 Accounts & Tenants |   进行中 | 6/10 任务 |
+### P0 — 内部共享使用前必须完成
 
-### V2-02 已完成任务
-- V2-02-001: Tenant, user, admin and plan models
-- V2-02-002: Registration, verification and login
-- V2-02-003: Password reset and session rotation
-- V2-02-004: Tenant isolation policies and repositories
-- V2-02-005: Tenant state and plan guards
-- V2-02-006: Administrator lifecycle and console foundation
+| ID | 标题 | 简述 |
+|----|------|------|
+| INT-103 | 幂等 replay 保存原始 HTTP 状态码 | InboundIdempotency 新增 response_status 字段，replay 返回原始状态码而非固定 200 |
+| INT-104 | Inbound 并发验证 | 需要真实并发测试（多线程/进程），验证 exactly-once 在 SQLite 和 PostgreSQL 下的行为 |
+| INT-106 | 迁移前历史重复数据预检 | 创建 `tools/db_preflight.py`，检查限流和幂等表是否有重复记录 |
+| INT-201 | PostgreSQL 共享部署 | 更新 docker-compose，配置连接池，创建数据迁移脚本 |
+| INT-202 | Gunicorn + HTTPS | 添加 Gunicorn，创建 deploy/gunicorn.conf.py，Caddy/Nginx 配置 |
+| INT-204 | Secrets 管理 | .env.example，生产密钥验证，禁止日志输出 secret |
+| INT-205 | 备份/恢复 | pg_dump 备份策略，恢复演练脚本 |
 
-### V2-02 待完成任务
-- V2-02-007: Secret encryption and rotation service
-- V2-02-008: CSRF, cookie and trusted proxy configuration
-- V2-02-009: Account, onboarding and admin UI
-- V2-02-010: Account and tenant E2E acceptance
+### P1 — 内部稳定运行必须完成
+
+| ID | 标题 | 简述 |
+|----|------|------|
+| INT-004 | 架构决策记录 (ADR) | 创建 docs/adr/ 目录，记录关键设计决策 |
+| INT-105 | 统一 Inbound CORS 和 API 错误结构 | 已部分完成（_inbound_response helper），需补充 request_id 和错误结构 |
+| INT-203 | Worker 和 Job 可靠性 | 遗留 running job 处理，retry 退避，correlation ID |
+| INT-206 | 日志、错误追踪和审计 | 结构化日志，Sentry 集成，审计事件覆盖 |
+| INT-302 | Lead 工作台改进 | 精确/模糊搜索区分，批量操作，数据导出 |
+| INT-303 | Jobs 运维界面 | 队列状态，错误摘要，retry/cancel |
+| INT-304 | Outreach 内部安全模式 | Dry Run，发送限额，allowlist |
+| INT-401 | CI 分层 | Python 3.12 blocking + 3.11 non-blocking |
+| INT-402 | 最小 Playwright 冒烟 | 登录、Lead、Job、Outreach、CSRF 等关键流程 |
+
+### P2 — 改善体验和维护性
+
+| ID | 标题 |
+|----|------|
+| INT-301 | 内部首页和导航精简 |
+| INT-305 | 内部帮助和操作手册 |
+| INT-403 | 内部发布清单 |
+| INT-404 | 内部发布验收标准 |
+
+### Deferred-Commercial — 当前禁止实现
+
+COMM-001 至 COMM-007（公众注册、套餐、支付、配额、SSO、合规、高可用）全部冻结，只保留设计边界。
 
 ---
 
-## 四、DeepSeek 审查集成（已完成）
+## 五、关键文件索引
 
-### 任务状态：✅ 已完成
+### 核心配置
+| 文件 | 说明 |
+|------|------|
+| `app/config.py` | 环境配置，生产密钥验证 |
+| `app/core/capabilities.py` | **新增** Capability Service |
+| `app/core/errors.py` | 错误处理，含 FeatureDisabledError |
+| `app/__init__.py` | App Factory，集成 capabilities |
+| `app/extensions.py` | SQLAlchemy/CSRF/模型注册 |
 
-### 已创建的文件
+### 认证与授权
+| 文件 | 说明 |
+|------|------|
+| `app/modules/accounts/models.py` | User(含 auth_version)、AdminUser(含 auth_version)、Tenant、TenantMembership |
+| `app/modules/accounts/guards.py` | tenant_required 装饰器（membership join + auth_version） |
+| `app/modules/accounts/admin_routes.py` | **已修改** admin_required 工厂模式 + auth_version 验证 |
+| `app/modules/accounts/admin_service.py` | AdminIdentity 含 auth_version |
+| `app/modules/accounts/routes.py` | 注册路由（受 Capability 控制） |
+| `app/modules/accounts/service.py` | 登录/注册/密码重置，auth_version 写入 |
 
-| 文件 | 状态 | 说明 |
-|------|------|------|
-| `.env` | ✅ 已创建 | API Key 配置 |
-| `tools/deepseek_reviewer.py` | ✅ 已创建 | DeepSeek API 封装 |
-| `tools/review_prompts/architecture.txt` | ✅ 已创建 | 架构审查提示词 |
-| `tools/review_prompts/security.txt` | ✅ 已创建 | 安全审查提示词 |
-| `tools/review_prompts/ui.txt` | ✅ 已创建 | UI审查提示词 |
-| `tools/review_prompts/release.txt` | ✅ 已创建 | 发布审查提示词 |
-| `tools/autopilot.py` | ✅ 已修改 | 添加 review-deepseek 命令 |
-| `requirements.txt` | ✅ 已修改 | 添加 openai 依赖 |
+### Inbound 幂等
+| 文件 | 说明 |
+|------|------|
+| `app/modules/inbound/service.py` | **核心** process_and_finalize, check_idempotency, claim_token 租约 |
+| `app/modules/inbound/models.py` | InboundIdempotency 含 claim_token, processing_expires_at |
+| `app/modules/inbound/routes.py` | **已修改** 统一 CORS, capability 检查 |
 
-### 需要创建的文件
+### Leads/CRM
+| 文件 | 说明 |
+|------|------|
+| `app/modules/leads/repository.py` | **已修改** 新增 find_by_email 精确查找 |
+| `app/modules/leads/models.py` | Lead, Company, Tag, Activity |
+| `app/modules/leads/import_service.py` | CSV/XLSX 导入 |
 
-#### 1. `.env` 文件
-**位置**: `C:\Users\97020\Desktop\leadflow-saas-v2-main\leadflow-saas-v2-main\.env`
+### 迁移
+| 文件 | 说明 |
+|------|------|
+| `migrations/versions/0011_security_hardening.py` | auth_version, 唯一约束, 支付表 |
+| `migrations/versions/0012_idempotency_lease.py` | claim_token, processing_expires_at, 回填 |
+| `tests/test_migration_paths.py` | 4 个迁移路径测试 |
+
+### 工具
+| 文件 | 说明 |
+|------|------|
+| `tools/autopilot.py` | 状态机（已无实际意义，仅供参考） |
+| `tools/batch_advance.py` | **已修改** 默认禁用，需 --unsafe-bulk-state-mutation |
+| `tools/deepseek_reviewer.py` | DeepSeek API 审查工具 |
+
+### 文档
+| 文件 | 说明 |
+|------|------|
+| `docs/INTERNAL_PRODUCT_ROADMAP.md` | **新增** 完整路线图（1842行），Codex 应首先阅读 |
+| `docs/ARCHITECTURE.md` | 架构文档 |
+| `docs/UI_SYSTEM.md` | UI 规范 |
+
+---
+
+## 六、运行命令
+
+### 安装依赖
+```bash
+cd c:\Users\97020\Desktop\leadflow-saas-v2-main\leadflow-saas-v2-main
+python -m pip install -r requirements.txt -r requirements-dev.txt
+```
+
+### 运行门禁
+```bash
+python -m ruff check .
+python -m ruff format --check .
+python -m pytest
+git diff --check
+```
+
+### 格式化
+```bash
+python -m ruff format .
+```
+
+### Alembic 迁移
+```bash
+alembic upgrade head
+alembic downgrade -1
+alembic upgrade head  # 验证往返
+```
+
+### 运行应用
+```bash
+# 开发
+flask run --debug
+
+# 生产
+gunicorn "app:create_app('production')" --bind 0.0.0.0:5000 --workers 2 --threads 4 --timeout 120
+```
+
+---
+
+## 七、已知限制和注意事项
+
+### 7.1 Alembic 迁移待创建
+- AdminUser.auth_version 需要新的 migration（当前仅 ORM 模型有，数据库无）
+- 建议 revision: `0013_admin_auth_version`
+
+### 7.2 Autopilot 已无实际意义
+- `.autopilot/state.json` 显示所有里程碑完成，但这只是状态机推进，不代表真正的代码审查
+- `batch_advance.py` 已禁用，不要尝试使用它来推进任务
+
+### 7.3 测试环境
+- 单元测试使用 SQLite 内存数据库
+- CI 仅配置 Python 3.12（需添加 3.11 矩阵）
+- Playwright 测试在缺少浏览器时静默跳过
+
+### 7.4 安全相关
+- 生产环境必须设置所有密钥（见附录 A）
+- `.env` 文件不应提交到 git（已在 .gitignore）
+- HANDOFF.md 中曾有 DeepSeek API Key，已替换为占位符
+
+### 7.5 幂等指纹窗口
+- 显式幂等键: 24 小时 TTL
+- 指纹模式（无显式 key）: 5 分钟 TTL
+- 指纹模式的 expires_at 在 process_and_finalize 中使用 FINGERPRINT_WINDOW_MINUTES
+
+---
+
+## 八、实施建议
+
+### 第一批（依赖顺序）
+1. INT-004: ADR 文档（无代码变更，纯文档）
+2. INT-103: 幂等 replay 状态码（新增 Alembic 0013）
+3. INT-106: 迁移前预检脚本
+4. INT-201: PostgreSQL 部署
+5. INT-202: Gunicorn/HTTPS
+6. INT-204: Secrets 管理
+7. INT-205: 备份/恢复
+
+### 第二批
+8. INT-104: 并发验证（依赖 PostgreSQL）
+9. INT-203: Worker 可靠性
+10. INT-206: 日志/审计
+11. INT-301-305: UI 改进
+12. INT-401-404: CI/发布
+
+### 分支命名
+```
+int/INT-103-replay-status-code
+int/INT-201-postgresql-deployment
+```
+
+### 提交格式
+```
+fix(inbound): save and replay original HTTP status [INT-103]
+feat(db): add preflight script for migration safety [INT-106]
+```
+
+---
+
+## 九、AI 执行协议
+
+### Task Packet 模板
+每个任务必须使用以下格式（详见 `docs/INTERNAL_PRODUCT_ROADMAP.md` 第 16 章）：
+- Goal / Current Mode / Baseline Commit
+- Preconditions / In Scope / Out of Scope
+- Current Risk / Required Design / Implementation Steps
+- Tests / Migration / Security Review
+- UX States / Commercialization Hook / Acceptance Criteria
+- Rollback / Deliverables
+
+### AI 硬性限制
+- 不得修改已发布 migration
+- 不得删除失败测试来让 CI 通过
+- 不得使用 `except Exception` 吞掉数据库错误
+- 不得通过 sleep 伪造并发测试
+- 不得将 UI 隐藏视为服务端授权
+- 不得自动推送 main 或标记 PASS
+- 未经要求不得实现 Billing、Public Signup 或 Payment Webhook
+
+### Definition of Done
+1. 根因已明确
+2. 实现符合 Internal Mode
+3. 未破坏商业化预留边界
+4. 新增行为测试（不只是修改 fixture）
+5. 必要时新增 migration
+6. Migration 路径有历史数据测试
+7. 错误和边界状态已覆盖
+8. Security review 已完成
+9. UI 有 Loading/Empty/Error/Success
+10. 文档更新
+11. 全部门禁通过
+12. 独立 reviewer 通过
+
+---
+
+## 附录 A：环境变量
 
 ```env
-DEEPSEEK_API_KEY=your-api-key-here
-DEEPSEEK_MODEL=deepseek-chat
-DEEPSEEK_BASE_URL=https://api.deepseek.com
-```
+# Deployment profile
+DEPLOYMENT_MODE=internal
+APP_ENV=production
 
-#### 2. `tools/deepseek_reviewer.py`
-**位置**: `C:\Users\97020\Desktop\leadflow-saas-v2-main\leadflow-saas-v2-main\tools\deepseek_reviewer.py`
+# Product capabilities
+ALLOW_PUBLIC_REGISTRATION=false
+INVITE_ONLY=true
+BILLING_ENABLED=false
+PAYMENT_WEBHOOKS_ENABLED=false
+INBOUND_API_ENABLED=false
+OUTREACH_SEND_ENABLED=true
+ADMIN_CONSOLE_ENABLED=true
 
-```python
-import os
-import json
-from openai import OpenAI
-from pathlib import Path
-from dataclasses import dataclass
+# Database (生产用 PostgreSQL)
+DATABASE_URL=postgresql+psycopg://user:pass@host:5432/leadflow
 
-@dataclass
-class ReviewResult:
-    round: str
-    verdict: str  # PASS or FAIL
-    notes: str
-    issues: list[str]
+# Redis
+REDIS_URL=redis://localhost:6379
 
-class DeepSeekReviewer:
-    def __init__(self):
-        self.client = OpenAI(
-            api_key=os.getenv("DEEPSEEK_API_KEY"),
-            base_url=os.getenv("DEEPSEEK_BASE_URL", "https://api.deepseek.com")
-        )
-        self.model = os.getenv("DEEPSEEK_MODEL", "deepseek-chat")
-        self.prompts_dir = Path(__file__).parent / "review_prompts"
-    
-    def _load_prompt(self, round_name: str) -> str:
-        return (self.prompts_dir / f"{round_name}.txt").read_text()
-    
-    def _call_api(self, system_prompt: str, user_content: str) -> str:
-        response = self.client.chat.completions.create(
-            model=self.model,
-            messages=[
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": user_content}
-            ],
-            temperature=0.1
-        )
-        return response.choices[0].message.content
-    
-    def review(self, round_name: str, diff: str, context: str, strict: bool = True) -> ReviewResult:
-        prompt = self._load_prompt(round_name)
-        strictness = "严格审查，任何问题都必须FAIL" if strict else "中等严格度，只关注严重问题"
-        
-        user_content = f"""
-## 严格度
-{strictness}
+# Security (必须全部设置，>=32 字符，不得使用默认值)
+SECRET_KEY=<random-32+>
+TENANT_SECRET_KEY=<random-32+>
+TRACKING_SIGNING_KEY=<random-32+>
+UNSUBSCRIBE_SIGNING_KEY=<random-32+>
+INBOUND_TOKEN_KEY=<random-32+>
 
-## 代码变更
-```diff
-{diff}
-```
+# Session
+SESSION_COOKIE_SECURE=true
+SESSION_COOKIE_SAMESITE=Lax
 
-## 任务上下文
-{context}
-
-请返回JSON格式:
-{{
-  "verdict": "PASS或FAIL",
-  "notes": "审查说明",
-  "issues": ["问题1", "问题2"]
-}}
-"""
-        
-        response = self._call_api(prompt, user_content)
-        result = json.loads(response)
-        
-        return ReviewResult(
-            round=round_name,
-            verdict=result["verdict"],
-            notes=result["notes"],
-            issues=result.get("issues", [])
-        )
-    
-    def review_all(self, diff: str, context: str) -> dict[str, ReviewResult]:
-        rounds = {
-            "architecture": True,   # 严格
-            "security": True,       # 严格
-            "ui": False,            # 中等
-            "release": True         # 严格
-        }
-        
-        results = {}
-        for round_name, strict in rounds.items():
-            results[round_name] = self.review(round_name, diff, context, strict)
-        
-        return results
-```
-
-#### 3. `tools/review_prompts/` 目录
-**位置**: `C:\Users\97020\Desktop\leadflow-saas-v2-main\leadflow-saas-v2-main\tools\review_prompts\`
-
-创建4个文件：
-
-**architecture.txt**
-```
-你是LeadFlow V2的架构审查员。审查以下代码变更是否符合架构规范。
-
-## 架构规范
-- 依赖方向: blueprint → service → repository → database
-- 模块可包含: blueprint.py, models.py, repository.py, service.py, forms.py, schemas.py, policies.py, events.py
-- 模板禁止直接查数据库
-- 所有租户表有 tenant_id NOT NULL
-- Repository 对外暴露 get_for_tenant, list_for_tenant 等明确接口
-- 禁止微服务、Kubernetes、GraphQL、React/Next.js重写、Celery、隐藏全局状态和过度抽象
-
-## 审查重点
-1. 依赖方向是否正确
-2. 模块边界是否清晰
-3. 是否引入不必要的抽象
-4. 租户隔离是否完整
-5. 是否违反禁止的技术选型
-
-返回JSON: {"verdict": "PASS/FAIL", "notes": "说明", "issues": ["问题列表"]}
-```
-
-**security.txt**
-```
-你是LeadFlow V2的安全审查员。审查以下代码变更是否存在安全漏洞。
-
-## 安全规范
-- Auth/Session 必须安全处理
-- CSRF 保护必须完整
-- 所有输入必须验证
-- Secret 不能明文存储或泄露
-- 所有租户数据查询必须带 tenant_id scope
-- 重定向必须验证目标
-- 需要 rate limiting 的端点必须有
-- 错误信息不能泄露内部细节
-
-## 审查重点
-1. 认证和会话管理
-2. CSRF保护
-3. 输入验证和SQL注入
-4. XSS防护
-5. 租户隔离绕过
-6. Secret泄露
-7. 权限提升
-8. 信息泄露
-
-返回JSON: {"verdict": "PASS/FAIL", "notes": "说明", "issues": ["问题列表"]}
-```
-
-**ui.txt**
-```
-你是LeadFlow V2的UI审查员。审查以下代码变更是否符合UI规范。
-
-## UI规范
-- 色彩: Canvas #F5F7FA, Surface #FFFFFF, Primary cobalt #246BFD
-- 禁止默认紫色AI渐变
-- 字体: Inter或系统sans, 正文不小于14px
-- 组件必须具备: default/loading/empty/error/disabled/focus状态
-- 动效: 克制、快速、专业, 遵守prefers-reduced-motion
-- 可访问性: WCAG 2.2 AA
-
-## 审查重点
-1. Design system一致性
-2. 组件状态完整性
-3. 响应式设计
-4. 可访问性
-5. 动效克制
-6. 色彩使用
-
-返回JSON: {"verdict": "PASS/FAIL", "notes": "说明", "issues": ["问题列表"]}
-```
-
-**release.txt**
-```
-你是LeadFlow V2的发布审查员。审查以下代码变更是否可以发布。
-
-## 发布规范
-- diff必须干净，无调试代码
-- 测试必须覆盖新功能
-- 数据库迁移必须可回滚
-- CI必须通过
-- 不能有secret泄露
-- PR范围必须合理
-
-## 审查重点
-1. 代码质量
-2. 测试覆盖
-3. 迁移安全
-4. 依赖变更
-5. 配置变更
-6. 文档更新
-
-返回JSON: {"verdict": "PASS/FAIL", "notes": "说明", "issues": ["问题列表"]}
-```
-
-#### 4. 修改 `tools/autopilot.py`
-**位置**: `C:\Users\97020\Desktop\leadflow-saas-v2-main\leadflow-saas-v2-main\tools\autopilot.py`
-
-在 `parser()` 函数中添加新命令：
-
-```python
-def cmd_review_deepseek(args: argparse.Namespace) -> int:
-    """调用 DeepSeek 进行审查"""
-    from deepseek_reviewer import DeepSeekReviewer
-    
-    cfg = config()
-    s = state()
-    _, task = current_task(cfg, s)
-    
-    # 获取 diff
-    diff_result = run(["git", "diff", "HEAD"])
-    diff = diff_result.stdout
-    
-    # 获取任务上下文
-    packet_path = STATE_DIR / "packets" / f"{task['id']}.md"
-    context = packet_path.read_text() if packet_path.exists() else ""
-    
-    reviewer = DeepSeekReviewer()
-    
-    if args.round == "all":
-        results = reviewer.review_all(diff, context)
-        all_pass = all(r.verdict == "PASS" for r in results.values())
-        
-        for round_name, result in results.items():
-            print(f"{round_name}: {result.verdict}")
-            if result.issues:
-                for issue in result.issues:
-                    print(f"  - {issue}")
-        
-        verdict = "PASS" if all_pass else "FAIL"
-        notes = "\n".join(f"{r.round}: {r.notes}" for r in results.values())
-    else:
-        strict = args.round in ("architecture", "security", "release")
-        result = reviewer.review(args.round, diff, context, strict)
-        verdict = result.verdict
-        notes = result.notes
-        print(f"{args.round}: {verdict}")
-        if result.issues:
-            for issue in result.issues:
-                print(f"  - {issue}")
-    
-    # 记录审查结果
-    review = {
-        "task": task["id"],
-        "verdict": verdict,
-        "notes": notes,
-        "reviewer": "deepseek",
-        "at": now()
-    }
-    path = STATE_DIR / "reviews" / f"{task['id']}-deepseek-{dt.datetime.now().strftime('%Y%m%d-%H%M%S')}.json"
-    save_json(path, review)
-    s["last_verdict"] = review
-    s["phase"] = "ACCEPTED" if verdict == "PASS" else "WORKER_FIX"
-    write_state(s)
-    
-    return 0 if verdict == "PASS" else 1
-```
-
-在 `parser()` 函数中注册命令：
-
-```python
-# 在 sub.add_parser("advance") 之后添加
-ds = sub.add_parser("review-deepseek")
-ds.add_argument("--round", required=True, choices=["architecture", "security", "ui", "release", "all"])
-ds.set_defaults(func=cmd_review_deepseek)
+# Operations
+LOG_FORMAT=json
+LOG_LEVEL=INFO
+ERROR_TRACKING_DSN=
+RELEASE_SHA=
 ```
 
 ---
 
-## 五、项目目录结构
+## 附录 B：数据库 Schema 索引
 
-```
-leadflow-saas-v2-main/
-├── .agents/                    # Agent skills
-│   ├── skill-lock.json
-│   └── skills/
-├── .autopilot/                 # 自动化状态
-│   ├── evidence/               # 门禁证据
-│   ├── packets/                # 任务包
-│   ├── reviews/                # 审查记录
-│   └── state.json              # 当前状态
-├── app/                        # 应用代码
-│   ├── __init__.py
-│   ├── config.py               # 配置
-│   ├── extensions.py           # Flask扩展
-│   ├── core/                   # 核心模块
-│   │   ├── security.py
-│   │   ├── errors.py
-│   │   ├── request_id.py
-│   │   └── tenancy.py
-│   ├── modules/                # 业务模块
-│   │   ├── accounts/
-│   │   ├── admin/
-│   │   ├── audit/
-│   │   ├── inbound/
-│   │   ├── jobs/
-│   │   ├── leads/
-│   │   ├── outreach/
-│   │   └── settings/
-│   ├── integrations/           # 外部集成
-│   ├── templates/              # Jinja模板
-│   └── static/                 # 静态资源
-├── config/                     # 配置文件
-│   ├── autopilot.json          # 自动化配置
-│   └── skill_sources.json
-├── docs/                       # 文档
-│   ├── ARCHITECTURE.md         # 架构文档
-│   ├── MILESTONES.md           # 里程碑
-│   ├── PRODUCT_PLAN.md         # 产品计划
-│   └── UI_SYSTEM.md            # UI规范
-├── migrations/                 # Alembic迁移
-├── milestones/                 # 任务定义
-│   ├── V2-01.json
-│   ├── V2-02.json
-│   └── ...
-├── scripts/                    # 脚本
-├── tests/                      # 测试
-├── tools/                      # 工具
-│   ├── autopilot.py            # 自动化工具
-│   └── install_ui_skills.py
-├── AGENTS.md                   # Agent治理规则
-├── MASTER_AUTOPILOT_PROMPT.md  # 主控Prompt
-└── README_FIRST.md             # 快速开始
-```
+核心表（由 Alembic 管理）：
+- `tenants` — 租户
+- `users` — 用户（含 auth_version）
+- `admin_users` — 管理员（含 auth_version, disabled_at, must_change_password）
+- `tenant_memberships` — 租户-用户关系
+- `email_tokens` — 邮箱验证/密码重置令牌
+- `leads` — 线索
+- `companies` — 公司
+- `tags` / `lead_tags` — 标签
+- `activities` — 活动记录
+- `import_batches` / `import_batch_rows` — 导入批次
+- `jobs` — 采集任务
+- `email_templates` / `email_tracking` / `suppressions` — 外联
+- `inbound_tokens` / `inbound_allowed_origins` — 入站 API
+- `inbound_rate_limits` — 限流（含唯一约束）
+- `inbound_idempotency` — 幂等（含 claim_token, processing_expires_at）
+- `audit_events` — 审计事件
+- `coupons` / `payments` / `payment_events` — 支付（模型已有，业务未实现）
 
 ---
 
-## 六、关键文件说明
+## 附录 C：Capability 矩阵
 
-### 配置文件
-
-| 文件 | 说明 |
-|------|------|
-| `config/autopilot.json` | 自动化配置，包含里程碑、门禁命令、Git策略 |
-| `.autopilot/state.json` | 当前状态：阶段、任务索引、审查结果 |
-| `AGENTS.md` | Agent角色定义、流程、规则 |
-| `MASTER_AUTOPILOT_PROMPT.md` | 主控Prompt，指导Codex如何工作 |
-
-### 里程碑文件
-
-| 文件 | 说明 |
-|------|------|
-| `milestones/V2-01.json` | Foundation任务 (已完成) |
-| `milestones/V2-02.json` | Accounts & Tenants任务 (进行中) |
-| `milestones/V2-03.json` | Leads & CRM任务 |
-| `milestones/V2-04.json` | Collection & Jobs任务 |
-| `milestones/V2-05.json` | Outreach & Inbound任务 |
-| `milestones/V2-06.json` | Admin & Launch任务 |
-
-### 文档文件
-
-| 文件 | 说明 |
-|------|------|
-| `docs/ARCHITECTURE.md` | 技术架构、目录结构、模块契约 |
-| `docs/UI_SYSTEM.md` | UI规范、色彩、组件、动效 |
-| `docs/PRODUCT_PLAN.md` | 产品功能、核心闭环 |
-| `docs/AUTOMATION_WORKFLOW.md` | 自动化状态机、审查流程 |
+| Capability | Internal | Commercial |
+|------------|----------|------------|
+| PUBLIC_REGISTRATION | 关闭 | 开启 |
+| BILLING | 关闭 | 开启 |
+| PAYMENT_WEBHOOKS | 关闭 | 开启 |
+| INBOUND_API | 按需 | 客户级配置 |
+| OUTREACH_SEND | 开启 | 开启 |
+| MULTI_TENANT_SELF_SERVICE | 关闭 | 开启 |
+| ADMIN_CONSOLE | 开启 | 开启 |
+| INVITE_ONLY | 开启 | 关闭 |
 
 ---
 
-## 七、执行流程
-
-### 标准任务流程
-
-```
-READY → PLANNING → WORKER_BUILD → VERIFYING → REVIEWING
-      → WORKER_FIX (循环) → ACCEPTED → PR_OPEN → CI → MERGED → DONE
-```
-
-### 命令序列
-
-```bash
-# 1. 查看当前状态
-python tools/autopilot.py status
-
-# 2. 准备任务包
-python tools/autopilot.py prepare
-
-# 3. 运行门禁
-python tools/autopilot.py verify
-
-# 4. DeepSeek审查 (新功能)
-python tools/autopilot.py review-deepseek --round architecture
-python tools/autopilot.py review-deepseek --round security
-python tools/autopilot.py review-deepseek --round ui
-python tools/autopilot.py review-deepseek --round release
-python tools/autopilot.py review-deepseek --round all
-
-# 5. 记录审查结果
-python tools/autopilot.py review --verdict PASS --notes "..."
-
-# 6. 推进到下一任务
-python tools/autopilot.py advance
-```
-
----
-
-## 八、待完成工作
-
-### DeepSeek 集成（已完成）
-
-✅ 所有文件已创建，可直接使用
-
-### 后续任务
-
-1. **完成 V2-02** (4个任务待完成)
-   - V2-02-007: Secret encryption and rotation service
-   - V2-02-008: CSRF, cookie and trusted proxy configuration
-   - V2-02-009: Account, onboarding and admin UI
-   - V2-02-010: Account and tenant E2E acceptance
-
-2. **V2-03**: Leads & CRM (10个任务)
-3. **V2-04**: Collection & Jobs (10个任务)
-4. **V2-05**: Outreach & Inbound (10个任务)
-5. **V2-06**: Admin & Launch (10个任务)
-
----
-
-## 九、注意事项
-
-### 安全规则
-- 禁止明文存储secret
-- 所有租户查询必须带 tenant_id
-- 禁止自动生产部署
-- 禁止 `git add .` 或 `git add -A`
-
-### 代码规范
-- Python 3.12+
-- Ruff格式化
-- 类型注解
-- 测试覆盖
-
-### UI规范
-- 禁止紫色AI渐变
-- 组件必须有完整状态
-- 遵守 WCAG 2.2 AA
-- 动效克制
-
----
-
-## 十、快速开始（给下一个AI）
-
-### 第一步：安装依赖
-
-```bash
-cd C:\Users\97020\Desktop\leadflow-saas-v2-main\leadflow-saas-v2-main
-pip install -r requirements.txt
-```
-
-### 第二步：查看当前状态
-
-```bash
-python tools/autopilot.py status
-```
-
-### 第三步：准备下一个任务
-
-```bash
-python tools/autopilot.py prepare
-```
-
-### 第四步：让 MiMo (Worker) 实现任务
-
-阅读 `.autopilot/packets/V2-02-007.md` 任务包，按照要求实现代码。
-
-### 第五步：运行门禁
-
-```bash
-python tools/autopilot.py verify
-```
-
-### 第六步：DeepSeek 审查
-
-```bash
-# 运行全部四轮审查
-python tools/autopilot.py review-deepseek --round all
-
-# 或单独运行某一轮
-python tools/autopilot.py review-deepseek --round architecture
-python tools/autopilot.py review-deepseek --round security
-python tools/autopilot.py review-deepseek --round ui
-python tools/autopilot.py review-deepseek --round release
-```
-
-### 第七步：推进到下一任务
-
-```bash
-python tools/autopilot.py advance
-```
-
----
-
-## 十一、联系方式
-
-如有问题，请查阅：
-- `AGENTS.md` - Agent治理规则
-- `docs/` - 完整文档
-- `.autopilot/state.json` - 当前状态
-- `HANDOFF.md` - 本交接文档
-
----
-
-**祝开发顺利！**
+**交接完成。请首先阅读 `docs/INTERNAL_PRODUCT_ROADMAP.md` 获取完整上下文，然后按上述任务清单顺序实施。**
