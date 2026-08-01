@@ -1,6 +1,6 @@
 # LeadFlow 单人版 AI 获客系统完整技术方案
 
-状态：待产品确认
+状态：产品方向已确认，等待按实施计划执行
 
 日期：2026-08-01
 
@@ -741,21 +741,20 @@ Offline Evaluator: 可配置第二模型做抽样比较，不参与每条生产�
 - 没有任何联系路径；
 - 已在抑制/拒绝/重复名单。
 
-### 14.2 质量分
+### 14.2 `score-v1` 四类评分
 
-通过门禁后再按 100 分排序：
+通过门禁后分别计算 Fit、Intent、Data Quality，再合成 Priority：
 
-| 维度 | 权重 |
-|---|---:|
-| 产品相关证据 | 30 |
-| 买家角色证据 | 20 |
-| 来源可信度 | 20 |
-| 可联系性 | 15 |
-| 市场/地域匹配 | 10 |
-| 信息时效 | 5 |
+| 分数 | 组成 |
+|---|---|
+| Fit | 产品相关 35%、买家角色 25%、国家匹配 20%、公司规模 10%、行业匹配 10% |
+| Intent | 直接购买信号 40%、近期活动 25%、竞品/经销信号 20%、信号时效 15% |
+| Data Quality | 身份质量 25%、来源可信度 25%、可联系性 20%、独立证据 15%、数据时效 15% |
+| Priority | `round(0.50 * Fit + 0.30 * Intent + 0.20 * DataQuality)` |
 
-模型的 `ai_confidence` 单独展示，不参与硬门禁。建议审核阈值可先设 70，但所有阈值都需要用真实
-接受率和回复率校准。
+等级为 `S >= 85`、`A >= 70`、`B >= 55`、`C < 55`。模型的 `ai_confidence` 单独展示，不参与
+硬门禁或 Priority。初始审核重点可设为 A/S，但阈值和权重只能根据真实接受率、联系率和回复率以新
+score version 调整，不能重写历史 Assessment。
 
 ### 14.3 去重
 
@@ -1401,13 +1400,141 @@ MiMo 多语言搜索
 - [Firecrawl GitHub](https://github.com/firecrawl/firecrawl)
 - [SearXNG GitHub](https://github.com/searxng/searxng)
 - [Google API Python Client](https://github.com/googleapis/google-api-python-client)
+- [MiMo 官方文档](https://mimo.mi.com/docs)
+- [MiMo Claw MCP 工具调用说明](https://mimo.mi.com/docs/en-US/news/latest/mimoclaw)
+- [Microsoft Playwright MCP](https://github.com/microsoft/playwright-mcp)
+- [Chrome DevTools MCP](https://github.com/ChromeDevTools/chrome-devtools-mcp)
+- [MCP Python SDK](https://github.com/modelcontextprotocol/python-sdk)
+- [LinkedIn 禁用软件和自动化规则](https://www.linkedin.com/help/linkedin/answer/a1341387/prohibited-software-and-extensions?lang=en)
+- [LinkedIn User Agreement](https://www.linkedin.com/legal/user-agreement)
 
-## 25. 待用户确认的实施范围
+## 25. 已确认的实施范围
 
 本设计已经完整包含竞品雷达、YouTube、Places、Hunter、Apollo 和后续多模型边界；完整设计不
 等于一次性实施。建议第一批批准 **Phase 0 + Phase 1**，先证明“MiMo + 官网证据 + 候选审核 +
 安全草稿”能产生合格 Lead；随后按 Phase 2 实现正式竞品雷达、YouTube 和 Places，再按指标增加
 付费渠道。
 
-确认本设计后，下一步应把 Phase 0/1 拆成逐文件、逐 migration、逐测试的实施计划；在该计划
-被确认前，不开始功能代码实现。
+用户已于 2026-08-01 确认：
+
+- 先完成单人版，保留未来公共 SaaS 的 `tenant_id`、Capability、Job 和审计边界；
+- 增加正式国家/ICP 筛选与可解释客户评分；
+- 使用 MiMo 作为首期规划、研究、抽取和草稿模型；
+- 允许通过受控 MCP 浏览器研究公开且允许自动访问的网站；
+- LinkedIn 固定为人工或官方数据通道，不做浏览器自动抓取；
+- 不改掉已经设计完成的竞品雷达、YouTube、Places、Hunter、Apollo 和 Outreach 续接位置。
+
+第一实施批次为 **Phase 0 + Phase 1 + 国家/评分 + 受控 Browser MCP 的最小可靠闭环**。竞品雷达和
+更多渠道仍按后续阶段接入，不能与首批安全核心混为一次大提交。
+
+## 26. 国家、ICP 与评分补充设计（已确认）
+
+### 26.1 国家是任务约束，不是备注
+
+Mission 使用 ISO 3166-1 alpha-2 国家代码。用户可以选择多个国家，但执行计划必须拆成单国 run，
+每个 run 独立使用当地语言、搜索词、排除词、渠道和预算。
+
+Candidate 分开保存：
+
+- `hq_country_code`：总部或注册地；
+- `opportunity_country_code`：本次销售机会所在市场，也是硬门禁字段；
+- `contact_country_code`：联系人所在国家，只用于语言、时区和联系安排；
+- `country_resolution_status`：`unknown/confirmed/conflicting`。
+
+确认机会国家至少需要一个 A 级来源，或两个相互独立且一致的 B/C 级来源。信息不足或来源冲突时不
+允许进入推荐队列，不能让模型根据域名后缀或语言猜测国家。
+
+### 26.2 ICP 输入
+
+首期 Target Profile 至少包含：
+
+- 目标国家与语言；
+- 买家类型，例如进口商、经销商、批发商、维修网络；
+- 行业和公司规模；
+- 必须包含的产品/业务词；
+- 排除词和排除业务，例如纯电、供应商、媒体或 marketplace；
+- 候选、页数、token 和时间预算。
+
+### 26.3 先硬门禁，后评分
+
+硬门禁失败原因使用机器可统计 code：`wrong_country`、`country_unknown`、`wrong_buyer_type`、
+`excluded_business`、`no_independent_identity`、`insufficient_product_evidence`、`no_contact_path`、
+`duplicate`、`suppressed`、`policy_blocked`、`stale_source`。
+
+通过门禁后使用 `score-v1`：
+
+```text
+Fit = 产品相关 35% + 买家角色 25% + 国家匹配 20% + 公司规模 10% + 行业匹配 10%
+
+Intent = 直接购买信号 40% + 近期活动 25% + 竞品/经销信号 20% + 信号时效 15%
+
+DataQuality = 身份质量 25% + 来源可信度 25% + 可联系性 20%
+              + 独立证据 15% + 数据时效 15%
+
+Priority = round(0.50 * Fit + 0.30 * Intent + 0.20 * DataQuality)
+```
+
+等级为 `S >= 85`、`A >= 70`、`B >= 55`、`C < 55`。模型 `ai_confidence` 单独展示，不参与硬门禁，
+也不能替代来源质量。每次 Assessment 保存 score/policy/prompt/model 版本、分项、claim IDs 和解释。
+
+### 26.4 CRM 筛选
+
+Lead 列表增加国家、最低/最高 Priority、等级、来源、是否可联系和证据状态筛选；默认提供 S/A 优先、
+目标国家、待审核、缺联系路径四个快捷视图。晋升 Lead 时复制 Candidate 的国家和评分快照，同时保留
+原 Assessment，保证历史可解释。
+
+## 27. MiMo + 受控 Browser MCP 补充设计（已确认）
+
+### 27.1 角色分工
+
+MiMo API Key 不直接连接浏览器。LeadFlow 是 MCP Host 和唯一控制面：MiMo 返回结构化计划或高层
+工具调用，LeadFlow 先检查 Capability、站点策略、URL/SSRF、预算和动作，再通过 MCP Client 调用
+隔离的 Playwright MCP Server。
+
+浏览器只负责读取页面；Candidate/Evidence、国家解析、门禁、评分、审核和 Lead 晋升仍由确定性业务
+服务完成。MiMo 不获得数据库 Session、Repository、发送服务或原始 MCP 工具列表。
+
+### 27.2 浏览器选择
+
+自动研究使用独立、无登录、无持久 Cookie 的 Playwright MCP 浏览器，不连接用户日常 Chrome。
+Chrome DevTools MCP 仅用于工程调试，因为它能查看和修改连接浏览器中的内容，不适合作为生产获客
+边界。MCP 官方工具的 allowlist 只能作为纵深防御，LeadFlow 仍须自行实施安全控制。
+
+### 27.3 网站访问分级
+
+| 模式 | 行为 |
+|---|---|
+| `auto_public` | 企业官网、政府/协会公开名录在策略和 robots 允许时有限只读研究 |
+| `review_required` | 未知目录由用户先批准域名策略 |
+| `manual_only` | 登录或条款不明确的平台只允许人工录入 |
+| `blocked` | LinkedIn 等明确限制当前用途的平台在浏览器启动前硬阻断 |
+
+LinkedIn 的系统 block 高于租户数据库策略，不能通过普通设置覆盖。系统不实现验证码绕过、代理轮换、
+指纹伪装、Cookie 复制、隐藏接口、批量资料遍历、自动加好友或自动私信。
+
+### 27.4 高层工具和预算
+
+MiMo 只看到 `open_allowed_url`、`read_current_public_page`、`follow_same_site_link`、
+`capture_evidence`、`stop_research`。业务 Agent 不注册任意代码执行、页面 evaluate、输入、表单、上传、
+下载、Cookie、Storage 或网络正文工具。
+
+默认每次 BrowserRun：最多 10 页、120 秒、5 MB 文本快照、12 次工具调用；同域并发 1，动作间隔至少
+3 秒。captcha、登录墙、策略拒绝、提示注入或最终 URL 越界时关闭会话且不自动重试。
+
+### 27.5 证据与失败
+
+每条 Evidence 保存来源 URL、title、限长 excerpt、trust tier、retrieved/observed time、content hash、
+支持的 claim、validation status 和可选截图 hash；不保存整页 HTML、Cookie 或完整第三方响应。
+
+浏览器错误统一为策略、URL、页面、预算、Provider、MCP 和内容七类。错误摘要不得包含 API Key、URL
+query、Cookie、表单正文、模型 reasoning 或联系人私密内容。
+
+## 28. 可执行实施计划
+
+逐文件、逐 migration、逐测试、逐提交的正式计划位于：
+
+`docs/superpowers/plans/2026-08-01-mimo-mcp-country-scoring-acquisition.md`
+
+该计划包含 13 个 TDD 任务、完整文件映射、关键接口/模型代码、命令与预期输出、真实试点步骤、
+Definition of Done、回滚方案和供其他 AI 审查的十个重点问题。功能代码必须按计划逐任务实施并在每个
+浏览器安全核心任务后做独立审查。
