@@ -140,6 +140,82 @@ def test_lead_repository_list_filters(monkeypatch) -> None:
         assert len(repo.list(tenant_id="t1", is_duplicate=True)) == 1
 
 
+def test_lead_repository_acquisition_filters_remain_tenant_scoped(monkeypatch) -> None:
+    from datetime import UTC, datetime, timedelta
+
+    engine = _engine(monkeypatch)
+    from app.modules.leads.models import Lead
+    from app.modules.leads.repository import LeadRepository
+
+    with Session(engine) as session:
+        repo = LeadRepository(session)
+        top = repo.add(
+            Lead(
+                email="top@example.com",
+                phone="",
+                source="acquisition",
+                opportunity_country_code="MX",
+                priority_score=92,
+                priority_band="A",
+            ),
+            tenant_id="t1",
+        )
+        missing_contact = repo.add(
+            Lead(
+                email="",
+                phone="",
+                linkedin_url="",
+                source="acquisition",
+                opportunity_country_code="MX",
+                priority_score=40,
+                priority_band="C",
+                follow_up_at=datetime.now(UTC) - timedelta(minutes=5),
+            ),
+            tenant_id="t1",
+        )
+        repo.add(
+            Lead(
+                email="private@example.com",
+                source="acquisition",
+                opportunity_country_code="MX",
+                priority_score=99,
+                priority_band="A",
+            ),
+            tenant_id="t2",
+        )
+        session.flush()
+        from app.modules.leads.models import Activity
+
+        session.add(
+            Activity(
+                tenant_id="t1",
+                lead_id=top.id,
+                action="inbound_received",
+            )
+        )
+        session.commit()
+
+        assert [
+            lead.email
+            for lead in repo.list(
+                tenant_id="t1",
+                opportunity_country_code="MX",
+                priority_min=80,
+                priority_max=100,
+                priority_band="A",
+                acquisition_source=True,
+                has_contact=True,
+            )
+        ] == ["top@example.com"]
+        missing = repo.list(tenant_id="t1", acquisition_source=True, has_contact=False)
+        assert len(missing) == 1
+        assert missing[0].email == ""
+        assert repo.list(tenant_id="t1", has_inbound_reply=True) == [top]
+        assert repo.list(tenant_id="t1", follow_up_due_before=datetime.now(UTC)) == [
+            missing_contact
+        ]
+
+
 def test_company_repository_tenant_isolation(monkeypatch) -> None:
     engine = _engine(monkeypatch)
     from app.modules.leads.models import Company

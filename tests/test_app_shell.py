@@ -69,9 +69,9 @@ def test_workbench_shell_renders_primary_information_architecture(
     html = response.get_data(as_text=True)
 
     assert response.status_code == 200
-    for nav in ["Workbench", "Find customers", "Lead review", "CRM", "Outreach", "Settings"]:
+    for nav in ["今日工作台", "创建找客户任务", "候选与 CRM", "通知", "外联", "设置"]:
         assert nav in html
-    for state in ["Loading current tasks", "No reviewed leads yet", "Unable to load pipeline"]:
+    for state in ["待审核候选", "待处理回复", "运行中任务", "今日跟进"]:
         assert state in html
     assert 'aria-current="page"' in html
     assert 'aria-label="Primary navigation"' in html

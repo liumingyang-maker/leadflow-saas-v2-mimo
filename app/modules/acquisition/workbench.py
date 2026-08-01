@@ -1,0 +1,362 @@
+"""Read models and notification services for the solo operator workbench."""
+
+from __future__ import annotations
+
+import json
+import re
+from dataclasses import dataclass
+from datetime import UTC, datetime
+from urllib.parse import urlsplit
+
+from sqlalchemy import distinct, func, select
+from sqlalchemy.exc import IntegrityError
+from sqlalchemy.orm import Session
+
+from app.extensions import get_engine
+from app.modules.acquisition.models import AcquisitionCandidate, Notification
+from app.modules.acquisition.repository import NotificationRepository
+from app.modules.jobs.models import Job
+from app.modules.leads.models import Activity, Lead
+
+ALLOWED_NOTIFICATION_KINDS = {
+    "mission_completed",
+    "mission_partial",
+    "mission_failed",
+    "provider_failed",
+    "job_stuck",
+    "backup_stale",
+}
+ACTIVE_JOB_STATUSES = {"queued", "running", "retrying"}
+
+
+class WorkbenchError(ValueError):
+    pass
+
+
+@dataclass(frozen=True)
+class JobSummary:
+    id: str
+    job_type: str
+    status: str
+    progress: int
+    progress_message: str
+    target_url: str
+
+
+@dataclass(frozen=True)
+class NotificationSummary:
+    id: str
+    kind: str
+    title: str
+    body: str
+    target_url: str
+    status: str
+    created_at: datetime
+
+
+@dataclass(frozen=True)
+class WorkbenchView:
+    candidates_to_review: int
+    replies_to_handle: int
+    jobs_running: int
+    jobs_failed: int
+    needs_evidence: int
+    follow_ups_due: int
+    notifications_unread: int
+    current_jobs: tuple[JobSummary, ...]
+    next_action_url: str
+    review_url: str
+    attention_url: str
+
+
+def _session(app) -> Session:
+    db_session = Session(get_engine(app))
+    db_session.expire_on_commit = False
+    return db_session
+
+
+def _require_tenant(tenant_id: str) -> str:
+    clean = (tenant_id or "").strip()
+    if not clean:
+        raise WorkbenchError("tenant_id is required")
+    return clean
+
+
+def load_workbench(app, *, tenant_id: str, now: datetime | None = None) -> WorkbenchView:
+    tenant_id = _require_tenant(tenant_id)
+    due_at = now or datetime.now(UTC)
+    with _session(app) as db_session:
+        candidates_to_review = _count(
+            db_session,
+            AcquisitionCandidate,
+            AcquisitionCandidate.tenant_id == tenant_id,
+            AcquisitionCandidate.status == "eligible",
+        )
+        needs_evidence = _count(
+            db_session,
+            AcquisitionCandidate,
+            AcquisitionCandidate.tenant_id == tenant_id,
+            AcquisitionCandidate.status == "needs_evidence",
+        )
+        jobs_running = _count(
+            db_session,
+            Job,
+            Job.tenant_id == tenant_id,
+            Job.status.in_(ACTIVE_JOB_STATUSES),
+        )
+        jobs_failed = _count(
+            db_session,
+            Job,
+            Job.tenant_id == tenant_id,
+            Job.status == "failed",
+        )
+        notifications_unread = _count(
+            db_session,
+            Notification,
+            Notification.tenant_id == tenant_id,
+            Notification.status == "unread",
+        )
+        replies_to_handle = int(
+            db_session.scalar(
+                select(func.count(distinct(Activity.lead_id))).where(
+                    Activity.tenant_id == tenant_id,
+                    Activity.action == "inbound_received",
+                )
+            )
+            or 0
+        )
+        follow_ups_due = _count(
+            db_session,
+            Lead,
+            Lead.tenant_id == tenant_id,
+            Lead.follow_up_at.is_not(None),
+            Lead.follow_up_at <= due_at,
+            Lead.stage.not_in({"won", "lost"}),
+        )
+
+        jobs = list(
+            db_session.scalars(
+                select(Job)
+                .where(
+                    Job.tenant_id == tenant_id,
+                    Job.status.in_((*ACTIVE_JOB_STATUSES, "failed")),
+                )
+                .order_by(Job.created_at.desc())
+                .limit(8)
+            )
+        )
+        current_jobs = tuple(
+            JobSummary(
+                id=job.id,
+                job_type=job.job_type,
+                status=job.status,
+                progress=job.progress,
+                progress_message=job.progress_message,
+                target_url=_job_target(job),
+            )
+            for job in jobs
+        )
+        review_candidate_id = db_session.scalar(
+            select(AcquisitionCandidate.id)
+            .where(
+                AcquisitionCandidate.tenant_id == tenant_id,
+                AcquisitionCandidate.status == "eligible",
+            )
+            .order_by(
+                AcquisitionCandidate.priority_score.desc(),
+                AcquisitionCandidate.created_at.asc(),
+            )
+            .limit(1)
+        )
+        evidence_mission_id = db_session.scalar(
+            select(AcquisitionCandidate.mission_id)
+            .where(
+                AcquisitionCandidate.tenant_id == tenant_id,
+                AcquisitionCandidate.status == "needs_evidence",
+            )
+            .order_by(AcquisitionCandidate.created_at.asc())
+            .limit(1)
+        )
+
+    review_url = (
+        f"/acquisition/candidates/{review_candidate_id}"
+        if review_candidate_id
+        else "/acquisition/missions/new"
+    )
+    attention_url = (
+        "/workbench?focus=failed"
+        if jobs_failed
+        else (
+            f"/acquisition/missions/{evidence_mission_id}"
+            if evidence_mission_id
+            else "/workbench#current-jobs"
+        )
+    )
+    if jobs_failed:
+        next_action_url = "/workbench?focus=failed"
+    elif review_candidate_id:
+        next_action_url = review_url
+    elif replies_to_handle or follow_ups_due:
+        next_action_url = "/leads"
+    else:
+        next_action_url = "/acquisition/missions/new"
+    return WorkbenchView(
+        candidates_to_review=candidates_to_review,
+        replies_to_handle=replies_to_handle,
+        jobs_running=jobs_running,
+        jobs_failed=jobs_failed,
+        needs_evidence=needs_evidence,
+        follow_ups_due=follow_ups_due,
+        notifications_unread=notifications_unread,
+        current_jobs=current_jobs,
+        next_action_url=next_action_url,
+        review_url=review_url,
+        attention_url=attention_url,
+    )
+
+
+def notify_once(
+    app,
+    *,
+    tenant_id: str,
+    kind: str,
+    dedupe_key: str,
+    title: str,
+    target_url: str,
+    body: str = "",
+) -> Notification:
+    tenant_id = _require_tenant(tenant_id)
+    clean_kind = (kind or "").strip()
+    clean_dedupe = (dedupe_key or "").strip()[:500]
+    clean_title = " ".join((title or "").split())[:200]
+    clean_body = " ".join((body or "").split())[:1000]
+    clean_target = _internal_target(target_url)
+    if clean_kind not in ALLOWED_NOTIFICATION_KINDS:
+        raise WorkbenchError("notification kind is not allowed")
+    if not clean_dedupe or not clean_title:
+        raise WorkbenchError("notification key and title are required")
+
+    try:
+        with _session(app) as db_session:
+            repo = NotificationRepository(db_session)
+            existing = repo.find_by_dedupe_key(clean_dedupe, tenant_id=tenant_id)
+            if existing is not None:
+                return existing
+            notification = repo.add(
+                Notification(
+                    kind=clean_kind,
+                    title=clean_title,
+                    body=clean_body,
+                    target_url=clean_target,
+                    dedupe_key=clean_dedupe,
+                ),
+                tenant_id=tenant_id,
+            )
+            db_session.commit()
+            return notification
+    except IntegrityError:
+        with _session(app) as db_session:
+            existing = NotificationRepository(db_session).find_by_dedupe_key(
+                clean_dedupe, tenant_id=tenant_id
+            )
+            if existing is None:
+                raise WorkbenchError("notification could not be saved") from None
+            return existing
+
+
+def list_notifications(app, *, tenant_id: str, limit: int = 100) -> tuple[NotificationSummary, ...]:
+    tenant_id = _require_tenant(tenant_id)
+    bounded_limit = max(1, min(int(limit), 100))
+    with _session(app) as db_session:
+        rows = list(
+            db_session.scalars(
+                select(Notification)
+                .where(Notification.tenant_id == tenant_id)
+                .order_by(Notification.created_at.desc())
+                .limit(bounded_limit)
+            )
+        )
+    return tuple(
+        NotificationSummary(
+            id=item.id,
+            kind=item.kind,
+            title=item.title,
+            body=item.body,
+            target_url=_safe_stored_target(item.target_url),
+            status=item.status,
+            created_at=item.created_at,
+        )
+        for item in rows
+    )
+
+
+def mark_notification_read(app, *, tenant_id: str, notification_id: str) -> Notification | None:
+    tenant_id = _require_tenant(tenant_id)
+    with _session(app) as db_session:
+        notification = NotificationRepository(db_session).mark_read(
+            notification_id, tenant_id=tenant_id
+        )
+        if notification is not None:
+            db_session.commit()
+        return notification
+
+
+def mark_all_notifications_read(app, *, tenant_id: str) -> int:
+    tenant_id = _require_tenant(tenant_id)
+    now = datetime.now(UTC)
+    with _session(app) as db_session:
+        rows = list(
+            db_session.scalars(
+                select(Notification).where(
+                    Notification.tenant_id == tenant_id,
+                    Notification.status == "unread",
+                )
+            )
+        )
+        for notification in rows:
+            notification.status = "read"
+            notification.read_at = now
+        db_session.commit()
+        return len(rows)
+
+
+def _count(db_session: Session, model, *conditions) -> int:
+    return int(db_session.scalar(select(func.count()).select_from(model).where(*conditions)) or 0)
+
+
+def _job_target(job: Job) -> str:
+    try:
+        payload = json.loads(job.payload_json or "{}")
+    except (TypeError, ValueError):
+        payload = {}
+    if isinstance(payload, dict):
+        mission_id = payload.get("mission_id")
+        if isinstance(mission_id, str) and re.fullmatch(r"[A-Za-z0-9_-]{1,64}", mission_id):
+            return f"/acquisition/missions/{mission_id}"
+        candidate_id = payload.get("candidate_id")
+        if isinstance(candidate_id, str) and re.fullmatch(r"[A-Za-z0-9_-]{1,64}", candidate_id):
+            return f"/acquisition/candidates/{candidate_id}"
+    return "/workbench"
+
+
+def _internal_target(value: str) -> str:
+    clean = (value or "").strip()
+    parsed = urlsplit(clean)
+    if (
+        not clean.startswith("/")
+        or clean.startswith("//")
+        or parsed.scheme
+        or parsed.netloc
+        or "\\" in clean
+        or any(ord(character) < 32 for character in clean)
+        or len(clean) > 500
+    ):
+        raise WorkbenchError("notification target must be an internal path")
+    return clean
+
+
+def _safe_stored_target(value: str) -> str:
+    try:
+        return _internal_target(value)
+    except WorkbenchError:
+        return "/workbench"

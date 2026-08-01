@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Sequence
+from datetime import datetime
 from typing import Any
 
 from sqlalchemy import Select, or_, select
@@ -54,6 +55,14 @@ class LeadRepository:
         source: str | None = None,
         is_duplicate: bool | None = None,
         search: str | None = None,
+        opportunity_country_code: str | None = None,
+        priority_min: int | None = None,
+        priority_max: int | None = None,
+        priority_band: str | None = None,
+        acquisition_source: bool | None = None,
+        has_contact: bool | None = None,
+        has_inbound_reply: bool | None = None,
+        follow_up_due_before: datetime | None = None,
         limit: int = 100,
         offset: int = 0,
     ) -> Sequence[Lead]:
@@ -76,6 +85,42 @@ class LeadRepository:
                     Lead.first_name.ilike(pattern),
                     Lead.last_name.ilike(pattern),
                 )
+            )
+        if opportunity_country_code:
+            query = query.where(Lead.opportunity_country_code == opportunity_country_code)
+        if priority_min is not None:
+            query = query.where(Lead.priority_score >= priority_min)
+        if priority_max is not None:
+            query = query.where(Lead.priority_score <= priority_max)
+        if priority_band:
+            query = query.where(Lead.priority_band == priority_band)
+        if acquisition_source is True:
+            query = query.where(Lead.source == "acquisition")
+        elif acquisition_source is False:
+            query = query.where(Lead.source != "acquisition")
+        if has_contact is not None:
+            contact_condition = or_(
+                Lead.email != "",
+                Lead.phone != "",
+                Lead.linkedin_url != "",
+            )
+            query = query.where(contact_condition if has_contact else ~contact_condition)
+        if has_inbound_reply is not None:
+            reply_exists = (
+                select(Activity.id)
+                .where(
+                    Activity.tenant_id == tenant_id,
+                    Activity.lead_id == Lead.id,
+                    Activity.action == "inbound_received",
+                )
+                .exists()
+            )
+            query = query.where(reply_exists if has_inbound_reply else ~reply_exists)
+        if follow_up_due_before is not None:
+            query = query.where(
+                Lead.follow_up_at.is_not(None),
+                Lead.follow_up_at <= follow_up_due_before,
+                Lead.stage.not_in({"won", "lost"}),
             )
 
         query = query.order_by(Lead.created_at.desc()).limit(limit).offset(offset)

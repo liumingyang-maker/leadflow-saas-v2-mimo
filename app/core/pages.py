@@ -4,6 +4,7 @@ from flask import Flask, redirect, render_template, request, session
 
 from app.modules.accounts.guards import tenant_required
 from app.modules.accounts.service import AccountError, complete_onboarding
+from app.modules.acquisition.workbench import load_workbench
 
 
 def register_page_routes(app: Flask) -> None:
@@ -14,7 +15,11 @@ def register_page_routes(app: Flask) -> None:
     @app.get("/workbench")
     @tenant_required(app)
     def workbench():
-        return render_template("app/workbench.html")
+        tenant_id = session.get("tenant_id", "")
+        return render_template(
+            "app/workbench.html",
+            view=load_workbench(app, tenant_id=tenant_id),
+        )
 
     @app.route("/onboarding", methods=["GET", "POST"])
     @tenant_required(app, allow_expired=True)

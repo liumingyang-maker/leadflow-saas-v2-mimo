@@ -27,6 +27,11 @@ from app.modules.acquisition.service import (
     create_product_snapshot,
     review_candidate,
 )
+from app.modules.acquisition.workbench import (
+    list_notifications,
+    mark_all_notifications_read,
+    mark_notification_read,
+)
 from app.modules.audit.service import add_event
 from app.modules.jobs.service import JobServiceError, create_and_enqueue
 
@@ -317,6 +322,35 @@ def register_acquisition_routes(app: Flask) -> None:
         except AcquisitionError as exc:
             return _bulk_error(app, mission_id, exc)
         return _bulk_success(app, mission_id, reviewed)
+
+    @app.get("/notifications")
+    @tenant_required(app)
+    def acquisition_notifications():
+        tenant_id, _actor_id = _identity()
+        return render_template(
+            "acquisition/notifications.html",
+            notifications=list_notifications(app, tenant_id=tenant_id),
+        )
+
+    @app.post("/notifications/<notification_id>/read")
+    @tenant_required(app)
+    def acquisition_notification_read(notification_id: str):
+        tenant_id, _actor_id = _identity()
+        notification = mark_notification_read(
+            app,
+            tenant_id=tenant_id,
+            notification_id=notification_id,
+        )
+        if notification is None:
+            abort(404)
+        return redirect(url_for("acquisition_notifications"))
+
+    @app.post("/notifications/read-all")
+    @tenant_required(app)
+    def acquisition_notifications_read_all():
+        tenant_id, _actor_id = _identity()
+        mark_all_notifications_read(app, tenant_id=tenant_id)
+        return redirect(url_for("acquisition_notifications"))
 
 
 def _identity() -> tuple[str, str]:

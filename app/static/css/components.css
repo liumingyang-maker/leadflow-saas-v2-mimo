@@ -743,6 +743,88 @@ body {
   border: 0;
 }
 
+.lf-workbench-metrics {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: var(--lf-space-3);
+}
+
+.lf-stat-card {
+  min-width: 0;
+  display: grid;
+  gap: var(--lf-space-1);
+  min-height: 144px;
+  background: var(--lf-surface);
+  border: 1px solid var(--lf-border);
+  border-radius: var(--lf-radius-md);
+  box-shadow: var(--lf-shadow-sm);
+  color: var(--lf-text-strong);
+  padding: var(--lf-space-4);
+  text-decoration: none;
+}
+
+.lf-stat-card strong {
+  font-size: var(--lf-font-xl);
+  font-variant-numeric: tabular-nums;
+}
+
+.lf-stat-card small {
+  color: var(--lf-text-muted);
+}
+
+.lf-stat-card:focus-visible,
+.lf-quick-filters a:focus-visible {
+  outline: 0;
+  box-shadow: var(--lf-focus-ring);
+}
+
+.lf-stat-card-warning,
+.lf-workbench-job-failed {
+  border-color: rgba(200, 59, 72, 0.35);
+  background: rgba(200, 59, 72, 0.04);
+}
+
+.lf-workbench-job progress {
+  width: 100%;
+  accent-color: var(--lf-primary);
+}
+
+.lf-notification {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--lf-space-4);
+}
+
+.lf-notification-unread {
+  border-left: 4px solid var(--lf-primary);
+}
+
+.lf-quick-filters {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--lf-space-2);
+  margin-bottom: var(--lf-space-3);
+}
+
+.lf-quick-filters a {
+  min-height: 44px;
+  display: inline-flex;
+  align-items: center;
+  border: 1px solid var(--lf-border);
+  border-radius: 999px;
+  color: var(--lf-text-strong);
+  padding-inline: var(--lf-space-3);
+  text-decoration: none;
+}
+
+.lf-lead-filters {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: var(--lf-space-3);
+  align-items: end;
+}
+
 .lf-drawer-inner {
   display: grid;
   gap: var(--lf-space-4);
@@ -779,6 +861,16 @@ body.lf-drawer-active {
   .lf-candidate-detail-grid,
   .lf-choice-grid {
     grid-template-columns: minmax(0, 1fr);
+  }
+
+  .lf-workbench-metrics,
+  .lf-lead-filters {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .lf-notification {
+    align-items: stretch;
+    flex-direction: column;
   }
 
   .lf-candidate-header,

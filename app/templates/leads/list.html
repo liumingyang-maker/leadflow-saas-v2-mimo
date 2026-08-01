@@ -1,83 +1,37 @@
 {% from "components/_shell.html" import shell %}
-{% from "components/_buttons.html" import button %}
-{% from "components/_forms.html" import csrf_input %}
-{% from "components/_empty_states.html" import empty_state %}
+{% call shell("候选与 CRM · LeadFlow") %}
+<nav class="lf-top-nav" aria-label="Primary navigation">
+  <a href="/workbench">今日工作台</a><a href="/acquisition/missions/new">创建找客户任务</a><a href="/leads" aria-current="page">候选与 CRM</a><a href="/notifications">通知</a><a href="/outreach">外联</a><a href="/settings">设置</a>
+</nav>
+<header class="lf-page-header"><div><span class="lf-eyebrow">CRM</span><h1 class="lf-page-title">客户（{{ leads|length }}）</h1><p class="lf-muted">按目标国家、优先级和联系路径找到下一批要处理的客户。</p></div><a href="/leads/import" class="lf-button">导入客户</a></header>
 
-{% call shell("Leads") %}
-<header class="lf-page-header">
-  <div>
-    <span class="lf-eyebrow">CRM</span>
-    <h1 class="lf-page-title">Leads ({{ leads|length }})</h1>
-  </div>
-  <a href="/leads/import" class="lf-button lf-button-primary">Import</a>
-</header>
+<nav class="lf-quick-filters" aria-label="客户快捷筛选">
+  <a href="/leads?priority_min=70&acquisition_source=1">S/A 优先</a>
+  <a href="/leads?opportunity_country_code=MX&acquisition_source=1">墨西哥 MX</a>
+  <a href="/leads?opportunity_country_code=BR&acquisition_source=1">巴西 BR</a>
+  <a href="/leads?status=pending_review">待审核</a>
+  <a href="/leads?acquisition_source=1&has_contact=0">缺联系路径</a>
+  <a href="/leads?has_reply=1">有入站回复</a>
+  <a href="/leads?follow_up_due=1">今日跟进</a>
+  <a href="/leads?acquisition_source=1">全部获客客户</a>
+</nav>
 
-<form class="lf-status-row" method="get" action="/leads">
-  <input class="lf-field" name="search" placeholder="Search email or name" value="{{ current_search }}">
-  <select class="lf-field" name="status">
-    <option value="">All statuses</option>
-    <option value="raw" {% if current_status == 'raw' %}selected{% endif %}>Raw</option>
-    <option value="pending_review" {% if current_status == 'pending_review' %}selected{% endif %}>Pending review</option>
-    <option value="accepted" {% if current_status == 'accepted' %}selected{% endif %}>Accepted</option>
-    <option value="rejected" {% if current_status == 'rejected' %}selected{% endif %}>Rejected</option>
-  </select>
-  <select class="lf-field" name="stage">
-    <option value="">All stages</option>
-    <option value="new" {% if current_stage == 'new' %}selected{% endif %}>New</option>
-    <option value="contacted" {% if current_stage == 'contacted' %}selected{% endif %}>Contacted</option>
-    <option value="qualified" {% if current_stage == 'qualified' %}selected{% endif %}>Qualified</option>
-    <option value="proposal" {% if current_stage == 'proposal' %}selected{% endif %}>Proposal</option>
-    <option value="negotiation" {% if current_stage == 'negotiation' %}selected{% endif %}>Negotiation</option>
-    <option value="won" {% if current_stage == 'won' %}selected{% endif %}>Won</option>
-    <option value="lost" {% if current_stage == 'lost' %}selected{% endif %}>Lost</option>
-  </select>
-  <button class="lf-button" type="submit">Filter</button>
+<form class="lf-panel lf-lead-filters" method="get" action="/leads">
+  <div class="lf-field-group"><label class="lf-label" for="lead-search">搜索</label><input class="lf-field" id="lead-search" name="search" placeholder="邮箱或姓名" value="{{ current_search }}"></div>
+  <div class="lf-field-group"><label class="lf-label" for="lead-country">目标国家</label><input class="lf-field" id="lead-country" name="opportunity_country_code" maxlength="2" placeholder="MX" value="{{ current_country }}"></div>
+  <div class="lf-field-group"><label class="lf-label" for="lead-priority-band">优先等级</label><select class="lf-field" id="lead-priority-band" name="priority_band"><option value="">全部</option>{% for band in ['S','A','B','C','D'] %}<option value="{{ band }}"{% if current_priority_band == band %} selected{% endif %}>{{ band }}</option>{% endfor %}</select></div>
+  <div class="lf-field-group"><label class="lf-label" for="lead-priority-min">最低分</label><input class="lf-field" id="lead-priority-min" name="priority_min" type="number" min="0" max="100" value="{{ current_priority_min }}"></div>
+  <div class="lf-field-group"><label class="lf-label" for="lead-priority-max">最高分</label><input class="lf-field" id="lead-priority-max" name="priority_max" type="number" min="0" max="100" value="{{ current_priority_max }}"></div>
+  <div class="lf-field-group"><label class="lf-label" for="lead-status">审核状态</label><select class="lf-field" id="lead-status" name="status"><option value="">全部</option><option value="raw"{% if current_status == 'raw' %} selected{% endif %}>原始</option><option value="pending_review"{% if current_status == 'pending_review' %} selected{% endif %}>待审核</option><option value="accepted"{% if current_status == 'accepted' %} selected{% endif %}>已接受</option><option value="rejected"{% if current_status == 'rejected' %} selected{% endif %}>已拒绝</option></select></div>
+  <div class="lf-field-group"><label class="lf-label" for="lead-stage">阶段</label><select class="lf-field" id="lead-stage" name="stage"><option value="">全部</option>{% for stage in ['new','contacted','qualified','proposal','negotiation','won','lost'] %}<option value="{{ stage }}"{% if current_stage == stage %} selected{% endif %}>{{ stage|capitalize }}</option>{% endfor %}</select></div>
+  <div class="lf-field-group"><label class="lf-label" for="lead-source">来源</label><select class="lf-field" id="lead-source" name="acquisition_source"><option value="">全部</option><option value="1"{% if current_acquisition_source == '1' %} selected{% endif %}>获客系统</option><option value="0"{% if current_acquisition_source == '0' %} selected{% endif %}>其他来源</option></select></div>
+  <div class="lf-field-group"><label class="lf-label" for="lead-contact">联系路径</label><select class="lf-field" id="lead-contact" name="has_contact"><option value="">全部</option><option value="1"{% if current_has_contact == '1' %} selected{% endif %}>有联系方式</option><option value="0"{% if current_has_contact == '0' %} selected{% endif %}>缺联系方式</option></select></div>
+  <div class="lf-field-group"><label class="lf-label" for="lead-reply">入站回复</label><select class="lf-field" id="lead-reply" name="has_reply"><option value="">全部</option><option value="1"{% if current_has_reply == '1' %} selected{% endif %}>有回复</option></select></div>
+  <div class="lf-field-group"><label class="lf-label" for="lead-follow-up">到期跟进</label><select class="lf-field" id="lead-follow-up" name="follow_up_due"><option value="">全部</option><option value="1"{% if current_follow_up_due == '1' %} selected{% endif %}>今天到期</option></select></div>
+  <div class="lf-status-row"><button class="lf-button lf-button-primary" type="submit">应用筛选</button><a class="lf-button" href="/leads">清除</a></div>
 </form>
 
-{% if leads %}
-<div class="lf-table-wrap">
-  <table class="lf-table">
-    <thead>
-      <tr>
-        <th>Email</th>
-        <th>Name</th>
-        <th>Status</th>
-        <th>Stage</th>
-        <th>Source</th>
-      </tr>
-    </thead>
-    <tbody>
-      {% for lead in leads %}
-      <tr>
-        <td>
-          <a href="/leads/{{ lead.id }}"
-             hx-get="/leads/{{ lead.id }}/drawer"
-             hx-target="#lead-drawer-content"
-             data-drawer-trigger="true"
-             hx-swap="innerHTML">{% if lead.email %}{{ lead.email }}{% else %}N/A{% endif %}</a>
-        </td>
-        <td>{{ lead.first_name }} {{ lead.last_name }}</td>
-        <td><span class="lf-badge">{{ lead.status }}</span></td>
-        <td><span class="lf-badge {% if lead.stage == 'won' %}lf-badge-success{% endif %}">{{ lead.stage }}</span></td>
-        <td>{{ lead.source }}</td>
-      </tr>
-      {% endfor %}
-    </tbody>
-  </table>
-</div>
-{% else %}
-  {{ empty_state("No leads yet", "Import leads to start building your pipeline.", "Import leads") }}
-{% endif %}
+{% if leads %}<div class="lf-table-wrap lf-section"><table class="lf-table"><thead><tr><th>联系方式</th><th>姓名</th><th>目标国家</th><th>优先级</th><th>状态 / 阶段</th><th>来源</th></tr></thead><tbody>{% for lead in leads %}<tr><td><a href="/leads/{{ lead.id }}" hx-get="/leads/{{ lead.id }}/drawer" hx-target="#lead-drawer-content" data-drawer-trigger="true" hx-swap="innerHTML">{{ lead.email or lead.phone or lead.linkedin_url or '缺联系方式' }}</a></td><td>{{ lead.first_name }} {{ lead.last_name }}</td><td>{{ lead.opportunity_country_code or '—' }}</td><td>{% if lead.priority_score is not none %}<span class="lf-badge{% if lead.priority_band in ['S','A'] %} lf-badge-success{% endif %}">{{ lead.priority_band or '—' }} · {{ lead.priority_score }}</span>{% else %}—{% endif %}</td><td><span class="lf-badge">{{ lead.status }}</span> <span class="lf-badge{% if lead.stage == 'won' %} lf-badge-success{% endif %}">{{ lead.stage }}</span></td><td>{{ lead.source }}</td></tr>{% endfor %}</tbody></table></div>{% else %}<section class="lf-empty-state"><strong>No leads yet</strong><span>调整筛选，或创建新的找客户任务。</span><a class="lf-button lf-button-primary" href="/acquisition/missions/new">创建找客户任务</a></section>{% endif %}
 
-<!-- Drawer container: initially hidden -->
-<div id="lead-drawer" class="lf-drawer-container lf-drawer-closed" aria-hidden="true">
-  <div class="lf-drawer-backdrop"></div>
-  <aside class="lf-drawer" role="dialog" aria-modal="true" aria-label="Lead detail"
-         style="transform: translateX(100%);">
-    <button class="lf-drawer-close" aria-label="Close drawer">&times;</button>
-    <div id="lead-drawer-content" class="lf-drawer-content" tabindex="-1">
-      <div class="lf-loading">Loading lead details...</div>
-    </div>
-  </aside>
-</div>
+<div id="lead-drawer" class="lf-drawer-container lf-drawer-closed" aria-hidden="true"><div class="lf-drawer-backdrop"></div><aside class="lf-drawer" role="dialog" aria-modal="true" aria-label="Lead detail" style="transform: translateX(100%);"><button class="lf-drawer-close" aria-label="Close drawer">&times;</button><div id="lead-drawer-content" class="lf-drawer-content" tabindex="-1"><div class="lf-loading">Loading lead details...</div></div></aside></div>
 {% endcall %}

@@ -1,0 +1,356 @@
+from __future__ import annotations
+
+from datetime import UTC, datetime, timedelta
+
+import pytest
+from sqlalchemy.orm import Session
+
+
+def _seed_workbench(
+    app,
+    *,
+    mission_t1: str,
+    mission_t2: str,
+    tenant_t1: str = "t1",
+    tenant_t2: str = "t2",
+) -> None:
+    from app.extensions import get_engine
+    from app.modules.acquisition.models import AcquisitionCandidate, Notification
+    from app.modules.jobs.models import Job
+    from app.modules.leads.models import Activity, Lead
+
+    now = datetime.now(UTC)
+    with Session(get_engine(app)) as db_session:
+        reply_lead = Lead(
+            tenant_id=tenant_t1,
+            email="reply@example.com",
+            status="accepted",
+            follow_up_at=now - timedelta(hours=1),
+        )
+        private_lead = Lead(
+            tenant_id=tenant_t2,
+            email="private@example.com",
+            status="accepted",
+            follow_up_at=now - timedelta(hours=1),
+        )
+        db_session.add_all([reply_lead, private_lead])
+        db_session.flush()
+        db_session.add_all(
+            [
+                AcquisitionCandidate(
+                    tenant_id=tenant_t1,
+                    mission_id=mission_t1,
+                    status="eligible",
+                    dedupe_key="domain:a.example",
+                ),
+                AcquisitionCandidate(
+                    tenant_id=tenant_t1,
+                    mission_id=mission_t1,
+                    status="eligible",
+                    dedupe_key="domain:b.example",
+                ),
+                AcquisitionCandidate(
+                    tenant_id=tenant_t1,
+                    mission_id=mission_t1,
+                    status="needs_evidence",
+                    dedupe_key="domain:needs-evidence.example",
+                ),
+                AcquisitionCandidate(
+                    tenant_id=tenant_t2,
+                    mission_id=mission_t2,
+                    status="eligible",
+                    dedupe_key="domain:private.example",
+                ),
+                Job(tenant_id=tenant_t1, job_type="candidate_assess", status="running"),
+                Job(tenant_id=tenant_t1, job_type="website_verify", status="failed"),
+                Job(tenant_id=tenant_t2, job_type="candidate_assess", status="running"),
+                Notification(
+                    tenant_id=tenant_t1,
+                    kind="mission_failed",
+                    title="任务失败",
+                    dedupe_key="mission:m1:failed",
+                ),
+                Notification(
+                    tenant_id=tenant_t2,
+                    kind="mission_failed",
+                    title="私有通知",
+                    dedupe_key="mission:m2:failed",
+                ),
+                Activity(
+                    tenant_id=tenant_t1,
+                    lead_id=reply_lead.id,
+                    action="inbound_received",
+                ),
+                Activity(
+                    tenant_id=tenant_t1,
+                    lead_id=reply_lead.id,
+                    action="inbound_received",
+                ),
+                Activity(
+                    tenant_id=tenant_t2,
+                    lead_id=private_lead.id,
+                    action="inbound_received",
+                ),
+            ]
+        )
+        db_session.commit()
+
+
+def test_workbench_uses_tenant_scoped_real_counts(
+    acquisition_app, seed_acquisition_mission
+) -> None:
+    from app.modules.acquisition.workbench import load_workbench
+
+    mission_t1 = seed_acquisition_mission(tenant_id="t1", suffix="workbench")
+    mission_t2 = seed_acquisition_mission(tenant_id="t2", suffix="workbench")
+    _seed_workbench(acquisition_app, mission_t1=mission_t1, mission_t2=mission_t2)
+
+    view = load_workbench(acquisition_app, tenant_id="t1")
+    private_view = load_workbench(acquisition_app, tenant_id="t2")
+
+    assert view.candidates_to_review == 2
+    assert view.jobs_running == 1
+    assert view.jobs_failed == 1
+    assert view.needs_evidence == 1
+    assert view.notifications_unread == 1
+    assert view.replies_to_handle == 1
+    assert view.follow_ups_due == 1
+    assert view.next_action_url == "/workbench?focus=failed"
+    assert view.review_url.startswith("/acquisition/candidates/")
+    assert view.attention_url == "/workbench?focus=failed"
+    assert len(view.current_jobs) == 2
+    assert private_view.candidates_to_review == 1
+    assert private_view.needs_evidence == 0
+
+
+def test_empty_workbench_points_to_new_mission(acquisition_app) -> None:
+    from app.modules.acquisition.workbench import load_workbench
+
+    view = load_workbench(acquisition_app, tenant_id="empty-tenant")
+
+    assert view.next_action_url == "/acquisition/missions/new"
+    assert view.review_url == "/acquisition/missions/new"
+    assert view.attention_url == "/workbench#current-jobs"
+    assert view.current_jobs == ()
+
+
+def test_notification_dedupe_is_exactly_once(acquisition_app) -> None:
+    from app.modules.acquisition.workbench import notify_once
+
+    first = notify_once(
+        acquisition_app,
+        tenant_id="t1",
+        kind="mission_completed",
+        dedupe_key="mission:m1:completed",
+        title="任务完成",
+        target_url="/acquisition/missions/m1",
+    )
+    second = notify_once(
+        acquisition_app,
+        tenant_id="t1",
+        kind="mission_completed",
+        dedupe_key="mission:m1:completed",
+        title="不同标题不会覆盖",
+        target_url="/workbench",
+    )
+
+    assert first.id == second.id
+    assert second.title == "任务完成"
+
+
+@pytest.mark.parametrize(
+    "kind,target_url",
+    [
+        ("not_allowed", "/workbench"),
+        ("mission_completed", "https://evil.example/path"),
+        ("mission_completed", "//evil.example/path"),
+        ("mission_completed", "/\\evil.example/path"),
+        ("mission_completed", "workbench"),
+    ],
+)
+def test_notification_rejects_unknown_kind_or_external_target(
+    acquisition_app, kind: str, target_url: str
+) -> None:
+    from app.modules.acquisition.workbench import WorkbenchError, notify_once
+
+    with pytest.raises(WorkbenchError):
+        notify_once(
+            acquisition_app,
+            tenant_id="t1",
+            kind=kind,
+            dedupe_key=f"test:{kind}:{target_url}",
+            title="Test",
+            target_url=target_url,
+        )
+
+
+def test_mark_notification_read_is_tenant_scoped(acquisition_app) -> None:
+    from app.modules.acquisition.workbench import mark_notification_read, notify_once
+
+    notification = notify_once(
+        acquisition_app,
+        tenant_id="t1",
+        kind="mission_completed",
+        dedupe_key="mission:m1:read",
+        title="任务完成",
+        target_url="/workbench",
+    )
+
+    assert (
+        mark_notification_read(acquisition_app, tenant_id="t2", notification_id=notification.id)
+        is None
+    )
+    updated = mark_notification_read(
+        acquisition_app, tenant_id="t1", notification_id=notification.id
+    )
+    assert updated is not None
+    assert updated.status == "read"
+
+
+def test_mark_all_notifications_read_and_sanitize_stored_targets(acquisition_app) -> None:
+    from app.extensions import get_engine
+    from app.modules.acquisition.models import Notification
+    from app.modules.acquisition.workbench import (
+        list_notifications,
+        mark_all_notifications_read,
+        notify_once,
+    )
+
+    notify_once(
+        acquisition_app,
+        tenant_id="t1",
+        kind="mission_completed",
+        dedupe_key="mission:m1:all",
+        title="任务一完成",
+        target_url="/workbench",
+    )
+    with Session(get_engine(acquisition_app)) as db_session:
+        db_session.add(
+            Notification(
+                tenant_id="t1",
+                kind="mission_failed",
+                title="遗留通知",
+                target_url="//evil.example/path",
+                dedupe_key="legacy:unsafe-target",
+            )
+        )
+        db_session.commit()
+
+    notifications = list_notifications(acquisition_app, tenant_id="t1")
+    assert {item.target_url for item in notifications} == {"/workbench"}
+    assert mark_all_notifications_read(acquisition_app, tenant_id="t1") == 2
+    assert all(
+        item.status == "read" for item in list_notifications(acquisition_app, tenant_id="t1")
+    )
+
+
+def test_workbench_route_renders_real_counts(
+    acquisition_app, logged_in_client, seed_acquisition_mission
+) -> None:
+    client, tenant_id = logged_in_client
+    other_mission = seed_acquisition_mission(tenant_id="other", suffix="route")
+    own_mission = seed_acquisition_mission(tenant_id=tenant_id, suffix="route")
+    _seed_workbench(
+        acquisition_app,
+        mission_t1=own_mission,
+        mission_t2=other_mission,
+        tenant_t1=tenant_id,
+        tenant_t2="other",
+    )
+
+    response = client.get("/workbench")
+    html = response.get_data(as_text=True)
+
+    assert response.status_code == 200
+    assert "待审核候选" in html
+    assert ">2<" in html
+    assert "处理失败任务" in html
+    assert "35%" not in html
+    assert "Connect the data layer" not in html
+    assert 'href="/leads?has_reply=1"' in html
+    assert 'href="/leads?follow_up_due=1"' in html
+
+
+def test_notification_routes_hide_other_tenants(acquisition_app, logged_in_client) -> None:
+    from app.modules.acquisition.workbench import notify_once
+
+    client, tenant_id = logged_in_client
+    own = notify_once(
+        acquisition_app,
+        tenant_id=tenant_id,
+        kind="mission_completed",
+        dedupe_key="mission:own:completed",
+        title="我的任务完成",
+        target_url="/workbench",
+    )
+    other = notify_once(
+        acquisition_app,
+        tenant_id="other-tenant",
+        kind="mission_failed",
+        dedupe_key="mission:other:failed",
+        title="其他租户通知",
+        target_url="/workbench",
+    )
+
+    listing = client.get("/notifications")
+    cross_tenant_read = client.post(f"/notifications/{other.id}/read")
+    own_read = client.post(f"/notifications/{own.id}/read")
+
+    html = listing.get_data(as_text=True)
+    assert listing.status_code == 200
+    assert "我的任务完成" in html
+    assert "其他租户通知" not in html
+    assert cross_tenant_read.status_code == 404
+    assert own_read.status_code in {302, 303}
+
+
+def test_lead_route_applies_acquisition_filters(acquisition_app, logged_in_client) -> None:
+    from app.extensions import get_engine
+    from app.modules.leads.models import Lead
+
+    client, tenant_id = logged_in_client
+    with Session(get_engine(acquisition_app)) as db_session:
+        db_session.add_all(
+            [
+                Lead(
+                    tenant_id=tenant_id,
+                    email="top@example.com",
+                    source="acquisition",
+                    status="accepted",
+                    opportunity_country_code="MX",
+                    priority_score=90,
+                    priority_band="A",
+                ),
+                Lead(
+                    tenant_id=tenant_id,
+                    email="other@example.com",
+                    source="acquisition",
+                    status="accepted",
+                    opportunity_country_code="BR",
+                    priority_score=55,
+                    priority_band="C",
+                ),
+                Lead(
+                    tenant_id="other-tenant",
+                    email="private@example.com",
+                    source="acquisition",
+                    status="accepted",
+                    opportunity_country_code="MX",
+                    priority_score=95,
+                    priority_band="A",
+                ),
+            ]
+        )
+        db_session.commit()
+
+    response = client.get(
+        "/leads?opportunity_country_code=MX&priority_band=A&"
+        "priority_min=80&acquisition_source=1&has_contact=1"
+    )
+    html = response.get_data(as_text=True)
+
+    assert response.status_code == 200
+    assert "top@example.com" in html
+    assert "other@example.com" not in html
+    assert "private@example.com" not in html
+    assert 'value="MX"' in html

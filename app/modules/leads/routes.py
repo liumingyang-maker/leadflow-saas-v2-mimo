@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+import re
+from datetime import UTC, datetime
+
 from flask import Flask, redirect, render_template, request, session
 
 from app.modules.accounts.guards import tenant_required
@@ -36,6 +39,21 @@ def register_lead_routes(app: Flask) -> None:
         status = request.args.get("status", "")
         stage = request.args.get("stage", "")
         search = request.args.get("search", "")
+        opportunity_country_code = request.args.get("opportunity_country_code", "").strip().upper()
+        if not re.fullmatch(r"[A-Z]{2}", opportunity_country_code):
+            opportunity_country_code = ""
+        priority_min = _bounded_score(request.args.get("priority_min", ""))
+        priority_max = _bounded_score(request.args.get("priority_max", ""))
+        if priority_min is not None and priority_max is not None and priority_min > priority_max:
+            priority_min = None
+            priority_max = None
+        priority_band = request.args.get("priority_band", "").strip().upper()
+        if priority_band not in {"S", "A", "B", "C", "D"}:
+            priority_band = ""
+        acquisition_source = _optional_bool(request.args.get("acquisition_source", ""))
+        has_contact = _optional_bool(request.args.get("has_contact", ""))
+        has_inbound_reply = True if request.args.get("has_reply", "") == "1" else None
+        follow_up_due = request.args.get("follow_up_due", "") == "1"
 
         from sqlalchemy.orm import Session
 
@@ -49,6 +67,14 @@ def register_lead_routes(app: Flask) -> None:
                 status=status or None,
                 stage=stage or None,
                 search=search or None,
+                opportunity_country_code=opportunity_country_code or None,
+                priority_min=priority_min,
+                priority_max=priority_max,
+                priority_band=priority_band or None,
+                acquisition_source=acquisition_source,
+                has_contact=has_contact,
+                has_inbound_reply=has_inbound_reply,
+                follow_up_due_before=datetime.now(UTC) if follow_up_due else None,
             )
             tag_repo = TagRepository(db_session)
             tags = tag_repo.list(tenant_id=tenant_id)
@@ -60,6 +86,16 @@ def register_lead_routes(app: Flask) -> None:
             current_status=status,
             current_stage=stage,
             current_search=search,
+            current_country=opportunity_country_code,
+            current_priority_min=("" if priority_min is None else priority_min),
+            current_priority_max=("" if priority_max is None else priority_max),
+            current_priority_band=priority_band,
+            current_acquisition_source=(
+                "" if acquisition_source is None else "1" if acquisition_source else "0"
+            ),
+            current_has_contact=("" if has_contact is None else "1" if has_contact else "0"),
+            current_has_reply="1" if has_inbound_reply else "",
+            current_follow_up_due="1" if follow_up_due else "",
         )
 
     @app.get("/leads/<lead_id>")
@@ -239,3 +275,19 @@ def register_lead_routes(app: Flask) -> None:
         except LeadServiceError:
             pass
         return redirect("/leads")
+
+
+def _bounded_score(value: str) -> int | None:
+    try:
+        parsed = int(value)
+    except (TypeError, ValueError):
+        return None
+    return parsed if 0 <= parsed <= 100 else None
+
+
+def _optional_bool(value: str) -> bool | None:
+    if value == "1":
+        return True
+    if value == "0":
+        return False
+    return None
