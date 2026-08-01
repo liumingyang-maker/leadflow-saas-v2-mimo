@@ -131,3 +131,29 @@ def test_template_context_has_can(monkeypatch):
         # context_processor adds to template globals
         # Verify via app.config instead
         assert app.config["CAPABILITIES"] is not None
+
+
+def test_phase_1a_capabilities_and_browser_default(monkeypatch):
+    monkeypatch.delenv("AI_RESEARCH_ENABLED", raising=False)
+    monkeypatch.delenv("WEBSITE_EVIDENCE_FETCH_ENABLED", raising=False)
+    monkeypatch.delenv("AI_OUTREACH_DRAFT_ENABLED", raising=False)
+    monkeypatch.delenv("BROWSER_RESEARCH_ENABLED", raising=False)
+
+    from app.core.capabilities import Capability, resolve_capabilities
+
+    capabilities = resolve_capabilities("internal")
+    assert capabilities[Capability.AI_RESEARCH] is True
+    assert capabilities[Capability.WEBSITE_EVIDENCE_FETCH] is True
+    assert capabilities[Capability.AI_OUTREACH_DRAFT] is True
+    assert capabilities[Capability.BROWSER_RESEARCH] is False
+
+
+def test_testing_app_keeps_browser_research_disabled_by_default(monkeypatch):
+    monkeypatch.delenv("BROWSER_RESEARCH_ENABLED", raising=False)
+    monkeypatch.setenv("SECRET_KEY", "test-secret-key-that-is-long-enough")
+
+    from app import create_app
+    from app.core.capabilities import Capability
+
+    app = create_app("testing")
+    assert app.config["CAPABILITIES"][Capability.BROWSER_RESEARCH] is False

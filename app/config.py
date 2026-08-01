@@ -6,6 +6,17 @@ from typing import ClassVar, Literal, TypeAlias
 ConfigName: TypeAlias = Literal["development", "testing", "production"]
 
 
+def _bounded_int(name: str, default: int, *, minimum: int, maximum: int) -> int:
+    raw = os.environ.get(name, str(default))
+    try:
+        value = int(raw)
+    except ValueError as exc:
+        raise RuntimeError(f"{name} must be an integer") from exc
+    if value < minimum or value > maximum:
+        raise RuntimeError(f"{name} must be between {minimum} and {maximum}")
+    return value
+
+
 class BaseConfig:
     SECRET_KEY: ClassVar[str] = os.environ.get("SECRET_KEY", "dev-only-change-me")
     SQLALCHEMY_DATABASE_URI: ClassVar[str] = os.environ.get(
@@ -19,6 +30,15 @@ class BaseConfig:
     SESSION_COOKIE_SAMESITE: ClassVar[str] = "Lax"
     SESSION_COOKIE_SECURE: ClassVar[bool] = False
     MAX_CONTENT_LENGTH: ClassVar[int] = 20 * 1024 * 1024
+    REDIS_URL: ClassVar[str] = os.environ.get("REDIS_URL", "redis://localhost:6379/0")
+    MIMO_BASE_URL: ClassVar[str] = os.environ.get("MIMO_BASE_URL", "")
+    MIMO_MODEL: ClassVar[str] = os.environ.get("MIMO_MODEL", "mimo-v2.5")
+    ACQUISITION_MAX_CANDIDATES: ClassVar[int] = 30
+    ACQUISITION_MAX_VERIFY: ClassVar[int] = 10
+    ACQUISITION_MAX_SEARCH_ACTIONS: ClassVar[int] = 5
+    FETCH_MAX_PAGES_PER_SITE: ClassVar[int] = 5
+    FETCH_MAX_BYTES: ClassVar[int] = 200 * 1024
+    FETCH_TIMEOUT_SECONDS: ClassVar[int] = 10
 
 
 class DevelopmentConfig(BaseConfig):
@@ -70,6 +90,22 @@ def resolve_config(config_name: str | None = None) -> type[BaseConfig]:
         raise RuntimeError(
             f"Unknown APP_ENV/config name {name!r}. Expected one of: {allowed}"
         ) from exc
+
+    config_class.ACQUISITION_MAX_CANDIDATES = _bounded_int(
+        "ACQUISITION_MAX_CANDIDATES", 30, minimum=1, maximum=100
+    )
+    config_class.ACQUISITION_MAX_VERIFY = _bounded_int(
+        "ACQUISITION_MAX_VERIFY", 10, minimum=1, maximum=30
+    )
+    config_class.ACQUISITION_MAX_SEARCH_ACTIONS = _bounded_int(
+        "ACQUISITION_MAX_SEARCH_ACTIONS", 5, minimum=1, maximum=20
+    )
+    config_class.FETCH_MAX_PAGES_PER_SITE = _bounded_int(
+        "FETCH_MAX_PAGES_PER_SITE", 5, minimum=1, maximum=10
+    )
+    config_class.REDIS_URL = os.environ.get("REDIS_URL", "redis://localhost:6379/0")
+    config_class.MIMO_BASE_URL = os.environ.get("MIMO_BASE_URL", "")
+    config_class.MIMO_MODEL = os.environ.get("MIMO_MODEL", "mimo-v2.5")
 
     if config_class is ProductionConfig:
         secret_key = os.environ.get("SECRET_KEY", "")

@@ -7,3 +7,7 @@ openpyxl>=3.1,<4
 redis>=5,<9
 rq>=2,<3
 openai>=1.0,<2
+beautifulsoup4>=4.12,<5
+httpx>=0.27,<1
+pydantic>=2.7,<3
+pycountry>=24.6,<25

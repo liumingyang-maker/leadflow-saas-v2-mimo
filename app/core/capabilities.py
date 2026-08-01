@@ -29,6 +29,10 @@ class Capability(StrEnum):
     MULTI_TENANT_SELF_SERVICE = "multi_tenant_self_service"
     ADMIN_CONSOLE = "admin_console"
     INVITE_ONLY = "invite_only"
+    AI_RESEARCH = "ai_research"
+    WEBSITE_EVIDENCE_FETCH = "website_evidence_fetch"
+    AI_OUTREACH_DRAFT = "ai_outreach_draft"
+    BROWSER_RESEARCH = "browser_research"
 
 
 # Internal Mode defaults: what is enabled/disabled for team-internal use
@@ -41,6 +45,10 @@ _INTERNAL_DEFAULTS: dict[Capability, bool] = {
     Capability.MULTI_TENANT_SELF_SERVICE: False,
     Capability.ADMIN_CONSOLE: True,
     Capability.INVITE_ONLY: True,
+    Capability.AI_RESEARCH: True,
+    Capability.WEBSITE_EVIDENCE_FETCH: True,
+    Capability.AI_OUTREACH_DRAFT: True,
+    Capability.BROWSER_RESEARCH: False,
 }
 
 # Commercial Mode defaults (future use)
@@ -53,6 +61,10 @@ _COMMERCIAL_DEFAULTS: dict[Capability, bool] = {
     Capability.MULTI_TENANT_SELF_SERVICE: True,
     Capability.ADMIN_CONSOLE: True,
     Capability.INVITE_ONLY: False,
+    Capability.AI_RESEARCH: True,
+    Capability.WEBSITE_EVIDENCE_FETCH: True,
+    Capability.AI_OUTREACH_DRAFT: True,
+    Capability.BROWSER_RESEARCH: False,
 }
 
 # Environment variable mapping for explicit overrides
@@ -65,7 +77,13 @@ _ENV_MAP: dict[Capability, str] = {
     Capability.MULTI_TENANT_SELF_SERVICE: "MULTI_TENANT_SELF_SERVICE",
     Capability.ADMIN_CONSOLE: "ADMIN_CONSOLE_ENABLED",
     Capability.INVITE_ONLY: "INVITE_ONLY",
+    Capability.AI_RESEARCH: "AI_RESEARCH_ENABLED",
+    Capability.WEBSITE_EVIDENCE_FETCH: "WEBSITE_EVIDENCE_FETCH_ENABLED",
+    Capability.AI_OUTREACH_DRAFT: "AI_OUTREACH_DRAFT_ENABLED",
+    Capability.BROWSER_RESEARCH: "BROWSER_RESEARCH_ENABLED",
 }
+
+_EXPLICIT_OPT_IN_CAPABILITIES = {Capability.BROWSER_RESEARCH}
 
 
 def _parse_bool(value: str) -> bool:
@@ -115,6 +133,8 @@ def init_capabilities(app: Flask) -> None:
     # access all routes without needing to set every env var.
     if app.config.get("TESTING") or app.config.get("DEBUG"):
         for cap in Capability:
+            if cap in _EXPLICIT_OPT_IN_CAPABILITIES:
+                continue
             env_var = _ENV_MAP.get(cap)
             if env_var is None or os.environ.get(env_var) is None:
                 capabilities[cap] = True
