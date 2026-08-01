@@ -71,9 +71,16 @@ class StaticFetcher:
             },
         )
 
+    @classmethod
+    def from_app(cls, app) -> StaticFetcher:
+        return cls(
+            max_bytes=int(app.config.get("FETCH_MAX_BYTES", 200 * 1024)),
+            timeout_seconds=float(app.config.get("FETCH_TIMEOUT_SECONDS", 10)),
+        )
+
     def fetch(self, url: str) -> FetchResult:
         requested_url = url
-        safe = validate_public_url(url, resolver=self.resolver)
+        safe = self._safe_url(url)
         redirect_chain: list[str] = []
 
         for redirect_count in range(self.max_redirects + 1):
@@ -88,9 +95,7 @@ class StaticFetcher:
                 if redirect_count >= self.max_redirects:
                     raise FetchError("too_many_redirects", "Redirect limit exceeded")
                 redirect_chain.append(safe.canonical_url)
-                safe = validate_public_url(
-                    urljoin(safe.canonical_url, location), resolver=self.resolver
-                )
+                safe = self._safe_url(urljoin(safe.canonical_url, location))
                 continue
 
             if not 200 <= status_code < 300:
@@ -137,6 +142,14 @@ class StaticFetcher:
             raise FetchError("source_timeout", "Evidence page request timed out") from None
         except httpx.HTTPError:
             raise FetchError("source_unreachable", "Evidence page request failed") from None
+
+    def _safe_url(self, url: str) -> SafeUrl:
+        try:
+            return validate_public_url(url, resolver=self.resolver)
+        except UnsafeUrlError:
+            raise FetchError(
+                "policy_url_blocked", "Evidence URL was blocked by safety policy"
+            ) from None
 
     def _verify_dns_unchanged(self, before: SafeUrl) -> None:
         try:

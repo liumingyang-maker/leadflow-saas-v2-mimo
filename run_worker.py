@@ -27,14 +27,16 @@ redis_conn = Redis.from_url(redis_url)
 
 
 def _run_recovery() -> None:
-    """Run stale-job recovery with its own DB connection."""
+    """Run stale-job recovery and mission reconciliation with their own DB connection."""
+    from datetime import UTC, datetime
+
     from app import create_app
-    from app.modules.jobs.worker import recover_stale_jobs
+    from app.modules.acquisition.jobs import reconcile_missions
 
     app = create_app(os.environ.get("APP_ENV", "development"))
-    count = recover_stale_jobs(app)
+    count = reconcile_missions(app, now=datetime.now(UTC))
     if count:
-        print(f"Recovered {count} stale job(s)")
+        print(f"Reconciled {count} acquisition mission(s)")
 
 
 if __name__ == "__main__":

@@ -39,7 +39,7 @@ def test_public_idn_url_is_canonicalized_before_resolution():
 
 
 def test_fetcher_does_not_follow_redirect_to_private_ip():
-    from app.integrations.web.fetcher import StaticFetcher
+    from app.integrations.web.fetcher import FetchError, StaticFetcher
 
     def handler(request: httpx.Request) -> httpx.Response:
         return httpx.Response(302, headers={"location": "http://127.0.0.1/admin"})
@@ -48,8 +48,17 @@ def test_fetcher_does_not_follow_redirect_to_private_ip():
         transport=httpx.MockTransport(handler),
         resolver=(lambda host: ["93.184.216.34"] if host == "example.com" else ["127.0.0.1"]),
     )
-    with pytest.raises(Exception, match="blocked"):
+    with pytest.raises(FetchError, match="policy_url_blocked"):
         fetcher.fetch("https://example.com")
+
+
+def test_fetcher_maps_initial_private_url_to_safe_policy_error():
+    from app.integrations.web.fetcher import FetchError, StaticFetcher
+
+    fetcher = StaticFetcher(resolver=lambda _host: ["127.0.0.1"])
+    with pytest.raises(FetchError, match="policy_url_blocked") as caught:
+        fetcher.fetch("http://127.0.0.1/admin")
+    assert "127.0.0.1" not in str(caught.value)
 
 
 def test_sanitizer_removes_scripts_hidden_text_and_instructions():

@@ -22,6 +22,7 @@ class JobServiceError(ValueError):
 
 
 JOB_HANDLER = "app.modules.jobs.worker.execute_job"
+_FORBIDDEN_PAYLOAD_KEYS = {"api_key", "password", "secret", "authorization", "cookie"}
 
 
 # ---------------------------------------------------------------------------
@@ -62,13 +63,21 @@ def create_and_enqueue(
     If enqueue fails the job becomes ``failed`` — it never stays
     permanently ``queued`` without a matching RQ job.
     """
+    clean_payload = payload or {}
+    if _contains_forbidden_key(clean_payload):
+        raise JobServiceError("job payload contains forbidden key")
+    try:
+        payload_json = json.dumps(clean_payload, sort_keys=True)
+    except (TypeError, ValueError) as exc:
+        raise JobServiceError("job payload must be JSON serializable") from exc
+
     now = datetime.now(UTC)
     job = Job(
         id=uuid.uuid4().hex,
         tenant_id=tenant_id,
         job_type=job_type,
         status="queued",
-        payload_json=json.dumps(payload or {}),
+        payload_json=payload_json,
         queue_name=queue_name,
         created_at=now,
         queued_at=now,
@@ -107,6 +116,21 @@ def create_and_enqueue(
         raise JobServiceError("Failed to queue job") from None
 
     return job
+
+
+def _contains_forbidden_key(value: object) -> bool:
+    if isinstance(value, dict):
+        for key, nested in value.items():
+            normalized = str(key).strip().lower().replace("-", "_")
+            if normalized in _FORBIDDEN_PAYLOAD_KEYS or any(
+                normalized.endswith(f"_{forbidden}") for forbidden in _FORBIDDEN_PAYLOAD_KEYS
+            ):
+                return True
+            if _contains_forbidden_key(nested):
+                return True
+    elif isinstance(value, (list, tuple)):
+        return any(_contains_forbidden_key(item) for item in value)
+    return False
 
 
 # ---------------------------------------------------------------------------

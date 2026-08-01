@@ -80,6 +80,15 @@ class JobRepository:
         )
         return list(self.session.scalars(query))
 
+    def list_due_retries(self, *, now: datetime | None = None) -> Sequence[Job]:
+        due_at = now or datetime.now(UTC)
+        query = select(Job).where(
+            Job.status == "retrying",
+            Job.next_retry_at.is_not(None),
+            Job.next_retry_at <= due_at,
+        )
+        return list(self.session.scalars(query))
+
     def claim_queued_for_worker(self, job_id: str) -> Job | None:
         """Atomically move a queued job to running and return the claimed row."""
         now = datetime.now(UTC)
@@ -126,6 +135,44 @@ class JobRepository:
         result = self.session.execute(
             update(Job)
             .where(Job.id == job.id, Job.status == "running", stale_condition)
+            .values(**values)
+            .execution_options(synchronize_session=False)
+        )
+        if result.rowcount != 1:
+            self.session.rollback()
+            return None
+        self.session.commit()
+        return self.session.get(Job, job.id)
+
+    def claim_due_retry(self, job: Job, *, now: datetime | None = None) -> Job | None:
+        due_at = now or datetime.now(UTC)
+        if job.attempt >= job.max_attempts:
+            values = {
+                "status": "failed",
+                "error_code": "max_attempts_reached",
+                "error_summary": "Retry limit reached",
+                "finished_at": due_at,
+                "updated_at": due_at,
+            }
+        else:
+            values = {
+                "status": "queued",
+                "attempt": job.attempt + 1,
+                "queued_at": due_at,
+                "started_at": None,
+                "heartbeat_at": None,
+                "next_retry_at": None,
+                "progress_message": f"Retry queued (attempt {job.attempt + 1})",
+                "updated_at": due_at,
+            }
+        result = self.session.execute(
+            update(Job)
+            .where(
+                Job.id == job.id,
+                Job.status == "retrying",
+                Job.next_retry_at.is_not(None),
+                Job.next_retry_at <= due_at,
+            )
             .values(**values)
             .execution_options(synchronize_session=False)
         )

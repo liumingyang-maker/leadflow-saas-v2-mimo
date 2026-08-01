@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import json
 import os
+from collections.abc import Callable
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
@@ -32,6 +33,8 @@ from app.modules.leads.models import Activity
 # ---------------------------------------------------------------------------
 
 _adapters: dict[str, Any] = {}
+_job_handlers: dict[str, Callable[[Any, Job, dict[str, Any]], dict[str, Any]]] = {}
+_acquisition_handlers_loaded = False
 
 
 def register_adapter(job_type: str, adapter: Any) -> None:
@@ -43,6 +46,32 @@ def _get_adapter(job_type: str) -> Any:
     if adapter is None:
         raise ValueError(f"No adapter registered for job_type={job_type!r}")
     return adapter
+
+
+def register_job_handler(
+    job_type: str, handler: Callable[[Any, Job, dict[str, Any]], dict[str, Any]]
+) -> None:
+    if job_type in _job_handlers:
+        raise ValueError(f"duplicate job handler: {job_type}")
+    _job_handlers[job_type] = handler
+
+
+def _get_job_handler(
+    job_type: str,
+) -> Callable[[Any, Job, dict[str, Any]], dict[str, Any]] | None:
+    _ensure_acquisition_handlers()
+    return _job_handlers.get(job_type)
+
+
+def _ensure_acquisition_handlers() -> None:
+    global _acquisition_handlers_loaded
+    if _acquisition_handlers_loaded:
+        return
+    from app.modules.acquisition.jobs import ACQUISITION_HANDLERS
+
+    for job_type, handler in ACQUISITION_HANDLERS.items():
+        register_job_handler(job_type, handler)
+    _acquisition_handlers_loaded = True
 
 
 def _is_allowed_env() -> bool:
@@ -105,8 +134,29 @@ def execute_job(job_id: str) -> dict[str, Any]:
         payload_json = job.payload_json
 
     try:
-        adapter = _get_adapter(job_type)
         payload = json.loads(payload_json or "{}")
+        if not isinstance(payload, dict):
+            raise ValueError("job payload must be an object")
+        handler = _get_job_handler(job_type)
+        if handler is not None:
+            summary = handler(app, job, payload)
+            with Session(get_engine(app)) as session:
+                stored = _get_job_for_update(session, job_id, tenant_id)
+                if stored is None:
+                    return {"ok": False, "error": "job_not_found"}
+                _update_job(
+                    session,
+                    stored,
+                    status="succeeded",
+                    progress=100,
+                    progress_message="Acquisition stage completed",
+                    result_summary_json=json.dumps(summary, sort_keys=True),
+                    heartbeat_at=datetime.now(UTC),
+                    finished_at=datetime.now(UTC),
+                )
+            return {"ok": True, **summary}
+
+        adapter = _get_adapter(job_type)
         max_results = payload.get("max_results", 100)
         query = payload.get("query", "")
 
@@ -256,13 +306,24 @@ def _handle_adapter_error(app: Any, job_id: str, tenant_id: str, result: Any) ->
 
 def _handle_worker_error(app: Any, job_id: str, tenant_id: str, exc: Exception) -> None:
     now = datetime.now(UTC)
-    safe_summary = str(type(exc).__name__)[:500]
+    if isinstance(exc, (ValueError, json.JSONDecodeError)) and not hasattr(exc, "code"):
+        error_code = "schema"
+        safe_summary = "Job payload failed validation"
+        retryable = False
+    else:
+        error_code = str(getattr(exc, "code", "worker_error"))[:60]
+        safe_summary = str(getattr(exc, "safe_summary", type(exc).__name__))[:500]
+        retryable = bool(getattr(exc, "retryable", True))
 
+    attempt = 0
+    max_attempts = 0
     with Session(get_engine(app)) as session:
         job = _get_job_for_update(session, job_id, tenant_id)
         if job is None:
             return
-        if job.attempt < job.max_attempts:
+        attempt = job.attempt
+        max_attempts = job.max_attempts
+        if retryable and job.attempt < job.max_attempts:
             status = "retrying"
             next_retry = now + timedelta(seconds=min(30 * (2**job.attempt), 600))
         else:
@@ -272,7 +333,7 @@ def _handle_worker_error(app: Any, job_id: str, tenant_id: str, exc: Exception) 
             session,
             job,
             status=status,
-            error_code="worker_error",
+            error_code=error_code,
             error_summary=safe_summary,
             heartbeat_at=now,
             next_retry_at=next_retry,
@@ -285,8 +346,8 @@ def _handle_worker_error(app: Any, job_id: str, tenant_id: str, exc: Exception) 
     logging.getLogger("worker").error(
         "Job %s failed (attempt %d/%d): %s",
         job_id,
-        getattr(job, "attempt", 0),
-        getattr(job, "max_attempts", 0),
+        attempt,
+        max_attempts,
         safe_summary,
     )
 
@@ -322,27 +383,47 @@ def recover_stale_jobs(app: Any) -> int:
             )
             if recovered_job is None:
                 continue
-            if recovered_job.status == "queued":
-                try:
-                    redis_url = app.config.get("REDIS_URL", "redis://localhost:6379/0")
-                    q = Queue(
-                        recovered_job.queue_name or "default",
-                        connection=Redis.from_url(redis_url),
-                        serializer=JSONSerializer,
-                    )
-                    rq_job = q.enqueue(
-                        JOB_HANDLER,
-                        recovered_job.id,
-                        job_result_ttl=86400,
-                    )
-                    recovered_job.rq_job_id = rq_job.id or ""
-                    session.commit()
-                except Exception:
-                    recovered_job.status = "failed"
-                    recovered_job.error_code = "recovery_failed"
-                    recovered_job.error_summary = "Stale job recovery failed"
-                    recovered_job.finished_at = datetime.now(UTC)
-                    session.commit()
+            _enqueue_recovered_job(app, session, recovered_job, Queue, Redis, JSONSerializer)
+            recovered += 1
+
+        due_retries = repo.list_due_retries(now=datetime.now(UTC))
+        for job in due_retries:
+            recovered_job = repo.claim_due_retry(job, now=datetime.now(UTC))
+            if recovered_job is None:
+                continue
+            _enqueue_recovered_job(app, session, recovered_job, Queue, Redis, JSONSerializer)
             recovered += 1
 
     return recovered
+
+
+def _enqueue_recovered_job(
+    app: Any,
+    session: Session,
+    recovered_job: Job,
+    queue_class: Any,
+    redis_class: Any,
+    serializer: Any,
+) -> None:
+    if recovered_job.status != "queued":
+        return
+    try:
+        redis_url = app.config.get("REDIS_URL", "redis://localhost:6379/0")
+        queue = queue_class(
+            recovered_job.queue_name or "default",
+            connection=redis_class.from_url(redis_url),
+            serializer=serializer,
+        )
+        rq_job = queue.enqueue(
+            JOB_HANDLER,
+            recovered_job.id,
+            job_result_ttl=86400,
+        )
+        recovered_job.rq_job_id = rq_job.id or ""
+        session.commit()
+    except Exception:
+        recovered_job.status = "failed"
+        recovered_job.error_code = "recovery_failed"
+        recovered_job.error_summary = "Job recovery failed"
+        recovered_job.finished_at = datetime.now(UTC)
+        session.commit()
