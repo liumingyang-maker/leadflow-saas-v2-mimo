@@ -5,4 +5,5 @@
 <dl class="lf-dl"><dt>Company</dt><dd>{{ tenant.company_name }}</dd><dt>Industry</dt><dd>{{ tenant.industry }}</dd><dt>Status</dt><dd><span class="lf-badge">{{ tenant.status }}</span></dd><dt>Plan</dt><dd>{{ tenant.plan }}</dd></dl></section>{% endif %}
 {% if env_status %}<section class="lf-panel"><h2>Environment</h2>
 <dl class="lf-dl"><dt>Environment</dt><dd>{{ env_status.env }}</dd><dt>CSRF enabled</dt><dd>{{ env_status.csrf_enabled }}</dd><dt>Cookie secure</dt><dd>{{ env_status.cookie_secure }}</dd><dt>Fake mailer</dt><dd>{{ env_status.fake_mailer }}</dd></dl></section>{% endif %}
+<section class="lf-panel lf-section"><h2>Acquisition knowledge</h2><p>Manage the approved product facts and prohibited claims used by AI research.</p><a class="lf-button" href="/acquisition/products">Open product knowledge</a></section>
 {% endcall %}

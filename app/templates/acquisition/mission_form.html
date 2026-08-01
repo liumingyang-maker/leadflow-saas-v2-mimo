@@ -1,0 +1,96 @@
+{% from "components/_shell.html" import shell %}
+{% from "components/_buttons.html" import button %}
+{% from "components/_forms.html" import csrf_input %}
+{% call shell("创建找客户任务 · LeadFlow") %}
+<nav class="lf-top-nav" aria-label="获客导航">
+  <a href="/workbench">今日工作台</a>
+  <a href="/acquisition/missions/new" aria-current="page">创建找客户任务</a>
+  <a href="/acquisition/products">产品知识</a>
+  <a href="/leads">CRM</a>
+</nav>
+<header class="lf-page-header">
+  <div>
+    <span class="lf-eyebrow">新任务</span>
+    <h1 class="lf-page-title">你想找什么客户？</h1>
+    <p class="lf-muted">选择产品、国家和买家类型即可。系统会自动选择搜索语言并先生成研究计划，不会自动联系客户。</p>
+  </div>
+</header>
+
+{% if error %}
+<div class="lf-alert" id="form-errors" role="alert" tabindex="-1">
+  <strong>无法创建任务</strong><span>{{ error }}</span>
+</div>
+{% endif %}
+
+{% if not products %}
+<section class="lf-empty-state lf-section">
+  <strong>先添加一份产品知识</strong>
+  <span>系统需要以已批准的产品资料为依据，避免搜索和开发信出现错误声明。</span>
+  <a class="lf-button lf-button-primary" href="/acquisition/products">添加产品知识</a>
+</section>
+{% endif %}
+<form class="lf-panel lf-form-stack lf-mission-form lf-section" method="post" action="/acquisition/missions/new">
+  {{ csrf_input() }}
+  <section class="lf-form-stack" data-advanced="false" aria-labelledby="required-fields-title">
+    <h2 id="required-fields-title">三个必要选择</h2>
+    <div class="lf-field-group">
+      <label class="lf-label" for="product_snapshot_id">产品</label>
+      <select class="lf-field" id="product_snapshot_id" name="product_snapshot_id" required>
+        <option value="">请选择已批准产品</option>
+        {% for product in products %}
+          <option value="{{ product.id }}"{% if product.id == form_values.product_snapshot_id %} selected{% endif %}>{{ product.product_name }}（{{ product.version }}）</option>
+        {% endfor %}
+      </select>
+    </div>
+
+    <fieldset class="lf-choice-group">
+      <legend>国家</legend>
+      <div class="lf-choice-grid">
+      {% for code, label in countries %}
+        <label class="lf-choice"><input type="checkbox" name="country_codes" value="{{ code }}"{% if code in form_values.country_codes %} checked{% endif %}> <span>{{ label }} <small>{{ code }}</small></span></label>
+      {% endfor %}
+      {% for code in extra_countries %}
+        <label class="lf-choice lf-choice-invalid"><input type="checkbox" name="country_codes" value="{{ code }}" checked> <span>无法识别的国家代码 <small>{{ code }}</small></span></label>
+      {% endfor %}
+      </div>
+    </fieldset>
+
+    <fieldset class="lf-choice-group">
+      <legend>买家类型</legend>
+      <div class="lf-choice-grid">
+      {% for value, label in buyer_types %}
+        <label class="lf-choice"><input type="checkbox" name="buyer_types" value="{{ value }}"{% if value in form_values.buyer_types %} checked{% endif %}> <span>{{ label }}</span></label>
+      {% endfor %}
+      </div>
+    </fieldset>
+  </section>
+
+  <details class="lf-advanced" data-advanced="true"{% if error and (form_values.industries or form_values.include_terms or form_values.exclude_terms) %} open{% endif %}>
+    <summary>高级设置（通常不需要修改）</summary>
+    <div class="lf-form-stack lf-advanced-body">
+      <div class="lf-readonly-note">
+        <strong>搜索语言由国家自动推导</strong>
+        <p>例如墨西哥使用西班牙语、巴西使用葡萄牙语；没有预设时使用英语。这里无需填写。</p>
+      </div>
+      <div class="lf-two-column">
+        <div class="lf-field-group"><label class="lf-label" for="industries">行业（每行一项）</label><textarea class="lf-field lf-textarea" id="industries" name="industries" rows="3">{{ form_values.industries }}</textarea></div>
+        <div class="lf-field-group"><label class="lf-label" for="company_sizes">公司规模（每行一项）</label><textarea class="lf-field lf-textarea" id="company_sizes" name="company_sizes" rows="3">{{ form_values.company_sizes }}</textarea></div>
+        <div class="lf-field-group"><label class="lf-label" for="include_terms">优先包含词（每行一项）</label><textarea class="lf-field lf-textarea" id="include_terms" name="include_terms" rows="3">{{ form_values.include_terms }}</textarea></div>
+        <div class="lf-field-group"><label class="lf-label" for="exclude_terms">排除词（每行一项）</label><textarea class="lf-field lf-textarea" id="exclude_terms" name="exclude_terms" rows="3">{{ form_values.exclude_terms }}</textarea></div>
+      </div>
+      <fieldset class="lf-choice-group">
+        <legend>获客渠道</legend>
+        <label class="lf-choice"><input type="checkbox" name="allowed_channels" value="mimo_web"{% if 'mimo_web' in form_values.allowed_channels %} checked{% endif %}> <span>MiMo 联网搜索</span></label>
+        <label class="lf-choice"><input type="checkbox" name="allowed_channels" value="manual_url"{% if 'manual_url' in form_values.allowed_channels %} checked{% endif %}> <span>手动网址补充</span></label>
+      </fieldset>
+      <div class="lf-budget-grid">
+        <div class="lf-field-group"><label class="lf-label" for="max_candidates">候选上限</label><input class="lf-field" id="max_candidates" name="max_candidates" type="number" min="1" max="100" value="{{ form_values.max_candidates }}"></div>
+        <div class="lf-field-group"><label class="lf-label" for="max_verify">验证上限</label><input class="lf-field" id="max_verify" name="max_verify" type="number" min="1" max="30" value="{{ form_values.max_verify }}"></div>
+        <div class="lf-field-group"><label class="lf-label" for="max_search_actions">搜索次数上限</label><input class="lf-field" id="max_search_actions" name="max_search_actions" type="number" min="1" max="20" value="{{ form_values.max_search_actions }}"></div>
+        <div class="lf-field-group"><label class="lf-label" for="max_seconds">最长运行秒数</label><input class="lf-field" id="max_seconds" name="max_seconds" type="number" min="30" max="1800" value="{{ form_values.max_seconds }}"></div>
+      </div>
+    </div>
+  </details>
+  {{ button("预览任务", "primary", "submit", disabled=not products) }}
+</form>
+{% endcall %}

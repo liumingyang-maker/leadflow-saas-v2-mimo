@@ -1,0 +1,12 @@
+{% from "components/_shell.html" import shell %}
+{% call shell((view.candidate.company_name or "候选客户") ~ " · LeadFlow") %}
+<nav class="lf-top-nav" aria-label="获客导航">
+  <a href="/workbench">今日工作台</a>
+  {% if mission %}<a href="/acquisition/missions/{{ mission.id }}">返回任务</a>{% endif %}
+  <a href="/acquisition/missions/new">创建找客户任务</a>
+  <a href="/leads">CRM</a>
+</nav>
+<header class="lf-page-header"><div><span class="lf-eyebrow">候选客户审核</span><h1 class="lf-page-title">{{ view.candidate.company_name or view.candidate.domain or "待确认公司" }}</h1></div></header>
+{% if error %}<div class="lf-alert" role="alert"><strong>操作未执行</strong><span>{{ error }}</span></div>{% endif %}
+<div class="lf-section">{% include "acquisition/_candidate_card.html" %}</div>
+{% endcall %}

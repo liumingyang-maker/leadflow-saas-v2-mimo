@@ -1,0 +1,103 @@
+{% from "components/_buttons.html" import button %}
+{% set candidate = view.candidate %}
+<article class="lf-candidate-card" id="candidate-{{ candidate.id }}" data-candidate-id="{{ candidate.id }}">
+  <header class="lf-candidate-header">
+    {% if bulk_form_id %}<input class="lf-candidate-check" type="checkbox" name="candidate_ids" value="{{ candidate.id }}" form="{{ bulk_form_id }}" aria-label="选择 {{ candidate.company_name or candidate.domain }}">{% endif %}
+    <div class="lf-candidate-heading">
+      <div class="lf-status-row">
+        <h3>{{ candidate.company_name or candidate.domain or "待确认公司" }}</h3>
+        <span class="lf-badge{% if candidate.priority_band in ['A', 'B'] %} lf-badge-success{% endif %}">{{ candidate.priority_band or "暂定" }} 优先级</span>
+      </div>
+      <p><strong>{{ candidate.opportunity_country_code or "国家待确认" }}</strong> · <span>为什么推荐：{{ view.primary_reason }}</span></p>
+      {% if candidate.website %}<a class="lf-safe-link" href="{{ candidate.website }}" target="_blank" rel="noopener noreferrer">访问公司网站</a>{% endif %}
+    </div>
+  </header>
+
+  <div class="lf-candidate-actions" aria-label="候选审核动作">
+    {% if candidate.status == 'eligible' and candidate.country_resolution_status == 'confirmed' %}
+    <form method="post" action="/acquisition/candidates/{{ candidate.id }}/review" hx-post="/acquisition/candidates/{{ candidate.id }}/review" hx-target="#candidate-{{ candidate.id }}" hx-swap="outerHTML">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+      <input type="hidden" name="action" value="accept">
+      {{ button("接受并加入 CRM", "primary", "submit") }}
+    </form>
+    {% endif %}
+    {% if candidate.status in ['eligible', 'needs_evidence'] %}
+    <form class="lf-inline-review" method="post" action="/acquisition/candidates/{{ candidate.id }}/review" hx-post="/acquisition/candidates/{{ candidate.id }}/review" hx-target="#candidate-{{ candidate.id }}" hx-swap="outerHTML">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+      <input type="hidden" name="action" value="reject">
+      <label class="lf-visually-hidden" for="reason-{{ candidate.id }}">拒绝原因</label>
+      <select class="lf-field" id="reason-{{ candidate.id }}" name="reason_code" required>
+        <option value="">选择拒绝原因</option>
+        {% for value, label in rejection_reasons %}<option value="{{ value }}">{{ label }}</option>{% endfor %}
+      </select>
+      {{ button("拒绝", "secondary", "submit") }}
+    </form>
+    {% endif %}
+    {% if candidate.status in ['verifying', 'eligible'] %}
+    <form method="post" action="/acquisition/candidates/{{ candidate.id }}/review" hx-post="/acquisition/candidates/{{ candidate.id }}/review" hx-target="#candidate-{{ candidate.id }}" hx-swap="outerHTML">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+      <input type="hidden" name="action" value="needs_evidence">
+      <input type="hidden" name="reason_code" value="missing_contact_path">
+      {{ button("需要补充证据", "secondary", "submit") }}
+    </form>
+    {% endif %}
+    {% if candidate.status in ['promoted', 'accepted'] %}<span class="lf-badge lf-badge-success">已加入 CRM</span>{% endif %}
+    {% if candidate.status == 'rejected' %}<span class="lf-badge">已拒绝</span>{% endif %}
+  </div>
+
+  <details class="lf-candidate-details">
+    <summary>证据、评分和未知项</summary>
+    <div class="lf-candidate-detail-grid">
+      <section>
+        <h4>关键证据</h4>
+        {% if view.evidence %}
+        <ul class="lf-evidence-list">
+          {% for evidence in view.evidence %}
+          <li><a href="{{ evidence.source_url }}" target="_blank" rel="noopener noreferrer">{{ evidence.title or evidence.canonical_url }}</a><p>{{ evidence.excerpt }}</p></li>
+          {% endfor %}
+        </ul>
+        {% else %}<p class="lf-muted">暂时没有已保存的网页证据。</p>{% endif %}
+      </section>
+      <section>
+        <h4>评分概览</h4>
+        <dl class="lf-dl">
+          <dt>综合优先级</dt><dd>{{ candidate.priority_score if candidate.priority_score is not none else '待评估' }}</dd>
+          <dt>信号覆盖</dt><dd>{{ candidate.signal_coverage }}%</dd>
+          <dt>AI 置信度</dt><dd>{{ candidate.ai_confidence }}%</dd>
+          {% for key, value in view.score_breakdown.items() %}<dt>{{ key|replace('_', ' ') }}</dt><dd>{{ value }}</dd>{% endfor %}
+        </dl>
+      </section>
+      <section>
+        <h4>观察事实</h4>
+        {% if view.observed_facts %}<ul>{% for fact in view.observed_facts %}<li>{{ fact|tojson }}</li>{% endfor %}</ul>{% else %}<p class="lf-muted">暂无结构化事实。</p>{% endif %}
+      </section>
+      <section>
+        <h4>AI 推断</h4>
+        {% if view.inferences %}<ul>{% for item in view.inferences %}<li>{{ item|tojson }}</li>{% endfor %}</ul>{% else %}<p class="lf-muted">暂无推断。</p>{% endif %}
+      </section>
+      <section>
+        <h4>仍未知</h4>
+        {% if view.unknowns %}<ul>{% for item in view.unknowns %}<li>{{ item if item is string else item|tojson }}</li>{% endfor %}</ul>{% else %}<p>没有记录到待补项。</p>{% endif %}
+      </section>
+    </div>
+
+    <details class="lf-debug-details">
+      <summary>技术详情</summary>
+      <dl class="lf-dl">
+        <dt>候选 ID</dt><dd>{{ candidate.id }}</dd>
+        <dt>资格代码</dt><dd>{{ candidate.eligibility_code or '—' }}</dd>
+        <dt>来源</dt><dd>{{ candidate.source_provider }} / {{ candidate.source_channel }}</dd>
+        {% if view.assessment %}
+        <dt>模型</dt><dd>{{ view.assessment.model_id }}</dd>
+        <dt>提示版本</dt><dd>{{ view.assessment.prompt_version }}</dd>
+        <dt>政策版本</dt><dd>{{ view.assessment.policy_version }}</dd>
+        <dt>评分版本</dt><dd>{{ view.assessment.score_version }}</dd>
+        <dt>证据包 Hash</dt><dd>{{ view.assessment.evidence_bundle_hash }}</dd>
+        {% endif %}
+      </dl>
+      {% if view.evidence %}
+      <ul>{% for evidence in view.evidence %}<li>Trust tier {{ evidence.trust_tier }} · {{ evidence.validation_status }} · {{ evidence.content_hash }}</li>{% endfor %}</ul>
+      {% endif %}
+    </details>
+  </details>
+</article>

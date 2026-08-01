@@ -16,6 +16,7 @@ from app.core.security import register_security_hooks
 from app.extensions import init_extensions
 from app.modules.accounts.admin_routes import register_admin_routes
 from app.modules.accounts.routes import register_account_routes
+from app.modules.acquisition.routes import register_acquisition_routes
 from app.modules.admin.routes import register_admin_dashboard_routes
 from app.modules.audit.routes import register_audit_routes
 from app.modules.inbound.routes import register_inbound_routes
@@ -37,6 +38,7 @@ def create_app(config_name: str | None = None) -> Flask:
     register_health_routes(flask_app)
     register_design_system_routes(flask_app)
     register_account_routes(flask_app)
+    register_acquisition_routes(flask_app)
     register_admin_dashboard_routes(flask_app)
     register_admin_routes(flask_app)
     register_audit_routes(flask_app)

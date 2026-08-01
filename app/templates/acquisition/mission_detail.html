@@ -1,0 +1,95 @@
+{% from "components/_shell.html" import shell %}
+{% from "components/_buttons.html" import button %}
+{% from "components/_forms.html" import csrf_input %}
+{% call shell(mission.name ~ " · LeadFlow") %}
+<nav class="lf-top-nav" aria-label="获客导航">
+  <a href="/workbench">今日工作台</a>
+  <a href="/acquisition/missions/new">创建找客户任务</a>
+  <a href="/acquisition/products">产品知识</a>
+  <a href="/leads">CRM</a>
+</nav>
+<header class="lf-page-header">
+  <div>
+    <span class="lf-eyebrow">找客户任务</span>
+    <h1 class="lf-page-title">{{ mission.name }}</h1>
+    {% include "acquisition/_mission_status.html" %}
+  </div>
+  <a class="lf-button" href="/acquisition/missions/new">新建任务</a>
+</header>
+
+{% if error %}<div class="lf-alert" role="alert"><strong>操作未执行</strong><span>{{ error }}</span></div>{% endif %}
+
+{% if bulk_confirmation %}
+<section class="lf-panel lf-confirm-panel lf-section" aria-labelledby="bulk-confirm-title">
+  <h2 id="bulk-confirm-title">确认加入 CRM</h2>
+  <p>将把以下 {{ bulk_confirmation|length }} 个候选加入 CRM；不会生成开发信，也不会发送任何消息。</p>
+  <ul>{% for candidate in bulk_confirmation %}<li>{{ candidate.company_name or candidate.domain }} · {{ candidate.opportunity_country_code }}</li>{% endfor %}</ul>
+  <form class="lf-status-row" method="post" action="/acquisition/candidates/bulk/accept">
+    {{ csrf_input() }}
+    <input type="hidden" name="mission_id" value="{{ mission.id }}">
+    <input type="hidden" name="confirm" value="yes">
+    {% for candidate in bulk_confirmation %}<input type="hidden" name="candidate_ids" value="{{ candidate.id }}">{% endfor %}
+    {{ button("确认加入 CRM", "primary", "submit") }}
+    <a class="lf-button" href="/acquisition/missions/{{ mission.id }}">取消</a>
+  </form>
+</section>
+{% endif %}
+
+<div class="lf-acquisition-layout lf-section">
+  <section class="lf-panel">
+    <h2>任务预览</h2>
+    <p>系统将根据已批准的“{{ product.product_name if product else '产品资料' }}”寻找目标客户。启动后 MiMo 先生成分国家的搜索计划，再保存可追溯的网页证据。</p>
+    <dl class="lf-dl">
+      <dt>目标国家</dt><dd>{{ view.target.country_codes|join('、') }}</dd>
+      <dt>买家类型</dt><dd>{{ view.target.buyer_types|join('、') }}</dd>
+      <dt>搜索语言</dt><dd>{% for country, langs in view.target.languages.items() %}{{ country }}: {{ langs|join('/') }}{% if not loop.last %}；{% endif %}{% endfor %}</dd>
+      <dt>候选上限</dt><dd>{{ view.budget.max_candidates }}</dd>
+      <dt>验证上限</dt><dd>{{ view.budget.max_verify }}</dd>
+      <dt>自动化边界</dt><dd>只研究和评分，不自动外发</dd>
+    </dl>
+  </section>
+  <section class="lf-panel">
+    <h2>控制任务</h2>
+    <div class="lf-action-stack">
+      {% if mission.status in ['draft', 'paused', 'failed'] %}
+      <form method="post" action="/acquisition/missions/{{ mission.id }}/start">{{ csrf_input() }}{{ button("开始搜索", "primary", "submit") }}</form>
+      {% endif %}
+      {% if mission.status in ['queued', 'running'] %}
+      <form method="post" action="/acquisition/missions/{{ mission.id }}/pause">{{ csrf_input() }}{{ button("暂停任务", "secondary", "submit") }}</form>
+      {% endif %}
+      {% if mission.status in ['draft', 'queued', 'running', 'paused', 'failed'] %}
+      <form method="post" action="/acquisition/missions/{{ mission.id }}/cancel">{{ csrf_input() }}{{ button("取消任务", "secondary", "submit") }}</form>
+      {% endif %}
+    </div>
+    <p class="lf-muted">“开始搜索”只创建后台研究任务。候选客户必须由你接受后才会进入 CRM。</p>
+  </section>
+</div>
+
+<section class="lf-section" aria-labelledby="candidate-list-title">
+  <div class="lf-page-header">
+    <div><span class="lf-eyebrow">审核队列</span><h2 id="candidate-list-title">候选客户（{{ candidate_views|length }}）</h2></div>
+  </div>
+  {% if candidate_views %}
+  <form class="lf-panel lf-bulk-bar" id="bulk-actions" method="post">
+    {{ csrf_input() }}
+    <input type="hidden" name="mission_id" value="{{ mission.id }}">
+    <div class="lf-field-group">
+      <label class="lf-label" for="bulk-reason">统一拒绝原因</label>
+      <select class="lf-field" id="bulk-reason" name="reason_code">
+        <option value="">请选择</option>
+        {% for value, label in rejection_reasons %}<option value="{{ value }}">{{ label }}</option>{% endfor %}
+      </select>
+    </div>
+    <div class="lf-status-row">
+      <button class="lf-button lf-button-primary" type="submit" formaction="/acquisition/candidates/bulk/accept">批量接受（最多 20 个）</button>
+      <button class="lf-button" type="submit" formaction="/acquisition/candidates/bulk/reject">批量拒绝（最多 100 个）</button>
+    </div>
+  </form>
+  <div class="lf-card-list lf-section">
+    {% for view in candidate_views %}{% set bulk_form_id = 'bulk-actions' %}{% include "acquisition/_candidate_card.html" %}{% endfor %}
+  </div>
+  {% else %}
+  <div class="lf-empty-state"><strong>还没有候选客户</strong><span>{% if mission.status == 'draft' %}确认预览后点击“开始搜索”。{% else %}系统正在搜索和验证，结果会出现在这里。{% endif %}</span></div>
+  {% endif %}
+</section>
+{% endcall %}

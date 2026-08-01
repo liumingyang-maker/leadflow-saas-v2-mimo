@@ -330,6 +330,102 @@ def review_candidate(
         return candidate
 
 
+def bulk_review_candidates(
+    app,
+    *,
+    tenant_id: str,
+    actor_id: str,
+    candidate_ids: list[str],
+    action: str,
+    reason_code: str = "",
+    note: str = "",
+) -> list[AcquisitionCandidate]:
+    """Review a bounded candidate set in one database transaction.
+
+    Validation happens for the complete set before any row is changed.  This is
+    especially important for bulk acceptance because promotion creates CRM rows;
+    one ineligible candidate must leave the whole batch untouched.
+    """
+
+    tenant_id, actor_id = _require_identity(tenant_id, actor_id)
+    unique_ids = list(dict.fromkeys(item.strip() for item in candidate_ids if item.strip()))
+    limit = 20 if action == "accept" else 100
+    if not unique_ids:
+        raise AcquisitionError("at least one candidate is required")
+    if len(unique_ids) > limit:
+        raise AcquisitionError(f"bulk {action} is limited to {limit} candidates")
+    try:
+        decision = CandidateDecisionInput(
+            action=action,
+            reason_code=reason_code,
+            note=note,
+        )
+    except ValidationError as exc:
+        raise AcquisitionError("candidate review input is invalid") from exc
+    if decision.action not in {"accept", "reject"}:
+        raise AcquisitionError("bulk review supports accept or reject only")
+
+    try:
+        with _session(app) as session:
+            rows = list(
+                session.scalars(
+                    select(AcquisitionCandidate).where(
+                        AcquisitionCandidate.tenant_id == tenant_id,
+                        AcquisitionCandidate.id.in_(unique_ids),
+                    )
+                )
+            )
+            by_id = {item.id: item for item in rows}
+            if len(by_id) != len(unique_ids):
+                raise AcquisitionError("one or more candidates were not found")
+            candidates = [by_id[item_id] for item_id in unique_ids]
+
+            if decision.action == "accept":
+                invalid = [
+                    item
+                    for item in candidates
+                    if item.status != "eligible"
+                    or item.country_resolution_status != "confirmed"
+                    or item.eligibility_code in {"country_unknown", "country_conflicting"}
+                ]
+                if invalid:
+                    raise AcquisitionError(
+                        "all candidates must be eligible with confirmed country evidence"
+                    )
+            else:
+                invalid = [
+                    item for item in candidates if item.status not in {"eligible", "needs_evidence"}
+                ]
+                if invalid:
+                    raise AcquisitionError(
+                        "all candidates must be reviewable before bulk rejection"
+                    )
+
+            now = datetime.now(UTC)
+            for candidate in candidates:
+                candidate.decision_note = decision.note
+                candidate.decided_by = actor_id
+                candidate.decided_at = now
+                if decision.action == "accept":
+                    candidate.status = "accepted"
+                    candidate.decision_reason_code = ""
+                    _audit_candidate(session, candidate, actor_id, "candidate.accepted")
+                    _promote_candidate_in_session(
+                        session,
+                        tenant_id=tenant_id,
+                        actor_id=actor_id,
+                        candidate=candidate,
+                    )
+                else:
+                    candidate.status = "rejected"
+                    candidate.decision_reason_code = decision.reason_code
+                    _audit_candidate(session, candidate, actor_id, "candidate.rejected")
+            session.commit()
+            return candidates
+    except IntegrityError as exc:
+        raise AcquisitionError("bulk candidate promotion conflicted; retry later") from exc
+
+
 def promote_candidate(app, *, tenant_id: str, actor_id: str, candidate_id: str) -> PromotionResult:
     tenant_id, actor_id = _require_identity(tenant_id, actor_id)
     for attempt in range(2):

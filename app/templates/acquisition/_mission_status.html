@@ -1,0 +1,6 @@
+<div class="lf-status-row" id="mission-status" aria-live="polite">
+  <span class="lf-badge{% if mission.status in ['completed', 'running'] %} lf-badge-success{% endif %}">
+    {{ {'draft':'待确认','queued':'排队中','running':'搜索中','paused':'已暂停','completed':'已完成','failed':'失败','cancelled':'已取消'}.get(mission.status, mission.status) }}
+  </span>
+  <span class="lf-muted">最后更新 {{ mission.updated_at.strftime('%Y-%m-%d %H:%M') }}</span>
+</div>

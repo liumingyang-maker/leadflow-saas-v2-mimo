@@ -1,0 +1,68 @@
+{% from "components/_shell.html" import shell %}
+{% from "components/_buttons.html" import button %}
+{% from "components/_forms.html" import csrf_input %}
+{% call shell("产品知识 · LeadFlow") %}
+<nav class="lf-top-nav" aria-label="获客导航">
+  <a href="/workbench">今日工作台</a>
+  <a href="/acquisition/missions/new">创建找客户任务</a>
+  <a href="/acquisition/products" aria-current="page">产品知识</a>
+  <a href="/leads">CRM</a>
+</nav>
+<header class="lf-page-header">
+  <div>
+    <span class="lf-eyebrow">获客基础</span>
+    <h1 class="lf-page-title">产品知识</h1>
+    <p class="lf-muted">先告诉系统哪些内容可以确认、哪些说法禁止使用。每次保存都会生成新版本，历史记录不会被覆盖。</p>
+  </div>
+</header>
+
+{% if error %}
+<div class="lf-alert" id="form-errors" role="alert" tabindex="-1">
+  <strong>无法保存产品知识</strong><span>{{ error }}</span>
+</div>
+{% elif saved %}
+<div class="lf-alert lf-alert-success" role="status"><strong>已保存</strong><span>新的产品知识版本已经批准。</span></div>
+{% endif %}
+
+<div class="lf-acquisition-layout lf-section">
+  <form class="lf-panel lf-form-stack" method="post" action="/acquisition/products">
+    {{ csrf_input() }}
+    <div class="lf-field-group">
+      <label class="lf-label" for="product_name">产品名称</label>
+      <input class="lf-field" id="product_name" name="product_name" value="{{ form_values.product_name }}" required maxlength="200" autocomplete="off">
+    </div>
+    <div class="lf-field-group">
+      <label class="lf-label" for="summary">产品摘要</label>
+      <textarea class="lf-field lf-textarea" id="summary" name="summary" rows="4" required>{{ form_values.summary }}</textarea>
+      <span class="lf-help">用客户能理解的语言说明用途、优势和适用场景。</span>
+    </div>
+    <div class="lf-field-group">
+      <label class="lf-label" for="facts">已确认事实（每行一条）</label>
+      <textarea class="lf-field lf-textarea" id="facts" name="facts" rows="6" required placeholder="类别: 摩托车替换配件&#10;材质: 铝合金">{{ form_values.facts }}</textarea>
+      <span class="lf-help">推荐使用“字段: 内容”，也可以直接写一句事实。</span>
+    </div>
+    <div class="lf-field-group">
+      <label class="lf-label" for="prohibited_claims">禁止使用的声明（每行一条）</label>
+      <textarea class="lf-field lf-textarea" id="prohibited_claims" name="prohibited_claims" rows="4" placeholder="保证独家经销权&#10;保证销售额">{{ form_values.prohibited_claims }}</textarea>
+    </div>
+    {{ button("保存为新版本", "primary", "submit") }}
+  </form>
+
+  <section class="lf-panel" aria-labelledby="approved-products-title">
+    <h2 id="approved-products-title">当前批准版本</h2>
+    {% if products %}
+      <div class="lf-card-list">
+      {% for product in products %}
+        <article class="lf-compact-card">
+          <div class="lf-status-row"><strong>{{ product.product_name }}</strong><span class="lf-badge">{{ product.version }}</span></div>
+          <p>{{ product.summary }}</p>
+          <small class="lf-muted">批准于 {{ product.approved_at.strftime('%Y-%m-%d %H:%M') }}</small>
+        </article>
+      {% endfor %}
+      </div>
+    {% else %}
+      <div class="lf-empty-state"><strong>还没有产品知识</strong><span>保存第一份产品资料后，就可以创建找客户任务。</span></div>
+    {% endif %}
+  </section>
+</div>
+{% endcall %}
