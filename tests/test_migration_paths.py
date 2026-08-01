@@ -38,6 +38,9 @@ def test_fresh_database_to_head() -> None:
         # Verify auth_version exists (from 0011)
         user_cols = [c["name"] for c in insp.get_columns("users")]
         assert "auth_version" in user_cols
+
+        admin_cols = [c["name"] for c in insp.get_columns("admin_users")]
+        assert "auth_version" in admin_cols
         engine.dispose()
 
 
@@ -57,7 +60,7 @@ def test_upgrade_0011_to_0012() -> None:
         assert "claim_token" not in idem_cols
         engine.dispose()
 
-        # Now upgrade to head (0012)
+        # Now upgrade to head (currently 0013)
         command.upgrade(cfg, "head")
 
         engine = create_engine(f"sqlite:///{db_path}")
@@ -65,6 +68,41 @@ def test_upgrade_0011_to_0012() -> None:
         idem_cols = [c["name"] for c in insp.get_columns("inbound_idempotency")]
         assert "claim_token" in idem_cols
         assert "processing_expires_at" in idem_cols
+        engine.dispose()
+
+
+def test_upgrade_0012_to_0013_adds_admin_auth_version() -> None:
+    """Database at 0012 gains the admin session revocation field in 0013."""
+    with tempfile.TemporaryDirectory() as tmpdir:
+        db_path = os.path.join(tmpdir, "test.db")
+        cfg = _alembic_cfg(db_path)
+        command.upgrade(cfg, "0012_idempotency_lease")
+
+        engine = create_engine(f"sqlite:///{db_path}")
+        assert "auth_version" not in {
+            column["name"] for column in inspect(engine).get_columns("admin_users")
+        }
+        engine.dispose()
+
+        command.upgrade(cfg, "0013_admin_auth_version")
+        engine = create_engine(f"sqlite:///{db_path}")
+        assert "auth_version" in {
+            column["name"] for column in inspect(engine).get_columns("admin_users")
+        }
+        engine.dispose()
+
+        command.downgrade(cfg, "0012_idempotency_lease")
+        engine = create_engine(f"sqlite:///{db_path}")
+        assert "auth_version" not in {
+            column["name"] for column in inspect(engine).get_columns("admin_users")
+        }
+        engine.dispose()
+
+        command.upgrade(cfg, "0013_admin_auth_version")
+        engine = create_engine(f"sqlite:///{db_path}")
+        assert "auth_version" in {
+            column["name"] for column in inspect(engine).get_columns("admin_users")
+        }
         engine.dispose()
 
 
