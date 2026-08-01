@@ -35,6 +35,8 @@ LeadFlow 不应继续以“增加更多采集按钮”为核心，也不应把�
 - **MiMo `mimo-v2.5` 作为单人版首选 AI 研究与草稿模型。**
 - **GitHub 主要用于寻找可靠基础组件，不是驰象摩托车发动机业务的主要获客渠道。**
 - **YouTube 是市场意向信号源，不是已验证联系人数据库。**
+- **竞品雷达是正式获客模块。** 它监控竞品、经销网络和市场变化，并把经过证据验证的
+  经销商转为 Candidate；不照搬旧版脆弱抓取实现。
 - **旧版大量网页爬虫不恢复为核心能力。** 平台无官方/授权 API 时，只允许人工辅助或研究性使用。
 - **不做全自动发送。** AI 贯穿全流程，但外发、事实承诺、候选接受仍有人工门禁。
 
@@ -94,6 +96,10 @@ LeadFlow 不应继续以“增加更多采集按钮”为核心，也不应把�
 当前实现有一个重要缺口：`Candidate` 是内存对象，Worker 会丢弃没有邮箱的候选并直接把有邮箱的
 候选写为 `Lead`。真实网页研究经常先发现公司和官网，之后才找到联系人。因此需要新增持久化的
 候选区，不能要求 AI 在第一次搜索时就“变出一个邮箱”。
+
+现有 `OLD_TO_V2_MIGRATION_MATRIX.md` 把竞品雷达冻结到 V2 核心闭环之后。本设计在用户明确确认
+竞品雷达价值后，提出在 Phase 2 正式解冻它；实施前应同步更新迁移矩阵/产品路线图，不能让两个
+有效文档长期互相矛盾。
 
 实施获客功能前还应先补齐 `AdminUser.auth_version` 的新 Alembic revision。当前模型已有字段，
 但已发布 migration 链只给普通用户表增加了该字段。这个前置修复不能混入获客业务 migration。
@@ -202,6 +208,7 @@ LeadFlow 不应继续以“增加更多采集按钮”为核心，也不应把�
 | Google Places Text Search | 发现本地经销商、维修商、批发商 | 中高 | 使用官方 API，不解析 Maps HTML |
 | YouTube Data API | 视频、频道和评论中的市场/购买意向 | 中 | 做“信号”，不直接生成已验证联系人 |
 | 官网 Contact/About 抽取 | 获取公开业务邮箱、电话、WhatsApp 链接 | 高 | 只抓已确认官网的少量页面 |
+| 竞品雷达 | 发现竞品经销网络、跨品牌大经销商和市场变化 | 中高 | 作为正式模块，共享 Candidate/Evidence，详见第 16 节 |
 
 #### P2：有数据后按收益接入
 
@@ -218,7 +225,6 @@ UN Comtrade 适合判断“哪个国家、哪个 HS 类目在增长”，不应�
 #### P3：研究性渠道
 
 - Europages、Kompass、行业媒体和普通 B2B 目录：通过搜索发现，人工或官网二次验证；
-- 竞品经销商页面：用于发现经销网络，不能复制竞品客户资料或推断合作关系；
 - 新闻、招聘和新品动态：作为时间性信号，不作为主身份来源；
 - GitHub：若未来销售开发者工具可作为企业信号；对当前摩托车发动机业务不应列为获客渠道。
 
@@ -315,7 +321,7 @@ P0 的网页策略应尽量简单：
 flowchart TD
     A["Approved Product Knowledge\n驰象官网与人工确认事实"] --> B["Acquisition Mission\n国家/语言/买家/预算"]
     B --> C["AI Planner\n生成查询与渠道计划"]
-    C --> D["Channel Adapters\nWeb / Places / YouTube / Import"]
+    C --> D["Channel Adapters\nWeb / Radar / Places / YouTube / Import"]
     D --> E["Persistent Candidates\n先保存公司与信号"]
     E --> F["Evidence Verification\n官网/地区/产品/买家类型"]
     F --> G{"Hard Eligibility Gates"}
@@ -415,6 +421,12 @@ app/modules/acquisition/
   routes.py          # Web/HTMX 入口
   policies.py        # eligibility、预算、渠道策略
 
+app/modules/radar/
+  models.py          # 竞品、网络关系、快照和变化事件
+  repository.py      # tenant-scoped watchlist 与查询
+  service.py         # 扫描、diff、事件确认和 Candidate 转换
+  routes.py          # 雷达总览、竞品详情、变化审核
+
 app/integrations/research/
   contracts.py       # ResearchProvider、SourceFetcher
   mimo.py            # MiMo 联网搜索
@@ -423,6 +435,12 @@ app/integrations/research/
   google_places.py   # Places Text Search
   hunter.py          # 后续联系增强
   apollo.py          # 后续组织/人员增强
+
+app/integrations/radar/
+  contracts.py       # RadarSource 与观察结果契约
+  official_site.py   # 竞品官网、Where-to-Buy/Dealer 页面
+  reverse_search.py  # 本地化反向经销商搜索
+  trade_signal.py    # 官方/授权贸易数据，首期可禁用
 
 app/integrations/ai/
   contracts.py       # Planner、Extractor、Ranker、Drafter
@@ -477,9 +495,10 @@ class OutreachDrafter(Protocol):
 - `PLACES_DISCOVERY`
 - `CONTACT_ENRICHMENT`
 - `AI_OUTREACH_DRAFT`
+- `COMPETITOR_RADAR`
 
 真实发送继续复用已有 `OUTREACH_SEND`，不能以“AI 草稿能力已开启”推导发送权限。内部默认只开启
-Phase 1 所需的前三项中的 `AI_RESEARCH`、`WEBSITE_EVIDENCE_FETCH` 和
+Phase 1 所需的 `AI_RESEARCH`、`WEBSITE_EVIDENCE_FETCH` 和
 `AI_OUTREACH_DRAFT`；其他能力随对应阶段单独启用。
 
 ## 10. 数据模型
@@ -506,6 +525,7 @@ Phase 1 所需的前三项中的 `AI_RESEARCH`、`WEBSITE_EVIDENCE_FETCH` 和
 | `entity_type` | `company/person/intent_signal` |
 | `status` | `discovered/verifying/needs_evidence/eligible/rejected/accepted/promoted` |
 | `company_name`, `domain`, `website`, `country` | 标准化企业字段 |
+| `source_channel`, `source_provider` | 例如 `competitor_radar/mimo`，不依赖自由文本 notes |
 | `contact_json` | 已公开的联系点，首期保持小型 JSON |
 | `observed_facts_json` | 只存来源观察事实 |
 | `inferences_json` | AI 推断，与事实分开 |
@@ -600,6 +620,9 @@ discovered -> verifying -> eligible -> accepted -> promoted
 - `places_discovery`
 - `contact_enrich`
 - `outreach_draft`
+- `radar_scan`
+- `radar_diff`
+- `radar_dealer_verify`
 
 当前数据库对 `job_type` 有硬编码 CheckConstraint 和 24 字符长度，必须通过新 migration 扩展；
 不能把所有动作伪装成 `google_search` 再塞进 payload。
@@ -792,22 +815,300 @@ YouTube 上的评测、维修、经销、货运三轮车和当地品牌视频，
 
 只有当频道 About、视频描述或外部官网能证明企业身份时，信号才可以晋升为公司候选。
 
-## 16. 单人版 UI
+## 16. 竞品雷达完整设计
+
+### 16.1 产品定位
+
+竞品雷达不是单纯“盯着竞品看”，它有三个可执行输出：
+
+1. **竞品情报**：品牌、产品类别、主力型号、目标国家和公开市场动作；
+2. **渠道网络**：竞品官方经销商、公开销售该品牌的当地商家、跨品牌大经销商；
+3. **变化机会**：新增/移除经销商、新增国家或型号、联系信息变化，并转成可审核 Candidate。
+
+对驰象业务最有价值的不是竞品新闻，而是竞品已经教育并服务过的销售渠道。这些企业已经理解
+摩托车、货运三轮车、发动机或配件市场，比全网盲搜更接近理想客户。
+
+### 16.2 三种迁移方案
+
+#### 方案 R1：原样复制旧版雷达
+
+保留四源并行和所有旧代码，包括社媒、电商、公开海关聚合页抓取、线程调度和 AI 自动入库。
+
+优点：最快恢复旧页面。
+
+问题：旧实现把搜索摘要、网页抓取和模型评分混成一个类；社媒与电商页面不稳定；Web 进程内
+调度不可恢复；按公司名和国家去重容易误合并；模型分数达到阈值就自动入库，证据门槛不足。
+
+结论：不采用。
+
+#### 方案 R2：不设雷达模块，只做普通 Mission
+
+把竞品名称当成普通搜索关键词，结果都进入通用 Candidate。
+
+优点：数据模型最少。
+
+问题：无法表达竞品、经销商、国家和型号之间的长期关系，也无法稳定保存快照、变化和监控频率。
+
+结论：不采用。
+
+#### 方案 R3：独立雷达领域 + 共享获客基础设施
+
+用 `app.modules.radar` 管理竞品档案、网络关系和变化事件；搜索、证据、Candidate、Job、AI、
+联系增强和 Lead 晋升继续复用获客系统。
+
+优点：保留旧版真正有价值的产品洞察，同时去掉重复代码和不可靠边界。
+
+结论：**采用。**
+
+### 16.3 旧版功能保留与重做
+
+| 旧版能力 | 新版决定 |
+|---|---|
+| 手工添加竞品官网 | 保留，并强制验证为独立竞品域名 |
+| 自动发现同类竞品 | 保留，由 MiMo 规划、本地化搜索、官网证据验证 |
+| 反向经销商搜索 | 保留，作为主发现方式之一 |
+| 多语言 distributor/dealer/importer 同义词 | 保留，改为版本化查询词典 + AI 建议 |
+| 竞品官网 Where-to-Buy/Dealer 页面 | 保留，作为最高等级关系证据 |
+| 型号作为搜索钥匙 | 保留，品牌名过泛时优先型号 + 产品类别 |
+| 同一经销商代理多个竞品时加权 | 保留，但使用域名实体合并，不用公司名直接合并 |
+| 电话/WhatsApp 优先 | 保留公开业务联系路径，不自动发送 |
+| 情报卡、定期监控和 diff | 保留，改用规范化观察与事件表 |
+| 社交/电商 HTML 批量抓取 | 不保留；改为官方 API、联网搜索信号或人工链接 |
+| 公开海关聚合页抓取 | 不保留；改用授权贸易 Provider |
+| AI 高分自动入库 Lead | 不保留；必须通过证据门禁并人工审核 |
+| Web 进程内后台线程 | 不保留；使用持久化 Job 和外部定时触发 |
+| 公司名 + 国家去重 | 不保留；改用规范化域名和稳定 Provider ID |
+
+### 16.4 雷达来源分层
+
+| 来源 | 能证明什么 | 信任等级 | 使用方式 |
+|---|---|---:|---|
+| 竞品官网 Dealer/Distributor 页面 | 官方渠道关系 | A | 直接建立 `official_distributor` 关系 |
+| 经销商自己官网的品牌/产品页面 | 商家公开销售竞品 | A | 建立 `sells_brand`，记录具体页面 |
+| Google Places 官方 API | 当地企业身份、地址和业务类别 | B | 验证企业与地点，不证明代理授权 |
+| YouTube 官方 API | 经销、维修、评测或市场活动信号 | C/D | 发现后回到企业官网验证 |
+| MiMo 联网搜索引用 | 候选页面、新闻和目录入口 | D | 只负责发现，不能单独确认关系 |
+| 展会、商会、政府目录 | 参展和行业身份 | B/C | 辅助验证 |
+| 授权贸易数据 | 进口品牌/品类关系 | B | 建立 `imports_brand/category`，注明数据周期 |
+| 普通社媒/电商页面 | 在售或提及信号 | D | 人工或搜索辅助，不常驻抓取 |
+
+“经销商销售竞品”与“竞品官方授权经销商”必须是两种不同关系，UI 和外发都不能混淆。
+
+### 16.5 数据流
+
+```mermaid
+flowchart TD
+    A["Competitor Watchlist\n品牌/官网/类别/国家"] --> B["Radar Planner\n品牌名+型号+本地语言查询"]
+    B --> C["Official Site Scanner"]
+    B --> D["Reverse Web Search"]
+    B --> E["Places / YouTube / Trade Signals"]
+    C --> F["Normalized Observations"]
+    D --> F
+    E --> F
+    F --> G["Entity Resolution\n竞品/经销商/域名"]
+    G --> H["Network Edges\n关系+证据+置信度"]
+    H --> I["Snapshot & Diff"]
+    I --> J["Radar Events\n新增/移除/变化"]
+    J --> K{"Opportunity Gate"}
+    K -->|通过| L["Acquisition Candidate"]
+    K -->|不足| M["Needs Evidence"]
+    L --> N["人工审核 -> Lead"]
+```
+
+### 16.6 核心数据模型
+
+#### `competitor_profiles`
+
+| 字段 | 说明 |
+|---|---|
+| `id`, `tenant_id` | 租户归属 |
+| `name`, `brand_key`, `canonical_domain`, `official_url` | 竞品/品牌身份 |
+| `category`, `brands_json`, `models_json` | 类别、品牌别名和型号 |
+| `target_countries_json` | 本雷达关注市场 |
+| `status` | `draft/active/paused/archived` |
+| `scan_frequency_days` | 单人版默认 7 天，最短 1 天 |
+| `last_scanned_at`, `next_scan_at` | 调度信息 |
+| `created_by`, timestamps | 审计 |
+
+唯一约束：`(tenant_id, canonical_domain, brand_key)`，允许同一集团官网下存在多个独立品牌，但不
+允许重复添加同一品牌。平台、社交、搜索和新闻域名不能创建为竞品档案。
+
+#### `competitor_network_edges`
+
+该表描述“谁与哪个竞品有什么关系”，而不是把关系塞进 Lead notes：
+
+| 字段 | 说明 |
+|---|---|
+| `id`, `tenant_id`, `competitor_id` | 归属 |
+| `subject_domain`, `subject_name`, `country` | 经销商或组织实体 |
+| `relation_type` | `official_distributor/sells_brand/imports_brand/services_brand/mentions_model` |
+| `status` | `observed/verified/contradicted/inactive` |
+| `first_seen_at`, `last_seen_at` | 首次和最近证据 |
+| `confidence_score` | 规则分，不是模型 confidence |
+| `candidate_id`, `lead_id` | 转化关联 |
+
+一个关系至少关联一条 `candidate_evidence`；关系本身不重复保存长文本。
+建议唯一约束：`(tenant_id, competitor_id, subject_domain, relation_type)`。
+
+#### `radar_snapshots`
+
+每次成功扫描保存可比较的规范化快照：
+
+- 竞品事实版本；
+- 排序后的关系稳定键集合；
+- 来源 URL 和内容 hash；
+- 扫描策略/Provider/model/prompt 版本；
+- 成功、部分成功和失败来源列表；
+- 调用次数、tokens 和成本。
+
+快照只保存结构化结果和必要证据，不保存无限量原始 HTML。
+
+#### `radar_events`
+
+| 事件类型 | 说明 |
+|---|---|
+| `distributor_added` | 出现新的已验证经销关系 |
+| `distributor_removed` | 连续确认后关系消失 |
+| `country_entered` | 发现竞品进入新的目标国家 |
+| `model_launched` | 官网出现新的相关型号 |
+| `contact_changed` | 公开业务联系路径变化 |
+| `price_signal_changed` | 同一公开型号、币种和计价单位下出现可比价格变化 |
+| `relation_strengthened` | 从普通在售升级为官方经销等更强证据 |
+| `source_unavailable` | 来源不可达，只是运维事件，不等于经销商被移除 |
+
+状态为 `new/acknowledged/converted/dismissed`。事件可转 Candidate，但事件本身不是 Lead。
+价格信号只用于内部市场判断，缺少同型号、币种、单位或日期时不得生成价格变化事件，也不得进入
+外联事实库。
+
+### 16.7 扫描、diff 与误报控制
+
+1. 每个来源独立执行并返回部分成功；
+2. 只有至少一个关键来源成功，才生成业务 diff；
+3. 域名、Provider ID 和官方地址用于实体合并；
+4. 新关系可以立即产生 `distributor_added`，但仍进入人工审核；
+5. 关系移除必须满足以下任一条件：
+   - 官方页面明确不再列出且页面结构仍有效；
+   - 连续两次完整扫描未发现，间隔达到 watch rule；
+   - 用户人工确认；
+6. 单次超时、403、页面空白或搜索无结果只能产生 `source_unavailable`；
+7. 内容 hash 变化先触发局部重抽取，不能只凭整个页面 hash 宣布业务变化；
+8. 同一变化在同一快照周期只产生一个幂等事件；
+9. 只有经销关系新增/加强等机会事件能自动建议 Candidate，型号和价格事件只进入情报流。
+
+### 16.8 经销商机会评分
+
+先应用通用 Candidate 硬门禁，再增加雷达维度：
+
+| 维度 | 权重 |
+|---|---:|
+| 官方经销/经销商官网的品牌证据 | 30 |
+| 产品类别与驰象匹配 | 20 |
+| 目标国家与地域覆盖 | 15 |
+| 跨竞品代理数量 | 15 |
+| 公开业务联系路径 | 10 |
+| 最近 180 天的证据时效 | 10 |
+
+跨竞品代理是“渠道能力强”的信号，不等于“愿意更换供应商”。对竞品关系的解释要使用中性语言：
+`已公开销售相关品牌，具备品类和渠道经验`，不能写成 `正在寻找替代供应商`。
+
+### 16.9 Candidate 与外联规则
+
+雷达发现的经销商先创建/关联 `AcquisitionCandidate`：
+
+- `source=competitor_radar`；
+- 保存竞品关系，但不把竞品名拼进普通销售备注；
+- Candidate 卡可显示内部竞品上下文；
+- 晋升 Lead 后保留来源 lineage；
+- 外联 prompt 默认不能使用竞品品牌、不能说“我们监控了你”、不能暗示知道对方采购记录；
+- 只有公开、与对方企业自身相关的事实才能用于个性化。
+
+### 16.10 Job 与调度
+
+```text
+radar_scan
+  -> competitor_site_scan
+  -> reverse_dealer_search
+  -> radar_dealer_verify
+  -> radar_diff
+  -> candidate_assessment
+```
+
+单人版不在 Flask Web 进程启动后台线程。调度方式：
+
+1. 用户可手工“立即扫描”；
+2. 系统提供 `enqueue_due_radar_scans` 应用服务/CLI；
+3. 部署环境用 cron 或受控调度器定时调用；
+4. 服务为到期竞品创建持久化 Job；
+5. Worker 重启和重试遵守既有 Job 幂等边界。
+
+默认每个竞品 7 天扫描一次；只有频繁变化且实际能产出 Candidate 的竞品才缩短频率。
+
+### 16.11 UI
+
+竞品雷达作为“获客”下的二级入口，不挤占主导航。页面包含：
+
+- 总览：监控竞品数、新变化、新经销商候选、扫描失败和本月成本；
+- 竞品卡：品牌、官网、类别、型号、目标国家、经销商数、最近扫描、下次扫描；
+- 网络视图：按国家和竞品筛选经销商，标明关系类型和证据等级；
+- 变化流：新增、移除、加强、不可达，支持确认和忽略；
+- 竞品详情：时间线、快照 diff、来源证据和扫描日志；
+- 候选动作：补充研究、转候选、接受为 Lead、拒绝并记录原因；
+- 监控设置：频率、国家、来源、预算、暂停和归档。
+
+首期使用列表、表格和分组即可；只有经销商关系足够多时再增加网络图或地图，避免为了展示而增加
+复杂前端。
+
+### 16.12 安全与访问边界
+
+- 只监控公开企业和产品信息，不建立私人个人行为档案；
+- 不登录竞品后台、经销商门户或社交账号；
+- 不绕过验证码、付费墙、robots 或访问控制；
+- 所有官网扫描复用 URL Fetcher 的 SSRF、大小、跳转和 Content-Type 限制；
+- 模型不能根据竞品页面指令改变系统 prompt；
+- 删除竞品档案默认归档，历史 Candidate/Lead/Evidence 不级联删除；
+- 每个 Radar 表、Job 和查询都显式 tenant-scoped；
+- `COMPETITOR_RADAR` 关闭时，页面、路由、定时入队和 Worker 都拒绝执行。
+
+### 16.13 指标
+
+- 每个竞品每次扫描的来源成功率和成本；
+- 新发现、验证通过和人工接受的经销商数量；
+- 跨竞品大经销商数量；
+- 变化事件误报率；
+- Radar Candidate 的联系率、积极回复率和转化率；
+- 每个接受 Radar Candidate 的成本；
+- 连续 90 天无有效候选的竞品，建议自动降频但不自动删除。
+
+### 16.14 雷达验收标准
+
+- 可手工添加或由 MiMo 建议竞品，平台/社交 URL 被拒绝；
+- 能从竞品官方经销商页建立带来源的关系；
+- 能用本地语言反向搜索并验证经销商官网；
+- 同一经销商代理多个竞品时只保留一个企业实体和多条关系；
+- 快照重跑幂等，不重复创建事件和 Candidate；
+- 单个来源失败不会把全部经销商标记为移除；
+- 新经销商可转入通用 Candidate 审核队列；
+- Candidate 晋升 Lead 后保留竞品来源，但外联不泄露监控行为；
+- 定期扫描由持久化 Job 执行，不使用 Web 进程线程；
+- PostgreSQL 并发、租户隔离、Capability、SSRF 和 prompt-injection 测试通过。
+
+## 17. 单人版 UI
 
 不增加十几个渠道菜单。核心导航建议为：
 
 1. **今日工作台**：待审核候选、待批准草稿、回复和失败任务；
 2. **获客任务**：创建任务、查看阶段进度、暂停和复用；
-3. **候选审核**：证据卡、评分、未知项、接受/拒绝；
-4. **Leads/CRM**：继续使用现有客户跟进流程；
-5. **外联**：草稿、dry-run、批准、发送结果；
-6. **知识与 Provider**：产品事实、API 状态、预算和健康检查。
+3. **竞品雷达**：作为获客下的二级入口，展示监控、经销网络和变化机会；
+4. **候选审核**：证据卡、评分、未知项、接受/拒绝；
+5. **Leads/CRM**：继续使用现有客户跟进流程；
+6. **外联**：草稿、dry-run、批准、发送结果；
+7. **知识与 Provider**：产品事实、API 状态、预算和健康检查。
 
-### 16.1 创建 Mission
+### 17.1 创建 Mission
 
 单页表单优先，默认值来自上一次成功任务。高级渠道和预算折叠，避免把用户变成搜索工程师。
 
-### 16.2 候选卡
+### 17.2 候选卡
 
 每张卡必须同时显示：
 
@@ -820,7 +1121,7 @@ YouTube 上的评测、维修、经销、货运三轮车和当地品牌视频，
 - 评分拆解；
 - 接受、拒绝、补充研究。
 
-### 16.3 自动化级别
+### 17.3 自动化级别
 
 单人版只需要三个清晰档位：
 
@@ -830,9 +1131,9 @@ YouTube 上的评测、维修、经销、货运三轮车和当地品牌视频，
 | 推荐默认 | 自动研究与验证，用户审核候选和外发 |
 | 高自动化 | 自动运行已批准 Mission，但仍不自动首发/群发 |
 
-## 17. 安全与合规边界
+## 18. 安全与合规边界
 
-### 17.1 外部网页是不可信输入
+### 18.1 外部网页是不可信输入
 
 所有网页内容进入模型前必须：
 
@@ -842,7 +1143,7 @@ YouTube 上的评测、维修、经销、货运三轮车和当地品牌视频，
 - 不允许网页要求模型调用工具、泄露 prompt 或更改产品事实；
 - 结构化输出后再由业务 Schema 和 URL 校验器检查。
 
-### 17.2 URL Fetcher 防护
+### 18.2 URL Fetcher 防护
 
 - 只允许 HTTP/HTTPS；
 - 拒绝 localhost、私网、链路本地、云 metadata 和非常规端口；
@@ -852,7 +1153,7 @@ YouTube 上的评测、维修、经销、货运三轮车和当地品牌视频，
 - 日志不保存 API Key、Authorization 或完整敏感响应；
 - 浏览器回退运行在隔离 Worker，不与主 Web 进程共享权限。
 
-### 17.3 API Key
+### 18.3 API Key
 
 - 使用现有加密 SecretStore；
 - UI 只显示掩码和最后验证时间；
@@ -860,7 +1161,7 @@ YouTube 上的评测、维修、经销、货运三轮车和当地品牌视频，
 - Provider 错误对用户显示安全摘要，完整错误只在受控服务端日志；
 - 未来公共 SaaS 再增加每租户 Provider 权限和用量配额。
 
-### 17.4 外联
+### 18.4 外联
 
 - 保留退订、抑制、每日限额、测试 allowlist 和审计；
 - 不因“只有一个人使用”而取消发送安全；
@@ -869,9 +1170,9 @@ YouTube 上的评测、维修、经销、货运三轮车和当地品牌视频，
 - 不把 SMTP 探测的临时响应当成绝对有效证明；
 - 对退订、投诉和硬退信立即进入 suppression。
 
-## 18. 故障、成本与可观测性
+## 19. 故障、成本与可观测性
 
-### 18.1 统一错误分类
+### 19.1 统一错误分类
 
 ```text
 auth_error
@@ -891,7 +1192,7 @@ partial_success
 只有 `rate_limited/provider_timeout/provider_unavailable` 等明确临时错误自动指数退避；
 认证、策略和 Schema 错误不盲目重试。
 
-### 18.2 默认预算
+### 19.2 默认预算
 
 单人版建议初始默认值：
 
@@ -906,7 +1207,7 @@ partial_success
 
 这些不是 SaaS 套餐，而是保护费用和时间的内部安全上限。
 
-### 18.3 指标
+### 19.3 指标
 
 每个 Provider 和渠道记录：
 
@@ -921,9 +1222,9 @@ partial_success
 
 “每天抓到 1000 条”不作为成功指标。
 
-## 19. 测试与验收策略
+## 20. 测试与验收策略
 
-### 19.1 单元与契约测试
+### 20.1 单元与契约测试
 
 - 每个 Provider 使用录制/手写的安全 fixture，不依赖真实联网；
 - JSON Schema、错误映射、配额和部分成功；
@@ -933,8 +1234,9 @@ partial_success
 - 所有 Repository 的跨租户读写拒绝；
 - 产品事实 ID 校验和禁止声明检测；
 - YouTube 评论只生成 signal，不直接生成已验证联系人。
+- 雷达关系类型、连续移除确认、跨竞品实体合并和事件幂等。
 
-### 19.2 集成测试
+### 20.2 集成测试
 
 - Job/RQ 只传 `job_id`；
 - Worker 重试不重复 Candidate/Evidence/Lead；
@@ -942,8 +1244,9 @@ partial_success
 - migration 从 0012 升级、降一级、再升级；
 - PostgreSQL 上的唯一约束和并发晋升；
 - Capability 关闭时路由和 Worker 都拒绝执行。
+- 到期竞品通过外部调度创建持久化 Job，Web 进程不启动扫描线程。
 
-### 19.3 AI 评估
+### 20.3 AI 评估
 
 - 固定 benchmark，不能每次临时挑好看的例子；
 - 结构化输出成功率目标 >= 98%；
@@ -952,7 +1255,7 @@ partial_success
 - 引用 URL 可访问率和引用支持度分别检查；
 - 每次 prompt/model 升级先离线对比，再做有限 live smoke。
 
-### 19.4 端到端验收
+### 20.4 端到端验收
 
 1. 创建“秘鲁摩托车发动机经销商”Mission；
 2. MiMo 生成西语查询计划；
@@ -965,7 +1268,7 @@ partial_success
 9. 发送后进入现有 Outreach/Activity；
 10. 回复被分类并进入今日工作台。
 
-## 20. 实施阶段
+## 21. 实施阶段
 
 ### Phase 0：前置一致性
 
@@ -985,12 +1288,15 @@ partial_success
 - 硬门禁、证据 UI 和候选审核；
 - Candidate 幂等晋升 Lead；
 - 事实受限外联草稿；
+- 为竞品雷达预留 `source=competitor_radar`、Evidence lineage 和 Candidate 转换契约；
 - 不新增真实自动发送。
 
 这是最重要的一期。完成后用户已经能从产品事实到合格 Lead 和安全草稿走完一条路径。
 
-### Phase 2：稳定渠道扩展
+### Phase 2：竞品雷达与稳定渠道扩展
 
+- 正式竞品雷达：竞品档案、官网经销商、反向搜索、关系网络、快照和 diff；
+- Radar Candidate 转换、变化工作台和外部定时入队；
 - Google Places Text Search；
 - YouTube Data API 信号；
 - 官网 Contact/About 增强；
@@ -1022,7 +1328,7 @@ partial_success
 - 公共注册、支付、合规和 SLA；
 - Provider 数据处理协议和地区化策略。
 
-## 21. 首期 Definition of Done
+## 22. 首期 Definition of Done
 
 - 一个用户能创建、运行、暂停和查看 Mission；
 - MiMo 搜索结果包含可点击证据，而不是只有模型总结；
@@ -1038,8 +1344,9 @@ partial_success
 - 真实联网测试是显式 opt-in，默认测试套件完全离线；
 - PostgreSQL migration smoke、ruff、format、pytest 和关键浏览器流程通过；
 - 至少用 30 个真实正负样本形成首版渠道/模型基准报告。
+- 竞品雷达共享基础契约已固定，Phase 2 无需另建 Lead、Evidence 或 Job 系统。
 
-## 22. 最终产品意见
+## 23. 最终产品意见
 
 单人版先做好再升级 SaaS 是正确方向，但“单人版”不等于“把所有东西自动化”。最值得自动化的是
 重复研究、证据整理、语言转换和草稿，不是事实判断与高风险外发。
@@ -1049,6 +1356,7 @@ partial_success
 ```text
 MiMo 多语言搜索
   + 企业官网验证
+  + 竞品雷达的经销网络与变化机会
   + Google Places 本地商业发现
   + YouTube 市场/意向信号
   + Hunter/Apollo 按需增强
@@ -1071,7 +1379,7 @@ MiMo 多语言搜索
 
 答不清这三个问题的渠道，不进入生产主流程。
 
-## 23. 外部调研依据
+## 24. 外部调研依据
 
 - [YouTube Data API Overview](https://developers.google.com/youtube/v3/getting-started)
 - [YouTube `search.list`](https://developers.google.com/youtube/v3/docs/search/list)
@@ -1094,11 +1402,12 @@ MiMo 多语言搜索
 - [SearXNG GitHub](https://github.com/searxng/searxng)
 - [Google API Python Client](https://github.com/googleapis/google-api-python-client)
 
-## 24. 待用户确认的实施范围
+## 25. 待用户确认的实施范围
 
-建议用户只批准 **Phase 0 + Phase 1** 作为第一批开发，不同时接入 YouTube、Places、Hunter 和
-Apollo。先证明“MiMo + 官网证据 + 候选审核 + 安全草稿”能在真实业务中产生合格 Lead，再按指标
-增加渠道。
+本设计已经完整包含竞品雷达、YouTube、Places、Hunter、Apollo 和后续多模型边界；完整设计不
+等于一次性实施。建议第一批批准 **Phase 0 + Phase 1**，先证明“MiMo + 官网证据 + 候选审核 +
+安全草稿”能产生合格 Lead；随后按 Phase 2 实现正式竞品雷达、YouTube 和 Places，再按指标增加
+付费渠道。
 
 确认本设计后，下一步应把 Phase 0/1 拆成逐文件、逐 migration、逐测试的实施计划；在该计划
 被确认前，不开始功能代码实现。
