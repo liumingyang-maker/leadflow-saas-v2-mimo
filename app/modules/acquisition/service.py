@@ -1,0 +1,975 @@
+"""Application services for solo acquisition review and CRM promotion."""
+
+from __future__ import annotations
+
+import hashlib
+import json
+import re
+from collections import Counter
+from dataclasses import dataclass
+from datetime import UTC, datetime
+from typing import Any
+from urllib.parse import urlsplit
+
+from pydantic import ValidationError
+from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
+from sqlalchemy.orm import Session
+
+from app.extensions import get_engine
+from app.integrations.ai.contracts import CompanyExtractor, ExtractedCompanyFacts
+from app.integrations.web.fetcher import StaticFetcher
+from app.modules.acquisition.contracts import CandidateDecisionInput, MissionCreateInput
+from app.modules.acquisition.models import (
+    AcquisitionCandidate,
+    AcquisitionMission,
+    CandidateAssessment,
+    CandidateEvidence,
+    MissionSuggestion,
+    ProductKnowledgeSnapshot,
+)
+from app.modules.acquisition.policies import (
+    build_budget,
+    build_channel_policy,
+    build_target_profile,
+    canonical_json,
+)
+from app.modules.acquisition.repository import (
+    AssessmentRepository,
+    CandidateRepository,
+    EvidenceRepository,
+    MissionRepository,
+    ProductKnowledgeRepository,
+    SuggestionRepository,
+)
+from app.modules.acquisition.scoring import (
+    EligibilityFacts,
+    ScoreInput,
+    evaluate_gate,
+    score_candidate,
+)
+from app.modules.audit.service import add_event
+from app.modules.jobs.service import create_and_enqueue
+from app.modules.leads.models import Activity, Company, Lead
+from app.modules.leads.repository import CompanyRepository, LeadRepository
+
+
+class AcquisitionError(ValueError):
+    pass
+
+
+@dataclass(frozen=True)
+class PromotionResult:
+    candidate_id: str
+    company_id: str
+    lead_id: str
+    created_company: bool
+    created_lead: bool
+
+
+def _session(app) -> Session:
+    session = Session(get_engine(app))
+    session.expire_on_commit = False
+    return session
+
+
+def _require_identity(tenant_id: str, actor_id: str) -> tuple[str, str]:
+    tenant = (tenant_id or "").strip()
+    actor = (actor_id or "").strip()
+    if not tenant:
+        raise AcquisitionError("tenant_id is required")
+    if not actor:
+        raise AcquisitionError("actor_id is required")
+    return tenant, actor
+
+
+def create_product_snapshot(
+    app,
+    *,
+    tenant_id: str,
+    actor_id: str,
+    product_name: str,
+    summary: str,
+    facts: list[dict[str, str]],
+    prohibited_claims: list[str],
+) -> ProductKnowledgeSnapshot:
+    tenant_id, actor_id = _require_identity(tenant_id, actor_id)
+    name = " ".join((product_name or "").split())
+    clean_summary = " ".join((summary or "").split())
+    clean_facts = [
+        {
+            str(key).strip(): " ".join(str(value).split())
+            for key, value in fact.items()
+            if str(key).strip() and str(value).strip()
+        }
+        for fact in facts
+        if isinstance(fact, dict)
+    ]
+    clean_facts = [fact for fact in clean_facts if fact]
+    if not name or not clean_summary or not clean_facts:
+        raise AcquisitionError("product name, summary and facts are required")
+    claims: list[str] = []
+    seen_claims: set[str] = set()
+    for claim in prohibited_claims:
+        clean = " ".join(str(claim).split())
+        if clean and clean.casefold() not in seen_claims:
+            seen_claims.add(clean.casefold())
+            claims.append(clean)
+
+    content = {
+        "product_name": name,
+        "summary": clean_summary,
+        "facts": clean_facts,
+        "prohibited_claims": claims,
+    }
+    content_hash = hashlib.sha256(canonical_json(content).encode("utf-8")).hexdigest()
+    with _session(app) as session:
+        existing = list(
+            session.scalars(
+                select(ProductKnowledgeSnapshot).where(
+                    ProductKnowledgeSnapshot.tenant_id == tenant_id,
+                    ProductKnowledgeSnapshot.product_name == name,
+                )
+            )
+        )
+        next_number = max((_version_number(item.version) for item in existing), default=0) + 1
+        snapshot = ProductKnowledgeRepository(session).add(
+            ProductKnowledgeSnapshot(
+                version=f"v{next_number}",
+                product_name=name,
+                summary=clean_summary,
+                source_revision=f"manual-v{next_number}",
+                facts_json=canonical_json(clean_facts),
+                prohibited_claims_json=canonical_json(claims),
+                content_hash=content_hash,
+                approved_by=actor_id,
+            ),
+            tenant_id=tenant_id,
+        )
+        session.commit()
+        return snapshot
+
+
+def create_mission(
+    app,
+    *,
+    tenant_id: str,
+    actor_id: str,
+    value: MissionCreateInput,
+) -> AcquisitionMission:
+    tenant_id, actor_id = _require_identity(tenant_id, actor_id)
+    with _session(app) as session:
+        product = ProductKnowledgeRepository(session).get(
+            value.product_snapshot_id, tenant_id=tenant_id
+        )
+        if product is None:
+            raise AcquisitionError("approved product snapshot was not found")
+        countries = ", ".join(value.country_codes)
+        mission = MissionRepository(session).add(
+            AcquisitionMission(
+                name=f"{product.product_name} — {countries}"[:200],
+                status="draft",
+                product_snapshot_id=product.id,
+                target_profile_json=canonical_json(build_target_profile(value)),
+                channel_policy_json=canonical_json(build_channel_policy(value)),
+                budget_json=canonical_json(build_budget(value)),
+                automation_level="research_only",
+                created_by=actor_id,
+            ),
+            tenant_id=tenant_id,
+        )
+        session.commit()
+        return mission
+
+
+def process_manual_url(
+    app,
+    *,
+    tenant_id: str,
+    mission_id: str,
+    url: str,
+    fetcher: StaticFetcher,
+    extractor: CompanyExtractor,
+) -> AcquisitionCandidate:
+    tenant_id = (tenant_id or "").strip()
+    if not tenant_id:
+        raise AcquisitionError("tenant_id is required")
+    with _session(app) as session:
+        mission = MissionRepository(session).get(mission_id, tenant_id=tenant_id)
+        if mission is None:
+            raise AcquisitionError("mission was not found")
+
+    snapshot = fetcher.fetch(url)
+    if snapshot.detected_prompt_injection:
+        raise AcquisitionError("prompt injection detected in website evidence")
+    facts = extractor.extract(snapshot)
+    if any(
+        str(claim.source_url).rstrip("/") != snapshot.final_url.rstrip("/")
+        for claim in facts.observed_claims
+    ):
+        raise AcquisitionError("observed claim cites an unsupplied source URL")
+    domain = _normalise_domain(facts.canonical_domain or snapshot.final_url)
+    if not domain:
+        raise AcquisitionError("company domain is required")
+
+    with _session(app) as session:
+        mission = MissionRepository(session).get(mission_id, tenant_id=tenant_id)
+        if mission is None:
+            raise AcquisitionError("mission was not found")
+        candidates = CandidateRepository(session)
+        candidate = candidates.find_by_dedupe_key(
+            mission_id, f"domain:{domain}", tenant_id=tenant_id
+        )
+        if candidate is None:
+            candidate = candidates.add(
+                AcquisitionCandidate(
+                    mission_id=mission_id,
+                    status="verifying",
+                    source_channel="manual_url",
+                    source_provider="manual",
+                    dedupe_key=f"domain:{domain}",
+                ),
+                tenant_id=tenant_id,
+            )
+            session.flush()
+        _apply_extracted_facts(candidate, facts, snapshot.final_url)
+        evidence = EvidenceRepository(session)
+        if (
+            evidence.find_content(
+                candidate.id,
+                snapshot.final_url,
+                snapshot.content_hash,
+                tenant_id=tenant_id,
+            )
+            is None
+        ):
+            evidence.add(
+                CandidateEvidence(
+                    candidate_id=candidate.id,
+                    provider="manual",
+                    source_type="manual_url",
+                    trust_tier="A",
+                    source_url=snapshot.requested_url,
+                    canonical_url=snapshot.final_url,
+                    title=snapshot.title[:500],
+                    excerpt=snapshot.text[:4000],
+                    retrieved_at=snapshot.retrieved_at,
+                    content_hash=snapshot.content_hash,
+                    supports_json=canonical_json(
+                        [claim.claim_id for claim in facts.observed_claims]
+                    ),
+                    validation_status="valid",
+                ),
+                tenant_id=tenant_id,
+            )
+            session.flush()
+        _assess_candidate_in_session(
+            session, app=app, candidate=candidate, mission=mission, tenant_id=tenant_id
+        )
+        session.commit()
+        return candidate
+
+
+def review_candidate(
+    app,
+    *,
+    tenant_id: str,
+    actor_id: str,
+    candidate_id: str,
+    action: str,
+    reason_code: str,
+    note: str,
+) -> AcquisitionCandidate:
+    tenant_id, actor_id = _require_identity(tenant_id, actor_id)
+    try:
+        decision = CandidateDecisionInput(action=action, reason_code=reason_code, note=note)
+    except ValidationError as exc:
+        raise AcquisitionError("candidate review input is invalid") from exc
+
+    with _session(app) as session:
+        candidate = CandidateRepository(session).get(candidate_id, tenant_id=tenant_id)
+        if candidate is None:
+            raise AcquisitionError("candidate was not found")
+        now = datetime.now(UTC)
+        if decision.action == "accept":
+            if candidate.country_resolution_status in {
+                "unknown",
+                "conflicting",
+            } or candidate.eligibility_code in {"country_unknown", "country_conflicting"}:
+                raise AcquisitionError("country evidence must be resolved before accept")
+            if candidate.status != "eligible":
+                raise AcquisitionError("only eligible candidates can be accepted")
+            candidate.status = "accepted"
+            candidate.decision_reason_code = ""
+            _audit_candidate(session, candidate, actor_id, "candidate.accepted")
+            _promote_candidate_in_session(
+                session,
+                tenant_id=tenant_id,
+                actor_id=actor_id,
+                candidate=candidate,
+            )
+        elif decision.action == "reject":
+            if candidate.status not in {"eligible", "needs_evidence"}:
+                raise AcquisitionError("candidate cannot be rejected from its current status")
+            candidate.status = "rejected"
+            candidate.decision_reason_code = decision.reason_code
+            _audit_candidate(session, candidate, actor_id, "candidate.rejected")
+        else:
+            if candidate.status not in {"verifying", "eligible"}:
+                raise AcquisitionError("candidate cannot request evidence from its current status")
+            if not decision.reason_code:
+                raise AcquisitionError("reason_code is required for needs_evidence")
+            candidate.status = "needs_evidence"
+            candidate.eligibility_code = decision.reason_code
+            candidate.decision_reason_code = decision.reason_code
+            _audit_candidate(session, candidate, actor_id, "candidate.needs_evidence")
+        candidate.decision_note = decision.note
+        candidate.decided_by = actor_id
+        candidate.decided_at = now
+        session.commit()
+        return candidate
+
+
+def promote_candidate(app, *, tenant_id: str, actor_id: str, candidate_id: str) -> PromotionResult:
+    tenant_id, actor_id = _require_identity(tenant_id, actor_id)
+    for attempt in range(2):
+        try:
+            with _session(app) as session:
+                candidate = CandidateRepository(session).get(candidate_id, tenant_id=tenant_id)
+                if candidate is None:
+                    raise AcquisitionError("candidate was not found")
+                result = _promote_candidate_in_session(
+                    session,
+                    tenant_id=tenant_id,
+                    actor_id=actor_id,
+                    candidate=candidate,
+                )
+                session.commit()
+                return result
+        except IntegrityError:
+            if attempt == 1:
+                raise AcquisitionError("candidate promotion conflicted; retry later") from None
+    raise AssertionError("unreachable")
+
+
+def override_candidate_country(
+    app,
+    *,
+    tenant_id: str,
+    actor_id: str,
+    candidate_id: str,
+    country_code: str,
+    source_url: str,
+    reason_code: str,
+) -> AcquisitionCandidate:
+    tenant_id, actor_id = _require_identity(tenant_id, actor_id)
+    country = (country_code or "").strip().upper()
+    if not re.fullmatch(r"[A-Z]{2}", country):
+        raise AcquisitionError("valid ISO alpha-2 country code is required")
+    allowed_reasons = {
+        "official_contact_page",
+        "registry_record",
+        "manual_verification",
+        "other",
+    }
+    if reason_code not in allowed_reasons:
+        raise AcquisitionError("structured country override reason is required")
+    parsed_source = urlsplit((source_url or "").strip())
+    if (
+        parsed_source.scheme not in {"http", "https"}
+        or not parsed_source.hostname
+        or parsed_source.username
+        or parsed_source.password
+    ):
+        raise AcquisitionError("country override source URL is required")
+    canonical_source = parsed_source._replace(fragment="").geturl()[:350]
+
+    with _session(app) as session:
+        candidate = CandidateRepository(session).get(candidate_id, tenant_id=tenant_id)
+        if candidate is None:
+            raise AcquisitionError("candidate was not found")
+        candidate.opportunity_country_code = country
+        candidate.country_resolution_status = "confirmed"
+        candidate.eligibility_code = "country_confirmed"
+        candidate.status = "verifying"
+        candidate.decision_reason_code = ""
+        add_event(
+            session,
+            tenant_id=tenant_id,
+            actor_user_id=actor_id,
+            action="candidate.country_overridden",
+            target_type="acquisition_candidate",
+            target_id=candidate.id,
+            safe_summary=(
+                f"Country set to {country}; reason={reason_code}; source_url={canonical_source}"
+            ),
+        )
+        session.commit()
+
+    create_and_enqueue(
+        app,
+        tenant_id=tenant_id,
+        job_type="candidate_assess",
+        payload={"candidate_id": candidate_id},
+    )
+    return candidate
+
+
+def _promote_candidate_in_session(
+    session: Session,
+    *,
+    tenant_id: str,
+    actor_id: str,
+    candidate: AcquisitionCandidate,
+) -> PromotionResult:
+    if candidate.status not in {"eligible", "accepted", "promoted"}:
+        raise AcquisitionError("candidate cannot be promoted from its current status")
+    lead_repo = LeadRepository(session)
+    company_repo = CompanyRepository(session)
+    if candidate.promoted_lead_id:
+        existing_lead = lead_repo.get(candidate.promoted_lead_id, tenant_id=tenant_id)
+        if existing_lead is not None:
+            return PromotionResult(
+                candidate.id,
+                existing_lead.company_id or "",
+                existing_lead.id,
+                False,
+                False,
+            )
+
+    domain = _normalise_domain(candidate.domain or candidate.website)
+    if not domain:
+        raise AcquisitionError("candidate domain is required for promotion")
+    company = company_repo.find_by_domain(domain, tenant_id=tenant_id)
+    created_company = company is None
+    if company is None:
+        company = company_repo.add(
+            Company(
+                name=candidate.company_name,
+                domain=domain,
+                country_code=candidate.opportunity_country_code,
+            ),
+            tenant_id=tenant_id,
+        )
+        session.flush()
+
+    email = _candidate_email(candidate)
+    lead = (
+        lead_repo.find_by_email(email, tenant_id=tenant_id)
+        if email
+        else lead_repo.find_by_acquisition_candidate_id(candidate.id, tenant_id=tenant_id)
+    )
+    created_lead = lead is None
+    if lead is None:
+        assessment = AssessmentRepository(session).latest_for_candidate(
+            candidate.id, tenant_id=tenant_id
+        )
+        breakdown = _json_object(assessment.score_breakdown_json) if assessment else {}
+        lead = lead_repo.add(
+            Lead(
+                company_id=company.id,
+                email=email,
+                website=candidate.website[:500],
+                source="acquisition",
+                status="accepted",
+                stage="new",
+                opportunity_country_code=candidate.opportunity_country_code,
+                fit_score=breakdown.get("fit_score"),
+                intent_score=breakdown.get("intent_score"),
+                data_quality_score=breakdown.get("data_quality_score"),
+                priority_score=candidate.priority_score,
+                priority_band=candidate.priority_band,
+                score_version=assessment.score_version if assessment else "priority-v1",
+                score_explanation_json=(
+                    canonical_json(
+                        {
+                            "assessment_id": assessment.id,
+                            "explanation": assessment.explanation,
+                        }
+                    )
+                    if assessment
+                    else "{}"
+                ),
+                acquisition_candidate_id=candidate.id,
+            ),
+            tenant_id=tenant_id,
+        )
+        session.flush()
+
+    candidate.status = "promoted"
+    candidate.promoted_lead_id = lead.id
+    session.add(
+        Activity(
+            tenant_id=tenant_id,
+            lead_id=lead.id,
+            action="accepted",
+            description="Promoted from acquisition candidate",
+            performed_by=actor_id,
+            metadata_json=canonical_json({"candidate_id": candidate.id}),
+        )
+    )
+    add_event(
+        session,
+        tenant_id=tenant_id,
+        actor_user_id=actor_id,
+        action="candidate.promoted",
+        target_type="acquisition_candidate",
+        target_id=candidate.id,
+        safe_summary="Candidate promoted to CRM lead",
+    )
+    session.flush()
+    return PromotionResult(
+        candidate.id,
+        company.id,
+        lead.id,
+        created_company,
+        created_lead,
+    )
+
+
+def summarize_feedback(app, *, tenant_id: str, mission_id: str) -> MissionSuggestion | None:
+    tenant_id = (tenant_id or "").strip()
+    if not tenant_id:
+        raise AcquisitionError("tenant_id is required")
+    with _session(app) as session:
+        mission = MissionRepository(session).get(mission_id, tenant_id=tenant_id)
+        if mission is None:
+            raise AcquisitionError("mission was not found")
+        candidates = list(
+            CandidateRepository(session).list_for_mission(mission_id, tenant_id=tenant_id)
+        )
+        reviewed = [
+            item
+            for item in candidates
+            if item.decided_at is not None or item.status in {"accepted", "promoted", "rejected"}
+        ]
+        reasons = Counter(
+            item.decision_reason_code
+            for item in reviewed
+            if item.status == "rejected" and item.decision_reason_code
+        )
+        for reason, count in reasons.most_common():
+            if count >= 5 or (reviewed and count / len(reviewed) >= 0.30):
+                return _get_or_add_suggestion(
+                    session,
+                    tenant_id=tenant_id,
+                    mission_id=mission_id,
+                    suggestion_type="add_exclusion",
+                    reason_codes=[reason],
+                    sample_size=count,
+                    proposed_change={
+                        "operation": "add_exclusion",
+                        "reason_code": reason,
+                    },
+                )
+
+        accepted_buyer_types = Counter()
+        for item in reviewed:
+            if item.status not in {"accepted", "promoted"}:
+                continue
+            buyer_type = str(_json_object(item.observed_facts_json).get("buyer_type", ""))
+            if buyer_type:
+                accepted_buyer_types[buyer_type] += 1
+        for buyer_type, count in accepted_buyer_types.most_common():
+            if count >= 10:
+                return _get_or_add_suggestion(
+                    session,
+                    tenant_id=tenant_id,
+                    mission_id=mission_id,
+                    suggestion_type="prefer_buyer_type",
+                    reason_codes=[buyer_type],
+                    sample_size=count,
+                    proposed_change={
+                        "operation": "prefer_buyer_type",
+                        "buyer_type": buyer_type,
+                    },
+                )
+
+        scored = [item for item in candidates if item.priority_score is not None]
+        if len(scored) >= 30:
+            return _get_or_add_suggestion(
+                session,
+                tenant_id=tenant_id,
+                mission_id=mission_id,
+                suggestion_type="score_weight_review",
+                reason_codes=["review_outcomes_available"],
+                sample_size=len(scored),
+                proposed_change={"operation": "review_score_weights"},
+            )
+        return None
+
+
+def _get_or_add_suggestion(
+    session: Session,
+    *,
+    tenant_id: str,
+    mission_id: str,
+    suggestion_type: str,
+    reason_codes: list[str],
+    sample_size: int,
+    proposed_change: dict[str, Any],
+) -> MissionSuggestion:
+    bucket = max(1, sample_size // 5)
+    key = ":".join([mission_id, suggestion_type, ",".join(sorted(reason_codes)), str(bucket)])
+    repo = SuggestionRepository(session)
+    existing = repo.find_by_dedupe_key(key, tenant_id=tenant_id)
+    if existing is not None:
+        return existing
+    suggestion = repo.add(
+        MissionSuggestion(
+            mission_id=mission_id,
+            suggestion_type=suggestion_type,
+            reason_codes_json=canonical_json(sorted(reason_codes)),
+            sample_size=sample_size,
+            proposed_change_json=canonical_json(proposed_change),
+            status="proposed",
+            dedupe_key=key,
+        ),
+        tenant_id=tenant_id,
+    )
+    session.commit()
+    return suggestion
+
+
+def apply_suggestion(app, *, tenant_id: str, actor_id: str, suggestion_id: str) -> str:
+    tenant_id, actor_id = _require_identity(tenant_id, actor_id)
+    with _session(app) as session:
+        suggestion = session.scalar(
+            select(MissionSuggestion).where(
+                MissionSuggestion.id == suggestion_id,
+                MissionSuggestion.tenant_id == tenant_id,
+            )
+        )
+        if suggestion is None:
+            raise AcquisitionError("suggestion was not found")
+        if suggestion.status == "applied" and suggestion.applied_profile_version:
+            return suggestion.applied_profile_version
+        if suggestion.status != "proposed":
+            raise AcquisitionError("suggestion cannot be applied from its current status")
+        mission = MissionRepository(session).get(suggestion.mission_id, tenant_id=tenant_id)
+        if mission is None:
+            raise AcquisitionError("mission was not found")
+        proposal = _json_object(suggestion.proposed_change_json)
+        original_proposal = json.loads(canonical_json(proposal))
+        next_profile = _json_object(mission.target_profile_json)
+        operation = original_proposal.get("operation")
+        if operation == "add_exclusion":
+            reasons = list(next_profile.get("feedback_exclusion_reason_codes", []))
+            reason = str(original_proposal.get("reason_code", ""))
+            next_profile["feedback_exclusion_reason_codes"] = list(
+                dict.fromkeys([*reasons, reason])
+            )
+        elif operation == "prefer_buyer_type":
+            buyer_type = str(original_proposal.get("buyer_type", ""))
+            buyers = [str(item) for item in next_profile.get("buyer_types", [])]
+            next_profile["buyer_types"] = list(dict.fromkeys([buyer_type, *buyers]))
+        elif operation == "review_score_weights":
+            next_profile["score_weight_review_required"] = True
+        version_payload = {
+            "base_mission_id": mission.id,
+            "base_target_profile": _json_object(mission.target_profile_json),
+            "target_profile": next_profile,
+            "proposed_change": original_proposal,
+            "score_version": "priority-v1",
+        }
+        digest = hashlib.sha256(canonical_json(version_payload).encode("utf-8")).hexdigest()
+        version = f"target-profile-{digest[:12]}"
+        proposal["applied_version_json"] = version_payload
+        suggestion.proposed_change_json = canonical_json(proposal)
+        suggestion.applied_profile_version = version
+        suggestion.status = "applied"
+        add_event(
+            session,
+            tenant_id=tenant_id,
+            actor_user_id=actor_id,
+            action="mission.suggestion_applied",
+            target_type="mission_suggestion",
+            target_id=suggestion.id,
+            safe_summary="Feedback suggestion applied as a new profile version",
+        )
+        session.commit()
+        return version
+
+
+def record_mission_cost(
+    app,
+    *,
+    tenant_id: str,
+    mission_id: str,
+    provider: str,
+    requests: int = 0,
+    tokens: int | None = None,
+    pages: int | None = None,
+    estimated_cost: float | None = None,
+    duration_ms: int = 0,
+) -> None:
+    with _session(app) as session:
+        mission = MissionRepository(session).get(mission_id, tenant_id=tenant_id)
+        if mission is None:
+            raise AcquisitionError("mission was not found")
+        summary = _json_object(mission.cost_summary_json)
+        providers = summary.setdefault("providers", {})
+        current = providers.setdefault(
+            provider,
+            {
+                "requests": 0,
+                "tokens": None,
+                "pages": None,
+                "estimated_cost": None,
+                "duration_ms": 0,
+            },
+        )
+        current["requests"] += requests
+        current["duration_ms"] += duration_ms
+        current["tokens"] = _sum_optional(current.get("tokens"), tokens)
+        current["pages"] = _sum_optional(current.get("pages"), pages)
+        current["estimated_cost"] = _sum_optional(current.get("estimated_cost"), estimated_cost)
+        mission.cost_summary_json = canonical_json(summary)
+        session.commit()
+
+
+def mission_retrospective_payload(
+    candidates: list[AcquisitionCandidate], *, failed_job_count: int
+) -> dict[str, Any]:
+    rejected = Counter(
+        item.decision_reason_code or item.eligibility_code
+        for item in candidates
+        if item.status == "rejected"
+    )
+    return {
+        "discovered": len(candidates),
+        "eligible": sum(item.status == "eligible" for item in candidates),
+        "needs_evidence": sum(item.status == "needs_evidence" for item in candidates),
+        "rejected": sum(item.status == "rejected" for item in candidates),
+        "rejected_by_reason": dict(sorted(rejected.items())),
+        "accepted": sum(item.status in {"accepted", "promoted"} for item in candidates),
+        "contactable": sum(bool(_candidate_email(item)) for item in candidates),
+        "partial_failures": failed_job_count,
+        "partial_success": bool(
+            failed_job_count and any(item.status != "rejected" for item in candidates)
+        ),
+        "candidate_count": len(candidates),
+    }
+
+
+def _assess_candidate_in_session(
+    session: Session,
+    *,
+    app,
+    candidate: AcquisitionCandidate,
+    mission: AcquisitionMission,
+    tenant_id: str,
+) -> None:
+    observed = _json_object(candidate.observed_facts_json)
+    contact = _json_object(candidate.contact_json)
+    target = _json_object(mission.target_profile_json)
+    countries = {str(item).upper() for item in target.get("country_codes", [])}
+    country_status = candidate.country_resolution_status
+    gate_country = (
+        "mismatch"
+        if country_status == "confirmed"
+        and countries
+        and candidate.opportunity_country_code not in countries
+        else country_status
+    )
+    buyer_type = str(observed.get("buyer_type", "")).lower()
+    expected_buyers = {str(item).lower() for item in target.get("buyer_types", [])}
+    buyer_match = not buyer_type or not expected_buyers or buyer_type in expected_buyers
+    product_terms = list(observed.get("product_terms", []))
+    claims = list(observed.get("claims", []))
+    paths = list(contact.get("paths", []))
+    if contact.get("email"):
+        paths.append(str(contact["email"]))
+    combined = " ".join(
+        [candidate.company_name, buyer_type, *map(str, product_terms), json.dumps(claims)]
+    ).lower()
+    excluded = any(str(term).lower() in combined for term in target.get("exclude_terms", []))
+    gate = evaluate_gate(
+        EligibilityFacts(
+            country_status=gate_country,
+            buyer_type_match=buyer_match,
+            excluded_business=excluded,
+            independent_identity=bool(candidate.company_name and candidate.domain),
+            product_evidence=bool(product_terms or claims),
+            contact_path=bool(paths),
+        )
+    )
+    evidence = list(
+        EvidenceRepository(session).list_for_candidate(candidate.id, tenant_id=tenant_id)
+    )
+    trust = {"A": 100, "B": 80, "C": 60, "D": 40, "E": 20}
+    best_trust = max((trust.get(item.trust_tier, 0) for item in evidence), default=0)
+    score_input = ScoreInput(
+        product_relevance=85 if product_terms else None,
+        buyer_role=85 if buyer_type and buyer_match else (0 if buyer_type else None),
+        country_match=(
+            100 if gate_country == "confirmed" else (0 if gate_country == "mismatch" else None)
+        ),
+        company_size=None,
+        industry_match=70 if product_terms else None,
+        direct_purchase=None,
+        recent_activity=None,
+        competitor_signal=None,
+        signal_recency=None,
+        identity_quality=90 if candidate.company_name and candidate.domain else None,
+        source_trust=best_trust or None,
+        contactability=80 if paths else None,
+        independent_evidence=80 if len(evidence) >= 2 else (50 if evidence else None),
+        data_recency=90 if evidence else None,
+    )
+    score = score_candidate(score_input)
+    bundle_hash = hashlib.sha256(
+        canonical_json(
+            sorted(
+                (item.canonical_url, item.content_hash, item.validation_status) for item in evidence
+            )
+        ).encode("utf-8")
+    ).hexdigest()
+    model_id = str(app.config.get("MIMO_MODEL", "mimo-v2.5"))
+    assessments = AssessmentRepository(session)
+    if (
+        assessments.find_input_version(
+            candidate.id,
+            bundle_hash,
+            "eligibility-v1",
+            "priority-v1",
+            "company-extract-v1",
+            model_id,
+            tenant_id=tenant_id,
+        )
+        is None
+    ):
+        assessments.add(
+            CandidateAssessment(
+                candidate_id=candidate.id,
+                evidence_bundle_hash=bundle_hash,
+                policy_version="eligibility-v1",
+                score_version="priority-v1",
+                prompt_version="company-extract-v1",
+                model_provider="mimo",
+                model_id=model_id,
+                input_json=canonical_json(score_input.__dict__),
+                hard_gate_json=canonical_json(gate.__dict__),
+                score_breakdown_json=canonical_json(score.__dict__),
+                signal_coverage=score.signal_coverage,
+                priority_mode=score.priority_mode,
+                explanation="Deterministic evidence-aware assessment",
+            ),
+            tenant_id=tenant_id,
+        )
+    if candidate.status not in {"accepted", "promoted", "rejected"}:
+        candidate.status = gate.disposition
+        candidate.eligibility_code = gate.reason_codes[0] if gate.reason_codes else "eligible"
+    candidate.priority_score = score.priority_score
+    candidate.priority_band = score.priority_band
+    candidate.signal_coverage = score.signal_coverage
+    candidate.ai_confidence = score.data_quality_score or 0
+
+
+def _apply_extracted_facts(
+    candidate: AcquisitionCandidate,
+    facts: ExtractedCompanyFacts,
+    final_url: str,
+) -> None:
+    candidate.company_name = facts.company_name
+    candidate.domain = _normalise_domain(facts.canonical_domain)
+    candidate.website = final_url
+    candidate.hq_country_code = facts.hq_country_code
+    candidate.opportunity_country_code = facts.opportunity_country_code
+    candidate.country_resolution_status = (
+        "confirmed" if facts.opportunity_country_code else "unknown"
+    )
+    emails = [path.removeprefix("mailto:") for path in facts.contact_paths if "@" in path]
+    candidate.contact_json = canonical_json(
+        {"paths": facts.contact_paths, "email": emails[0] if emails else ""}
+    )
+    candidate.observed_facts_json = canonical_json(
+        {
+            "buyer_type": facts.buyer_type,
+            "product_terms": facts.product_terms,
+            "claims": [claim.model_dump(mode="json") for claim in facts.observed_claims],
+        }
+    )
+    candidate.inferences_json = canonical_json(facts.inferences)
+    candidate.unknowns_json = canonical_json(facts.unknowns)
+
+
+def _audit_candidate(
+    session: Session,
+    candidate: AcquisitionCandidate,
+    actor_id: str,
+    action: str,
+) -> None:
+    add_event(
+        session,
+        tenant_id=candidate.tenant_id,
+        actor_user_id=actor_id,
+        action=action,
+        target_type="acquisition_candidate",
+        target_id=candidate.id,
+        safe_summary=action.replace(".", " "),
+    )
+
+
+def _candidate_email(candidate: AcquisitionCandidate) -> str:
+    contact = _json_object(candidate.contact_json)
+    direct = str(contact.get("email", "")).strip().lower()
+    if _looks_like_email(direct):
+        return direct.removeprefix("mailto:")
+    for value in contact.get("paths", []):
+        candidate_value = str(value).strip().lower().removeprefix("mailto:")
+        match = re.search(r"[a-z0-9.!#$%&'*+/=?^_`{|}~-]+@[a-z0-9.-]+", candidate_value)
+        if match:
+            return match.group(0)
+    return ""
+
+
+def _looks_like_email(value: str) -> bool:
+    return "@" in value and " " not in value
+
+
+def _normalise_domain(value: str) -> str:
+    raw = (value or "").strip()
+    if not raw:
+        return ""
+    parsed = urlsplit(raw if "://" in raw else f"https://{raw}")
+    host = (parsed.hostname or "").rstrip(".").lower()
+    if host.startswith("www."):
+        host = host[4:]
+    try:
+        host = host.encode("idna").decode("ascii")
+    except UnicodeError:
+        return ""
+    labels = host.split(".")
+    common_two_level_suffixes = {
+        "co.uk",
+        "com.au",
+        "com.br",
+        "com.cn",
+        "com.co",
+        "com.mx",
+        "co.jp",
+        "co.in",
+    }
+    if len(labels) >= 3 and ".".join(labels[-2:]) in common_two_level_suffixes:
+        return ".".join(labels[-3:])
+    return ".".join(labels[-2:]) if len(labels) >= 2 else host
+
+
+def _json_object(value: str) -> dict[str, Any]:
+    try:
+        parsed = json.loads(value or "{}")
+    except (TypeError, json.JSONDecodeError):
+        return {}
+    return parsed if isinstance(parsed, dict) else {}
+
+
+def _version_number(value: str) -> int:
+    match = re.fullmatch(r"v(\d+)", value or "")
+    return int(match.group(1)) if match else 0
+
+
+def _sum_optional(current, added):
+    if added is None:
+        return current
+    return (current or 0) + added

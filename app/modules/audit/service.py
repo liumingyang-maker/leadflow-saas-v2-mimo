@@ -38,7 +38,8 @@ def record_event(
     ip = request.remote_addr or "" if hasattr(request, "remote_addr") else ""
     ua = request.headers.get("User-Agent", "") if hasattr(request, "headers") else ""
     with _session(app) as session:
-        event = AuditEvent(
+        event = add_event(
+            session,
             tenant_id=tenant_id,
             actor_user_id=actor_user_id,
             actor_admin_id=actor_admin_id,
@@ -46,13 +47,44 @@ def record_event(
             action=action,
             target_type=target_type,
             target_id=target_id,
-            ip_hash=_hash(ip),
-            user_agent_hash=_hash(ua),
-            safe_summary=safe_summary[:500],
+            safe_summary=safe_summary,
+            ip=ip,
+            user_agent=ua,
         )
-        session.add(event)
         session.commit()
         return event
+
+
+def add_event(
+    session: Session,
+    *,
+    tenant_id: str = "",
+    actor_user_id: str = "",
+    actor_admin_id: str = "",
+    actor_type: str = "user",
+    action: str,
+    target_type: str = "",
+    target_id: str = "",
+    safe_summary: str = "",
+    ip: str = "",
+    user_agent: str = "",
+) -> AuditEvent:
+    """Append an audit event inside the caller's transaction."""
+
+    event = AuditEvent(
+        tenant_id=tenant_id,
+        actor_user_id=actor_user_id,
+        actor_admin_id=actor_admin_id,
+        actor_type=actor_type,
+        action=action,
+        target_type=target_type,
+        target_id=target_id,
+        ip_hash=_hash(ip),
+        user_agent_hash=_hash(user_agent),
+        safe_summary=safe_summary[:500],
+    )
+    session.add(event)
+    return event
 
 
 def list_events(app: Flask, *, tenant_id: str = "", limit: int = 100) -> Sequence[AuditEvent]:

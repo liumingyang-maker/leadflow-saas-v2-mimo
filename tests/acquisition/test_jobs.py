@@ -323,6 +323,11 @@ def test_discovery_verify_and_assess_handlers_preserve_evidence_boundary(
         assert candidate.priority_score is not None
         assert session.scalar(select(func.count()).select_from(CandidateEvidence)) == 2
         assert session.scalar(select(func.count()).select_from(CandidateAssessment)) == 1
+        mission = session.get(AcquisitionMission, mission_id)
+        costs = json.loads(mission.cost_summary_json)["providers"]
+        assert costs["mimo"]["requests"] == 2
+        assert costs["mimo"]["estimated_cost"] is None
+        assert costs["static_fetcher"]["pages"] == 1
 
 
 def test_worker_does_not_retry_invalid_acquisition_payload(acquisition_app, monkeypatch):

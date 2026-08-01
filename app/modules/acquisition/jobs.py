@@ -6,6 +6,7 @@ import argparse
 import hashlib
 import json
 from datetime import UTC, datetime
+from time import perf_counter
 from typing import Any
 from urllib.parse import urlsplit
 
@@ -133,12 +134,15 @@ def handle_acquisition_plan(app, job: Job, payload: dict[str, Any]) -> dict[str,
         product_summary = product.summary
 
     _heartbeat(app, job, 10, "Planning country research")
+    started = perf_counter()
     try:
         provider = build_mimo_provider(app, tenant_id=tenant_id)
         plan = provider.plan_mission(product_summary=product_summary, target_profile=target_profile)
     except ProviderError as exc:
+        _record_cost(app, tenant_id, mission_id, "mimo", started, requests=1)
         _provider_failure(app, tenant_id, exc.code)
         raise AcquisitionJobError(exc.code, exc.safe_summary, retryable=exc.retryable) from None
+    _record_cost(app, tenant_id, mission_id, "mimo", started, requests=1)
     _provider_success(app, tenant_id)
     _heartbeat(app, job, 60, "Saving research plan")
 
@@ -194,13 +198,16 @@ def handle_web_discovery(app, job: Job, payload: dict[str, Any]) -> dict[str, An
         max_verify = int(budget.get("max_verify", app.config.get("ACQUISITION_MAX_VERIFY", 10)))
 
     _heartbeat(app, job, 10, f"Searching {country_code}")
+    started = perf_counter()
     try:
         hits = build_mimo_provider(app, tenant_id=tenant_id).discover_companies(
             country_plan=country_plan
         )
     except ProviderError as exc:
+        _record_cost(app, tenant_id, mission_id, "mimo", started, requests=1)
         _provider_failure(app, tenant_id, exc.code)
         raise AcquisitionJobError(exc.code, exc.safe_summary, retryable=exc.retryable) from None
+    _record_cost(app, tenant_id, mission_id, "mimo", started, requests=1)
     _provider_success(app, tenant_id)
 
     created = 0
@@ -296,21 +303,33 @@ def handle_website_verify(app, job: Job, payload: dict[str, Any]) -> dict[str, A
                 "candidate_not_found", "Candidate was not found", retryable=False
             )
         website = candidate.website
+        mission_id = candidate.mission_id
         if not website:
             raise AcquisitionJobError(
                 "source_unreachable", "Candidate website is unavailable", retryable=False
             )
 
     _heartbeat(app, job, 10, "Fetching public website evidence")
+    started = perf_counter()
     try:
         snapshot = StaticFetcher.from_app(app).fetch(website)
     except FetchError as exc:
+        _record_cost(app, tenant_id, mission_id, "static_fetcher", started, requests=1)
         _save_error_evidence(app, job, candidate_id, website, exc.code)
         raise AcquisitionJobError(
             "source_unreachable",
             "Candidate website could not be verified",
             retryable=exc.code in {"source_timeout", "source_unreachable"},
         ) from None
+    _record_cost(
+        app,
+        tenant_id,
+        mission_id,
+        "static_fetcher",
+        started,
+        requests=1,
+        pages=1,
+    )
 
     if snapshot.detected_prompt_injection:
         _save_snapshot_evidence(
@@ -340,11 +359,14 @@ def handle_website_verify(app, job: Job, payload: dict[str, Any]) -> dict[str, A
         source_type="official_website",
     )
     _heartbeat(app, job, 55, "Extracting company facts")
+    started = perf_counter()
     try:
         facts = build_mimo_provider(app, tenant_id=tenant_id).extract(snapshot)
     except ProviderError as exc:
+        _record_cost(app, tenant_id, mission_id, "mimo", started, requests=1)
         _provider_failure(app, tenant_id, exc.code)
         raise AcquisitionJobError(exc.code, exc.safe_summary, retryable=exc.retryable) from None
+    _record_cost(app, tenant_id, mission_id, "mimo", started, requests=1)
     _provider_success(app, tenant_id)
 
     with Session(get_engine(app)) as session:
@@ -565,13 +587,11 @@ def reconcile_missions(app, *, tenant_id: str | None = None, now: datetime) -> i
             failed_count = sum(item.status in {"failed", "cancelled"} for item in mission_jobs)
             next_status = "completed" if usable else "failed"
             partial = bool(usable and failed_count)
+            from app.modules.acquisition.service import mission_retrospective_payload
+
             retrospective = _json_object(mission.retrospective_json)
             retrospective.update(
-                {
-                    "partial_success": partial,
-                    "failed_job_count": failed_count,
-                    "candidate_count": len(mission_candidates),
-                }
+                mission_retrospective_payload(mission_candidates, failed_job_count=failed_count)
             )
             mission.retrospective_json = canonical_json(retrospective)
             mission.status = next_status
@@ -706,6 +726,31 @@ def _canonical_domain(url: str) -> str:
 
 def _hash_json(value: object) -> str:
     return hashlib.sha256(canonical_json(value).encode("utf-8")).hexdigest()
+
+
+def _record_cost(
+    app,
+    tenant_id: str,
+    mission_id: str,
+    provider: str,
+    started: float,
+    *,
+    requests: int,
+    pages: int | None = None,
+) -> None:
+    from app.modules.acquisition.service import record_mission_cost
+
+    record_mission_cost(
+        app,
+        tenant_id=tenant_id,
+        mission_id=mission_id,
+        provider=provider,
+        requests=requests,
+        pages=pages,
+        tokens=None,
+        estimated_cost=None,
+        duration_ms=max(0, round((perf_counter() - started) * 1000)),
+    )
 
 
 def _json_object(value: str) -> dict[str, Any]:

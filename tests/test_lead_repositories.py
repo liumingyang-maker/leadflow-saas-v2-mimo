@@ -75,6 +75,22 @@ def test_lead_repository_crud(monkeypatch) -> None:
         assert repo.get(lead.id, tenant_id="t1") is None
 
 
+def test_lead_repository_finds_exact_acquisition_candidate(monkeypatch) -> None:
+    engine = _engine(monkeypatch)
+    from app.modules.leads.models import Lead
+    from app.modules.leads.repository import LeadRepository
+
+    with Session(engine) as session:
+        repo = LeadRepository(session)
+        lead = repo.add(
+            Lead(email="", source="acquisition", acquisition_candidate_id="candidate-1"),
+            tenant_id="t1",
+        )
+        session.commit()
+        assert repo.find_by_acquisition_candidate_id("candidate-1", tenant_id="t1").id == lead.id
+        assert repo.find_by_acquisition_candidate_id("candidate-1", tenant_id="t2") is None
+
+
 def test_lead_repository_rejects_cross_tenant_update(monkeypatch) -> None:
     engine = _engine(monkeypatch)
     from app.modules.leads.models import Lead
