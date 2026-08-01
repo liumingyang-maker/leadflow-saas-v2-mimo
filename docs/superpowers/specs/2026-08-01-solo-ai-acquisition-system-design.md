@@ -1,6 +1,6 @@
 # LeadFlow 单人版 AI 获客系统完整技术方案
 
-状态：产品方向已确认，等待按实施计划执行
+状态：产品方向与单人版收敛方案已确认，等待书面设计复核后同步实施计划
 
 日期：2026-08-01
 
@@ -15,13 +15,13 @@
 LeadFlow 不应继续以“增加更多采集按钮”为核心，也不应把大模型当成可以直接操作 CRM
 和自动群发的全权代理。推荐把产品核心升级为 **AI 获客任务（Acquisition Mission）**：
 
-1. 用户只描述产品、目标国家、理想客户和预算；
+1. 用户只需选择产品、目标国家和买家类型；语言、排除词、渠道和预算由默认值或高级设置承担；
 2. AI 规划查询词、语言、渠道组合和验证方法；
 3. 渠道适配器只负责取得候选及原始来源；
 4. 系统保存可追溯证据，用硬规则验证国家、业务类型、产品相关性和联系方式；
 5. AI 负责解释、排序、生成个性化草稿，但不能自动确认事实；
 6. 用户审核候选和首次发送；
-7. 回复与审核结果反向改进下一次任务。
+7. 回复与审核结果形成结构化复盘和优化建议，由用户确认后改进下一次任务。
 
 推荐的首期渠道不是最多，而是以下四类：
 
@@ -38,6 +38,7 @@ LeadFlow 不应继续以“增加更多采集按钮”为核心，也不应把�
 - **竞品雷达是正式获客模块。** 它监控竞品、经销网络和市场变化，并把经过证据验证的
   经销商转为 Candidate；不照搬旧版脆弱抓取实现。
 - **旧版大量网页爬虫不恢复为核心能力。** 平台无官方/授权 API 时，只允许人工辅助或研究性使用。
+- **静态 HTTP 取证是网页研究主路径，受控 Browser MCP 是按需增强。** 浏览器不可用时不得阻断核心获客闭环。
 - **不做全自动发送。** AI 贯穿全流程，但外发、事实承诺、候选接受仍有人工门禁。
 
 ## 2. 产品目标与边界
@@ -319,12 +320,17 @@ P0 的网页策略应尽量简单：
 
 ```mermaid
 flowchart TD
-    A["Approved Product Knowledge\n驰象官网与人工确认事实"] --> B["Acquisition Mission\n国家/语言/买家/预算"]
+    A["Approved Product Knowledge\n驰象官网与人工确认事实"] --> B["找客户任务\n产品/国家/买家类型"]
     B --> C["AI Planner\n生成查询与渠道计划"]
     C --> D["Channel Adapters\nWeb / Radar / Places / YouTube / Import"]
     D --> E["Persistent Candidates\n先保存公司与信号"]
-    E --> F["Evidence Verification\n官网/地区/产品/买家类型"]
-    F --> G{"Hard Eligibility Gates"}
+    E --> F["Static HTTP Evidence\n公开静态网页主路径"]
+    F --> Q{"确需动态页面?"}
+    Q -->|否| R["Evidence Verification\n官网/地区/产品/买家类型"]
+    Q -->|是且策略允许| S["Isolated Browser Worker\n受控只读增强"]
+    Q -->|不可用或禁止| T["Needs Evidence\n保留已有结果"]
+    S --> R
+    R --> G{"Hard Eligibility Gates"}
     G -->|不通过| H["Rejected with Reason"]
     G -->|通过| I["AI Ranking & Explanation"]
     I --> J["Human Review Queue"]
@@ -340,14 +346,15 @@ flowchart TD
 
 ### 8.1 创建任务
 
-用户填写：
+首屏只有三个必填字段：
 
-- 产品族和本次主推产品；
-- 目标国家/地区和语言；
-- 买家类型，例如进口商、经销商、批发商、装配厂或维修网络；
-- 明确排除项，例如纯电动车品牌、终端消费者、供应商和中国出口商；
-- 最大候选数、最大搜索次数、时间和预算；
-- 允许使用的渠道。
+- 产品：从已批准的产品知识中选择，可默认上一次使用项；
+- 目标国家：ISO 国家下拉，可多选，但执行时拆成单国 run；
+- 买家类型：进口商、经销商、批发商、装配厂或维修网络等预设项。
+
+语言由国家默认值推导；行业、公司规模、包含词、排除词、渠道、候选数、搜索次数、时间和费用预算
+全部放入折叠的“高级设置”。用户也可以输入自然语言目标，由 AI 解析为上述字段，但必须先展示解析结果并
+由用户确认，不能解析后立即运行。
 
 AI 返回可编辑计划：目标假设、查询词、当地语言同义词、渠道顺序、验证标准和停止条件。
 计划只是草稿，业务服务会校验预算和允许渠道。
@@ -384,7 +391,7 @@ class DiscoveryCandidate:
 6. 检查买家类型和排除项；
 7. AI 生成结构化说明；
 8. 独立规则验证 AI 输出与引用是否一致；
-9. 通过后进入人工队列。
+9. 通过后进入人工队列；国家未知或证据冲突时进入“待确认国家”，不直接拒绝。
 
 ### 8.4 晋升 Lead
 
@@ -408,6 +415,18 @@ AI 草稿只能引用产品知识库中的事实 ID，以及候选证据中的�
 
 首封、批量发送和任何包含商业承诺的内容必须人工确认。回复可以由 AI 分类和建议下一步，
 但报价、合同、付款和承诺仍由用户决定。
+
+### 8.6 反馈闭环
+
+每次接受、拒绝、补证、联系、积极回复、消极回复、无回复、成交和流失都保存结构化结果。系统自动
+聚合模式，但首期只生成建议，不自动改变搜索或评分策略：
+
+- 同一拒绝原因累计至少 5 次，或占本次已审核候选 30% 以上时，建议增加排除条件；
+- 同一买家类型累计至少 10 次被接受时，建议提高下次任务中的偏好；
+- 至少有 30 个带明确结果的候选后，才允许提出评分权重调整建议；
+- 应用建议时复制为新的 Mission/Profile/Score Version，并保留旧版本与撤回入口；
+- 自动统计和提出建议不需要确认，应用排除词、买家偏好或权重必须由用户确认；
+- 系统不得根据少量拒绝自动拒绝未来候选，也不得因为反馈自动发送外联。
 
 ## 9. 模块与接口设计
 
@@ -491,6 +510,7 @@ class OutreachDrafter(Protocol):
 
 - `AI_RESEARCH`
 - `WEBSITE_EVIDENCE_FETCH`
+- `BROWSER_RESEARCH`
 - `YOUTUBE_DISCOVERY`
 - `PLACES_DISCOVERY`
 - `CONTACT_ENRICHMENT`
@@ -498,8 +518,9 @@ class OutreachDrafter(Protocol):
 - `COMPETITOR_RADAR`
 
 真实发送继续复用已有 `OUTREACH_SEND`，不能以“AI 草稿能力已开启”推导发送权限。内部默认只开启
-Phase 1 所需的 `AI_RESEARCH`、`WEBSITE_EVIDENCE_FETCH` 和
-`AI_OUTREACH_DRAFT`；其他能力随对应阶段单独启用。
+Phase 1A 所需的 `AI_RESEARCH`、`WEBSITE_EVIDENCE_FETCH` 和 `AI_OUTREACH_DRAFT`；
+`BROWSER_RESEARCH` 默认关闭，只在 Phase 1B 的运行时、策略和恢复门禁全部就绪后显式启用；其他能力随
+对应阶段单独启用。
 
 ## 10. 数据模型
 
@@ -515,6 +536,7 @@ Phase 1 所需的 `AI_RESEARCH`、`WEBSITE_EVIDENCE_FETCH` 和
 | `channel_policy_json` | 允许渠道和顺序 |
 | `budget_json` | 搜索次数、候选数、token/费用上限 |
 | `plan_json` | 用户批准后的 AI 计划 |
+| `cost_summary_json`, `retrospective_json` | 任务成本、审核原因与结果复盘快照 |
 | `created_by`, timestamps | 审计 |
 
 ### 10.2 `acquisition_candidates`
@@ -524,14 +546,17 @@ Phase 1 所需的 `AI_RESEARCH`、`WEBSITE_EVIDENCE_FETCH` 和
 | `id`, `tenant_id`, `mission_id` | 归属 |
 | `entity_type` | `company/person/intent_signal` |
 | `status` | `discovered/verifying/needs_evidence/eligible/rejected/accepted/promoted` |
-| `company_name`, `domain`, `website`, `country` | 标准化企业字段 |
+| `company_name`, `domain`, `website` | 标准化企业字段 |
+| `hq_country_code`, `opportunity_country_code`, `contact_country_code` | 总部、机会市场和联系人国家，含义不得混用 |
+| `country_resolution_status` | `unknown/confirmed/conflicting` |
 | `source_channel`, `source_provider` | 例如 `competitor_radar/mimo`，不依赖自由文本 notes |
 | `contact_json` | 已公开的联系点，首期保持小型 JSON |
 | `observed_facts_json` | 只存来源观察事实 |
 | `inferences_json` | AI 推断，与事实分开 |
 | `unknowns_json` | 缺失项 |
 | `eligibility_code` | 硬门禁结果 |
-| `quality_score`, `ai_confidence` | 分离规则质量分与模型自信 |
+| `priority_score`, `priority_band`, `signal_coverage`, `ai_confidence` | 分离业务评分、证据覆盖和模型自信 |
+| `decision_reason_code`, `decision_note`, `decided_at` | 结构化人工审核反馈 |
 | `dedupe_key` | `tenant + canonical_domain` 等稳定键 |
 | `promoted_lead_id` | 晋升后关联 Lead |
 | timestamps | 审计与过期处理 |
@@ -568,8 +593,40 @@ Phase 1 所需的 `AI_RESEARCH`、`WEBSITE_EVIDENCE_FETCH` 和
 ### 10.5 `candidate_assessments`
 
 保留每次规则/模型版本的审核结果：`candidate_id`、`policy_version`、`prompt_version`、
-`model_provider`、`model_id`、`hard_gate_json`、`score_breakdown_json`、`explanation`、时间戳。
+`model_provider`、`model_id`、`evidence_bundle_hash`、`input_json`、`hard_gate_json`、
+`score_breakdown_json`、`signal_coverage`、`priority_mode`、`explanation`、时间戳。
 这对比较 MiMo 与未来其他模型非常重要。
+
+Assessment 幂等键至少包含：
+
+```text
+tenant_id + candidate_id + evidence_bundle_hash + policy_version
+          + score_version + prompt_version + model_id
+```
+
+### 10.6 `mission_suggestions`
+
+保存半自动反馈建议，而不是直接改写 Mission：`tenant_id`、`mission_id`、`suggestion_type`、
+`reason_codes_json`、`sample_size`、`proposed_change_json`、`status=proposed/applied/dismissed`、
+`applied_profile_version` 和时间戳。建议可重复计算，但应用动作必须幂等并记录操作者。
+
+### 10.7 `browser_site_policies`
+
+Phase 1B 使用。租户级域名策略保存 `canonical_domain`、`access_mode`、条款/robots 复核状态、允许的
+origin/path、页数/时间/延迟预算、批准人和复核时间。系统级 blocked 域名由代码维护，优先级高于数据库，
+不能通过普通设置覆盖。
+
+### 10.8 `browser_research_runs`
+
+一行对应一个实际浏览器会话，关联 Mission/Candidate/Job，保存起始/最终 URL 的安全版本、域名、策略
+决定、页数、工具次数、字节数、状态、错误码、`heartbeat_at`、lease、制品目录引用和开始/结束时间。
+状态为 `queued/running/completed/partial/blocked/failed/cancelled`。表不保存 Cookie、完整 HTML、完整
+第三方响应或模型隐藏推理。
+
+普通 Worker 持有 MiMo 会话和业务策略，通过带 run-scoped token 的内部请求/响应通道向 Browser Worker
+发送已经校验的高层只读动作。Browser Worker 只消费最小 run descriptor、执行 allowlist 动作并返回清洗
+结果/受限制品；它不持有数据库和 SecretStore 凭据。MiMo 调用、Evidence 校验与数据库写入由普通
+Worker 完成，避免浏览器进程同时拥有外网浏览、应用数据和密钥权限。
 
 ## 11. 状态机与 Job 设计
 
@@ -595,7 +652,8 @@ discovered -> verifying -> eligible -> accepted -> promoted
                  -> rejected
 ```
 
-`rejected` 必须有机器可统计的原因：
+`rejected` 必须有机器可统计的原因。`country_unknown/country_conflicting` 不属于拒绝原因，而是
+`needs_evidence` 子状态，补证或人工确认后重新进入 `verifying`：
 
 - `wrong_country`
 - `wrong_buyer_type`
@@ -609,7 +667,21 @@ discovered -> verifying -> eligible -> accepted -> promoted
 - `stale_source`
 - `manual_reject`
 
-### 11.3 新 Job 类型
+### 11.3 BrowserRun 状态
+
+```text
+queued -> running -> completed
+             |  |-> partial
+             |  |-> blocked
+             |  |-> failed
+             |  -> cancelled
+             -> queued（仅明确 transient 错误创建新 attempt）
+```
+
+重试不复用旧浏览器上下文；旧 attempt 必须先终止并保留终态。策略拒绝、登录墙、验证码、提示注入、
+预算耗尽和 URL 越界均不得自动重试。
+
+### 11.4 新 Job 类型
 
 建议新增：
 
@@ -632,6 +704,10 @@ discovered -> verifying -> eligible -> accepted -> promoted
 ```text
 tenant_id + mission_id + stage + normalized_input_hash + provider + policy_version
 ```
+
+普通任务进入 `default` 队列；动态页面研究进入独立 `browser` 队列。单人版 Browser Worker 初始并发为
+1，同域并发也为 1。现有通用 Job 失联恢复继续保留，同时增加周期性 reconciler：根据子 Job 的终态
+修正 Mission/BrowserRun，不能只在 Worker 启动时恢复一次。
 
 ## 12. AI 贯穿方式与多模型策略
 
@@ -678,6 +754,11 @@ Offline Evaluator: 可配置第二模型做抽样比较，不参与每条生产�
 
 它们都实现相同职责接口。回退条件只能是 `auth/quota/rate_limit/transient/timeout` 等明确错误，
 不能因为第一个模型给出“不喜欢的答案”就偷偷换模型，避免选择性偏差和重复费用。
+
+“Fallback disabled”只表示不静默切换付费模型，不表示产品整体停止：规划失败时保存 Mission 草稿；联网
+搜索失败时允许现有 SearchProvider、用户 URL 或竞品官网继续；抽取失败时保留 Evidence 并进入人工
+补证；AI 评分失败时仍执行确定性门禁和可计算分项；草稿失败时允许使用已批准变量模板。界面必须显示
+具体降级状态和重试入口，不能把未验证信息包装成正常结果。
 
 ### 12.4 模型选择基准
 
@@ -734,6 +815,7 @@ Offline Evaluator: 可配置第二模型做抽样比较，不参与每条生产�
 以下任一条件失败，不能因为 AI 给了高分而进入推荐队列：
 
 - 国家不符；
+- 国家未知或来源冲突时不通过推荐门禁，但进入 `needs_evidence`，不进入 `rejected`；
 - 明确属于排除业务，例如本任务排除纯电；
 - 是供应商、市场平台或媒体而不是目标买家；
 - 没有独立身份来源；
@@ -743,7 +825,8 @@ Offline Evaluator: 可配置第二模型做抽样比较，不参与每条生产�
 
 ### 14.2 `score-v1` 四类评分
 
-通过门禁后分别计算 Fit、Intent、Data Quality，再合成 Priority：
+通过门禁后分别计算 Fit、Intent、Data Quality，再合成 Priority。评分输入必须标明来源和是否已知；
+未知值使用 `None`，不能用 0 或 50 冒充事实：
 
 | 分数 | 组成 |
 |---|---|
@@ -755,6 +838,11 @@ Offline Evaluator: 可配置第二模型做抽样比较，不参与每条生产�
 等级为 `S >= 85`、`A >= 70`、`B >= 55`、`C < 55`。模型的 `ai_confidence` 单独展示，不参与
 硬门禁或 Priority。初始审核重点可设为 A/S，但阈值和权重只能根据真实接受率、联系率和回复率以新
 score version 调整，不能重写历史 Assessment。
+
+每个分项按已知子信号重新归一化，并计算 `signal_coverage`。Intent 完全未知时，按原权重对 Fit 与
+Data Quality 重新归一化，标记 `priority_mode=fit_quality_provisional_v1`，界面显示“暂无意向信号”，
+不能显示“意向低”。总覆盖不足 60% 时 Priority 仅为暂定，最高不能标为 S。可复现性要求是“相同的
+持久化 ScoreInput 必须得到完全相同的分数”，不是要求重新调用大模型得到逐字一致的抽取结果。
 
 ### 14.3 去重
 
@@ -1093,9 +1181,11 @@ radar_scan
 
 ## 17. 单人版 UI
 
-不增加十几个渠道菜单。核心导航建议为：
+不增加十几个渠道菜单，也不向经营者暴露 Mission Run、Trust Tier、Score Version、BrowserRun、
+Capability 等内部术语。它们只出现在高级详情和调试视图。用户默认看到“找客户任务、正在搜索、
+待审核客户、推荐理由、证据来源、需补充信息、进入客户库”。核心导航建议为：
 
-1. **今日工作台**：待审核候选、待批准草稿、回复和失败任务；
+1. **今日工作台**：唯一主入口，汇总待审核候选、待批准草稿、回复、跟进和失败任务；
 2. **获客任务**：创建任务、查看阶段进度、暂停和复用；
 3. **竞品雷达**：作为获客下的二级入口，展示监控、经销网络和变化机会；
 4. **候选审核**：证据卡、评分、未知项、接受/拒绝；
@@ -1105,22 +1195,35 @@ radar_scan
 
 ### 17.1 创建 Mission
 
-单页表单优先，默认值来自上一次成功任务。高级渠道和预算折叠，避免把用户变成搜索工程师。
+单页表单优先，首屏只显示产品、国家和买家类型三个必填字段。默认值来自产品知识和上一次成功任务；
+语言自动推导，高级 ICP、排除词、渠道和预算折叠，避免把用户变成搜索工程师。
 
-### 17.2 候选卡
+### 17.2 今日工作台
 
-每张卡必须同时显示：
+工作台只回答“现在最值得做什么”，首屏提供真实计数与直接动作：
 
-- 公司、国家、买家类型；
-- 为什么匹配；
-- 观察事实与 AI 推断分栏；
-- 2–3 个最重要证据链接；
-- 未知项和风险；
-- 联系路径；
-- 评分拆解；
-- 接受、拒绝、补充研究。
+- `X` 个客户等待审核：继续审核；
+- `Y` 个回复等待处理：查看回复；
+- `Z` 个任务正在运行或验证：查看进度；
+- 今天到期的跟进：进入 CRM；
+- 失败、超预算或需要补证的任务：查看原因并重试；
+- 创建新的找客户任务。
 
-### 17.3 自动化级别
+成本、Provider 指标和调试日志留在任务详情，不在首页堆叠。现有 `/workbench` 模板作为入口继续使用，
+但必须接入真实查询和空状态，不再只是静态卡片。
+
+### 17.3 候选卡
+
+候选卡按三层渐进披露，避免一次展示所有审计字段：
+
+- 第一层：公司、机会国家、一句话推荐理由、Priority/暂定状态、联系路径、接受/拒绝；
+- 第二层：2–3 个关键证据、观察事实与 AI 推断、评分拆解、未知项和风险、补充研究；
+- 第三层调试：claim IDs、trust tier、content hash、模型、Prompt、评分和策略版本。
+
+批量拒绝必须选择结构化原因。批量接受只允许已通过门禁的候选，单次最多 20 个并显示确认摘要；接受
+只是晋升 CRM，不触发外联。系统不提供批量首发。
+
+### 17.4 自动化级别
 
 单人版只需要三个清晰档位：
 
@@ -1129,6 +1232,18 @@ radar_scan
 | 辅助 | AI 生成计划和草稿，用户逐步触发 |
 | 推荐默认 | 自动研究与验证，用户审核候选和外发 |
 | 高自动化 | 自动运行已批准 Mission，但仍不自动首发/群发 |
+
+### 17.5 通知与移动端
+
+首期提供应用内通知、未读角标和工作台失败提示；任务完成邮件是可选设置，未配置邮件 Provider 时不阻断
+使用。浏览器 Push、短信和微信通知不进入首期。告警只说明发生了什么和下一步，不包含 API Key、完整
+URL query 或联系人敏感内容。
+
+移动端目标是“可审核”，不是完整后台管理：支持工作台、候选第一/第二层、接受、拒绝、补证、拨号和
+打开公开 WhatsApp 链接。Mission 高级设置、证据并排比较、站点策略和调试信息以桌面端为主。
+
+WhatsApp 首期只把明确公开的企业号码规范化为 E.164 并打开 `wa.me`，不自动发送。CSV 导出作为低成本
+增强，默认只导出业务字段和来源，不导出内部调试字段；导出动作 tenant-scoped 且写审计日志。
 
 ## 18. 安全与合规边界
 
@@ -1221,6 +1336,81 @@ partial_success
 
 “每天抓到 1000 条”不作为成功指标。
 
+### 19.4 单人版部署拓扑
+
+开发环境使用 Windows + Docker Desktop/WSL2；需要持续自动运行时沿用现有阿里云 ECS + Docker
+Compose 方案。首期不为了部署方便迁移到新 PaaS，也不引入 Kubernetes。运行单元为：
+
+```text
+web
+redis
+database
+default-worker      # 规划、静态获取、抽取、评分、晋升、草稿
+browser-worker      # 独立 browser 队列，并发 1，可关闭
+scheduler/reconciler
+```
+
+Web 和普通 Worker 镜像不安装浏览器；Browser Worker 使用独立镜像，固定 Node、Playwright MCP 和
+Chromium 版本。SQLite 只允许单写入 Worker；需要多个 Worker 或持续并发任务前必须迁移 PostgreSQL。
+现有 2 vCPU/4 GB 规格可用于不启用浏览器的起步环境；启用浏览器后必须观察峰值内存，发生 OOM 或队列
+持续堆积时优先升级资源，不通过提高并发掩盖问题。
+
+### 19.5 日志与运行追踪
+
+首期不部署 ELK。所有服务向 stdout 输出结构化 JSON，至少包含 `request_id`、`job_id`、`mission_id`、
+`browser_run_id`、`provider`、`stage`、`error_code`、`duration_ms` 和安全的 tenant 标识。不得记录 Key、
+Authorization、Cookie、完整第三方响应或模型隐藏推理。Docker 配置日志轮转；任务详情从持久化 Job、
+BrowserRun 和 AuditEvent 展示业务时间线，数据库不作为无限增长的原始日志仓库。Sentry 可作为后续可选
+错误聚合，不是首期依赖。
+
+### 19.6 备份与保留
+
+沿用现有数据库备份/恢复 Runbook，并增加获客数据边界：
+
+- Candidate、Evidence 元数据、URL、excerpt、hash、Assessment、决策和 Mission 结果保存在数据库；
+- 截图与文本快照写入专用持久化 volume 或对象存储，不写临时 `.runtime` 目录；
+- 截图和临时快照默认保留 30 天，到期由可审计清理 Job 删除；被人工标记为关键证据的制品可延长；
+- 删除制品不删除 Evidence 元数据、URL、hash 和审核历史；
+- 单人版初始目标 RPO 24 小时、RTO 4 小时，每日备份并定期执行恢复演练；
+- Redis 仍是临时队列状态，不作为唯一业务真相。
+
+### 19.7 初始性能目标
+
+以下是首期验收与调优目标，不是公共 SaaS SLA：
+
+| 场景 | 初始目标 |
+|---|---|
+| 创建 Mission 并入队 | < 1 秒 |
+| 首次显示任务进度 | < 5 秒 |
+| 单国家获得 10 个可审核候选 | 中位数 <= 5 分钟，P95 <= 15 分钟 |
+| 正常单人负载队列等待 | <= 60 秒 |
+| 取消任务生效 | <= 30 秒 |
+| BrowserRun | 硬上限 120 秒，达到预算保留部分结果 |
+| 工作台/候选列表 | staging P95 < 1 秒，不含后台研究 |
+
+指标按 `source_channel` 和是否使用浏览器分组，防止动态页面拖慢后被平均数掩盖。真实样本不足前这些值是
+校准目标；若连续不达标，应先减少页面预算和动态浏览器使用，再考虑扩容。
+
+### 19.8 健康检查、通知与告警
+
+`live` 只证明进程存活；`ready` 检查数据库、Redis 和必要队列。MiMo 健康不能在每次探针中发起付费
+请求，而应展示最近一次安全验证、最近成功和连续失败数；Browser Worker 用心跳和已安装版本上报状态。
+
+首期告警条件：MiMo 认证/额度错误立即告警，或连续失败 3 次；最老队列等待超过 5 分钟；Browser
+Worker 超过 2 分钟无心跳；BrowserRun 超预算或失联；近一小时 Job 失败率超过 20%；磁盘使用超过
+80%；最近成功备份超过 26 小时。默认进入应用内通知，可选发邮件；同一根因做时间窗去重，恢复后生成
+恢复事件。
+
+### 19.9 Browser Worker 清理与网络边界
+
+每个 BrowserRun 使用独立临时目录和上下文，并在 `finally` 中依次关闭页面、context、MCP 子进程和
+浏览器；软终止超时后必须强制结束整个进程组。Worker 启动和周期 reconciler 清理失联进程、过期 lease
+与临时目录。容器启用 init、内存/CPU/进程数限制和自动重启。
+
+应用层在连接前验证 URL/DNS，并在每次 redirect 和最终 URL 后重新验证；浏览器容器还必须在网络层
+阻断 localhost、私网、链路本地和云 metadata，因为仅靠两次 DNS 查询不能彻底防止重绑定。浏览器不
+访问数据库、SecretStore、主机 Docker socket 或内部服务，只通过受限任务输入和结果目录通信。
+
 ## 20. 测试与验收策略
 
 ### 20.1 单元与契约测试
@@ -1228,18 +1418,24 @@ partial_success
 - 每个 Provider 使用录制/手写的安全 fixture，不依赖真实联网；
 - JSON Schema、错误映射、配额和部分成功；
 - URL 规范化、SSRF、域名去重、国家和排除项；
+- `country_unknown/conflicting` 进入补证，人工 override 可审计并触发重新评估；
+- ScoreInput 未知值、覆盖率、暂定 Priority 和相同输入确定性；
 - Candidate 状态机和非法转换；
 - Candidate 晋升 Lead 的幂等；
 - 所有 Repository 的跨租户读写拒绝；
 - 产品事实 ID 校验和禁止声明检测；
 - YouTube 评论只生成 signal，不直接生成已验证联系人。
 - 雷达关系类型、连续移除确认、跨竞品实体合并和事件幂等。
+- 反馈阈值只生成建议，应用建议创建新版本且重复操作幂等。
 
 ### 20.2 集成测试
 
 - Job/RQ 只传 `job_id`；
 - Worker 重试不重复 Candidate/Evidence/Lead；
+- 周期 reconciler 能恢复失联 Job，并把 Mission/BrowserRun 收敛到正确终态；
 - Provider auth/quota/timeout 的安全失败；
+- MiMo/Browser 故障时静态 Fetcher 与人工补证路径仍可使用；
+- Browser 子进程在成功、失败、取消、超时和 Worker 崩溃场景下均被回收；
 - migration 从 0012 升级、降一级、再升级；
 - PostgreSQL 上的唯一约束和并发晋升；
 - Capability 关闭时路由和 Worker 都拒绝执行。
@@ -1277,20 +1473,31 @@ partial_success
 - 保持现有 286 个测试通过；
 - 决定并登记新 Capability 名称。
 
-### Phase 1：最小可靠闭环
+### Phase 1A：不依赖浏览器的最小可靠闭环
 
 - Product Knowledge Snapshot；
 - MiMo Provider、结构化 Schema 和健康检查；
 - Acquisition Mission、Candidate、Evidence；
 - 手工 URL + MiMo Web Discovery；
 - 官网受限 Fetcher；
-- 硬门禁、证据 UI 和候选审核；
+- 国家未知补证、缺失信号安全评分、分层证据 UI 和候选审核；
 - Candidate 幂等晋升 Lead；
 - 事实受限外联草稿；
+- 三字段创建任务、真实今日工作台和应用内通知；
+- 结构化拒绝原因、任务成本、复盘和“建议后人工应用”的反馈闭环；
 - 为竞品雷达预留 `source=competitor_radar`、Evidence lineage 和 Candidate 转换契约；
 - 不新增真实自动发送。
 
-这是最重要的一期。完成后用户已经能从产品事实到合格 Lead 和安全草稿走完一条路径。
+这是最重要的一期。完成后即使 Browser/MCP 不可用，用户也能从产品事实到合格 Lead 和安全草稿走完
+一条路径。
+
+### Phase 1B：受控浏览器与实用增强
+
+- 独立 Browser Worker、`browser` 队列、进程清理、心跳和网络隔离；
+- 仅在静态 Fetcher 无法读取且 SitePolicy 允许时回退 Browser MCP；
+- 最小竞品入口：用户提供竞品/官方经销商 URL，复用通用 Evidence/Candidate 流程，不做定时 diff；
+- 可选任务完成邮件、CSV 业务字段导出和公开企业 WhatsApp 一键打开；
+- Browser 故障、禁用或未安装时 Phase 1A 全部功能保持可用。
 
 ### Phase 2：竞品雷达与稳定渠道扩展
 
@@ -1309,13 +1516,13 @@ partial_success
 - 只有“每个接受 Lead 成本/回复率”优于现有流程才保留；
 - 贸易数据先做市场分析，再评估公司级供应商。
 
-### Phase 4：反馈自动化
+### Phase 4：反馈建议增强
 
-- 接受/拒绝原因统计；
-- 按国家和买家类型调整查询模板；
+- 跨任务接受/拒绝原因和结果趋势；
+- 按国家和买家类型提出查询模板调整建议；
 - 回复分类与下一步建议；
 - 在高置信、已批准 Mission 上自动定期研究；
-- 仍保留首次/批量外发门禁。
+- 仍由用户批准策略版本变化，并保留首次/批量外发门禁。
 
 ### Phase 5：未来公共 SaaS
 
@@ -1327,12 +1534,16 @@ partial_success
 - 公共注册、支付、合规和 SLA；
 - Provider 数据处理协议和地区化策略。
 
-## 22. 首期 Definition of Done
+## 22. 分阶段 Definition of Done
+
+### 22.1 Phase 1A
 
 - 一个用户能创建、运行、暂停和查看 Mission；
+- 创建首屏只有产品、国家、买家类型三个必填字段，高级设置默认折叠；
+- 今日工作台显示真实待审核、运行中、失败、回复和跟进计数及直接动作；
 - MiMo 搜索结果包含可点击证据，而不是只有模型总结；
 - 没有邮箱的公司候选不会被静默丢弃；
-- 纯电、供应商、平台页和地区错误有确定性拒绝原因；
+- 纯电、供应商、平台页和地区不符有确定性拒绝原因，国家未知/冲突进入补证而非被丢弃；
 - Candidate/Evidence/Job/Lead 全部 tenant-scoped；
 - 同一任务重试不会重复创建 Candidate 或 Lead；
 - AI 不能直接接受候选、写 CRM 或发送邮件；
@@ -1340,10 +1551,25 @@ partial_success
 - 未批准价格、MOQ、交期、认证和质保不会出现在外发内容；
 - Provider Key 不进入 Job payload、日志或数据库明文字段；
 - URL Fetcher 通过 SSRF、大小、重定向和 Content-Type 测试；
+- 相同持久化 ScoreInput 得到相同评分，未知 Intent 不显示为低意向；
+- MiMo 不可用时静态/人工降级路径仍可完成审核和 CRM 晋升；
+- 反馈只生成可解释建议，未经用户确认不改变排除词或评分权重；
+- 任务成本、结构化拒绝原因、应用内通知和初始性能指标可查看；
+- 数据库恢复演练包含 Candidate/Evidence；
 - 真实联网测试是显式 opt-in，默认测试套件完全离线；
-- PostgreSQL migration smoke、ruff、format、pytest 和关键浏览器流程通过；
-- 至少用 30 个真实正负样本形成首版渠道/模型基准报告。
+- PostgreSQL migration smoke、ruff、format 和 pytest 通过；
+- 至少用 30 个真实正负样本形成首版渠道/模型基准报告；
 - 竞品雷达共享基础契约已固定，Phase 2 无需另建 Lead、Evidence 或 Job 系统。
+
+### 22.2 Phase 1B
+
+- Browser Worker 禁用、未安装或故障时 Phase 1A 行为和数据保持不变；
+- 动态浏览器只在静态 Fetcher 失败且 SitePolicy 允许时运行；
+- Browser Worker 并发、超时、进程组清理、心跳、失联恢复和网络阻断通过测试；
+- 截图制品使用持久化目录，30 天保留与审计清理策略可执行；
+- 最小竞品 URL 能复用 Evidence/Candidate 审核链路，不建立第二套 Lead 系统；
+- 可选邮件、CSV 导出和 WhatsApp 链接不绕过外发与审计边界；
+- 关键 Browser MCP 端到端流程通过。
 
 ## 23. 最终产品意见
 
@@ -1411,7 +1637,7 @@ MiMo 多语言搜索
 ## 25. 已确认的实施范围
 
 本设计已经完整包含竞品雷达、YouTube、Places、Hunter、Apollo 和后续多模型边界；完整设计不
-等于一次性实施。建议第一批批准 **Phase 0 + Phase 1**，先证明“MiMo + 官网证据 + 候选审核 +
+等于一次性实施。建议第一批批准 **Phase 0 + Phase 1A**，先证明“MiMo + 官网证据 + 候选审核 +
 安全草稿”能产生合格 Lead；随后按 Phase 2 实现正式竞品雷达、YouTube 和 Places，再按指标增加
 付费渠道。
 
@@ -1424,8 +1650,9 @@ MiMo 多语言搜索
 - LinkedIn 固定为人工或官方数据通道，不做浏览器自动抓取；
 - 不改掉已经设计完成的竞品雷达、YouTube、Places、Hunter、Apollo 和 Outreach 续接位置。
 
-第一实施批次为 **Phase 0 + Phase 1 + 国家/评分 + 受控 Browser MCP 的最小可靠闭环**。竞品雷达和
-更多渠道仍按后续阶段接入，不能与首批安全核心混为一次大提交。
+第一实施批次为 **Phase 0 + Phase 1A + 国家/评分的最小可靠闭环**，必须在不安装或停用 Browser MCP
+时独立可用。受控 Browser MCP 和最小竞品入口属于 Phase 1B 增强；完整竞品雷达和更多渠道仍按后续
+阶段接入，不能与首批安全核心混为一次大提交。
 
 ## 26. 国家、ICP 与评分补充设计（已确认）
 
@@ -1442,24 +1669,26 @@ Candidate 分开保存：
 - `country_resolution_status`：`unknown/confirmed/conflicting`。
 
 确认机会国家至少需要一个 A 级来源，或两个相互独立且一致的 B/C 级来源。信息不足或来源冲突时不
-允许进入推荐队列，不能让模型根据域名后缀或语言猜测国家。
+允许进入推荐队列，但 Candidate 保留在“待确认国家”补证队列，不能让模型根据域名后缀或语言猜测
+国家。用户可以用公开来源和结构化理由人工确认；该记录是单独的审计 override，不伪装成 A/B 级证据，
+确认后重新运行门禁和评分。
 
 ### 26.2 ICP 输入
 
-首期 Target Profile 至少包含：
+首期 Target Profile 在数据层可以包含完整 ICP，但创建界面只有以下三个必填输入：
 
-- 目标国家与语言；
-- 买家类型，例如进口商、经销商、批发商、维修网络；
-- 行业和公司规模；
-- 必须包含的产品/业务词；
-- 排除词和排除业务，例如纯电、供应商、媒体或 marketplace；
-- 候选、页数、token 和时间预算。
+- 已批准产品；
+- 目标国家；
+- 买家类型，例如进口商、经销商、批发商、维修网络。
+
+语言自动推导；行业、公司规模、必须包含词、排除词/排除业务以及候选、页数、token 和时间预算都属于
+高级设置并有安全默认值。
 
 ### 26.3 先硬门禁，后评分
 
-硬门禁失败原因使用机器可统计 code：`wrong_country`、`country_unknown`、`wrong_buyer_type`、
-`excluded_business`、`no_independent_identity`、`insufficient_product_evidence`、`no_contact_path`、
-`duplicate`、`suppressed`、`policy_blocked`、`stale_source`。
+硬拒绝原因使用机器可统计 code：`wrong_country`、`wrong_buyer_type`、`excluded_business`、
+`no_independent_identity`、`insufficient_product_evidence`、`no_contact_path`、`duplicate`、`suppressed`、
+`policy_blocked`、`stale_source`。`country_unknown` 与 `country_conflicting` 是补证原因，不是拒绝原因。
 
 通过门禁后使用 `score-v1`：
 
@@ -1474,8 +1703,10 @@ DataQuality = 身份质量 25% + 来源可信度 25% + 可联系性 20%
 Priority = round(0.50 * Fit + 0.30 * Intent + 0.20 * DataQuality)
 ```
 
-等级为 `S >= 85`、`A >= 70`、`B >= 55`、`C < 55`。模型 `ai_confidence` 单独展示，不参与硬门禁，
-也不能替代来源质量。每次 Assessment 保存 score/policy/prompt/model 版本、分项、claim IDs 和解释。
+等级为 `S >= 85`、`A >= 70`、`B >= 55`、`C < 55`。未知输入使用 `None` 并按已知权重重新归一化，
+同时显示 `signal_coverage`；Intent 全未知时显示“暂无意向信号”，Priority 标记为暂定。覆盖不足 60%
+时最高不能为 S。模型 `ai_confidence` 单独展示，不参与硬门禁，也不能替代来源质量。每次 Assessment
+保存 evidence bundle hash、score/policy/prompt/model 版本、完整 ScoreInput、分项、claim IDs 和解释。
 
 ### 26.4 CRM 筛选
 
@@ -1487,9 +1718,10 @@ Lead 列表增加国家、最低/最高 Priority、等级、来源、是否可�
 
 ### 27.1 角色分工
 
-MiMo API Key 不直接连接浏览器。LeadFlow 是 MCP Host 和唯一控制面：MiMo 返回结构化计划或高层
-工具调用，LeadFlow 先检查 Capability、站点策略、URL/SSRF、预算和动作，再通过 MCP Client 调用
-隔离的 Playwright MCP Server。
+MiMo API Key 不直接连接浏览器。默认先由受限 HTTP Fetcher 获取静态公开页面；只有静态页面无法满足
+证据需求且站点策略允许时才创建 BrowserRun。LeadFlow 是 MCP Host 和唯一控制面：MiMo 返回结构化
+计划或高层工具调用，LeadFlow 先检查 Capability、站点策略、URL/SSRF、预算和动作，再通过 MCP
+Client 调用隔离的 Playwright MCP Server。
 
 浏览器只负责读取页面；Candidate/Evidence、国家解析、门禁、评分、审核和 Lead 晋升仍由确定性业务
 服务完成。MiMo 不获得数据库 Session、Repository、发送服务或原始 MCP 工具列表。
@@ -1499,6 +1731,10 @@ MiMo API Key 不直接连接浏览器。LeadFlow 是 MCP Host 和唯一控制面
 自动研究使用独立、无登录、无持久 Cookie 的 Playwright MCP 浏览器，不连接用户日常 Chrome。
 Chrome DevTools MCP 仅用于工程调试，因为它能查看和修改连接浏览器中的内容，不适合作为生产获客
 边界。MCP 官方工具的 allowlist 只能作为纵深防御，LeadFlow 仍须自行实施安全控制。
+
+Playwright MCP 运行在独立 `browser-worker` 镜像和 `browser` 队列，首期全局并发 1；Web 与普通
+Worker 不安装或启动浏览器。Browser Worker 缺失、禁用或故障时返回可识别的降级结果，不影响静态
+Fetcher、人工补证、审核和 CRM 晋升。
 
 ### 27.3 网站访问分级
 
@@ -1526,6 +1762,10 @@ MiMo 只看到 `open_allowed_url`、`read_current_public_page`、`follow_same_si
 每条 Evidence 保存来源 URL、title、限长 excerpt、trust tier、retrieved/observed time、content hash、
 支持的 claim、validation status 和可选截图 hash；不保存整页 HTML、Cookie 或完整第三方响应。
 
+截图和临时文本快照存入专用持久化制品目录，默认保留 30 天，由可审计清理任务删除；Evidence 元数据、
+URL、excerpt 和 hash 不随截图到期删除。BrowserRun 无论成功、失败、取消或超时都必须清理 context、
+子进程、进程组、lease 和临时目录，周期 reconciler 负责处理 Worker 崩溃后的遗留项。
+
 浏览器错误统一为策略、URL、页面、预算、Provider、MCP 和内容七类。错误摘要不得包含 API Key、URL
 query、Cookie、表单正文、模型 reasoning 或联系人私密内容。
 
@@ -1535,6 +1775,6 @@ query、Cookie、表单正文、模型 reasoning 或联系人私密内容。
 
 `docs/superpowers/plans/2026-08-01-mimo-mcp-country-scoring-acquisition.md`
 
-该计划包含 13 个 TDD 任务、完整文件映射、关键接口/模型代码、命令与预期输出、真实试点步骤、
-Definition of Done、回滚方案和供其他 AI 审查的十个重点问题。功能代码必须按计划逐任务实施并在每个
-浏览器安全核心任务后做独立审查。
+现有计划是在本次单人版收敛审查前生成，必须在本设计获得书面复核后同步调整：先交付不依赖浏览器的
+Phase 1A，再交付 Browser Worker 与最小竞品入口 Phase 1B；同时补入工作台、通知、反馈、降级、日志、
+备份、性能和恢复任务。计划同步完成前不得直接按旧任务顺序实施功能代码。
