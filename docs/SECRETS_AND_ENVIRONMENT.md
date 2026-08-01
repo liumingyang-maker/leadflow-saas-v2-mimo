@@ -20,13 +20,36 @@ ALLOWED_HOSTS=<comma-separated-hosts>
 
 ## Provider Variables
 
-Keep these fake for RC1 unless real credentials are explicitly approved.
+Keep mail and legacy collection providers fake for RC1 unless real credentials are explicitly approved.
 
 ```text
 MAIL_PROVIDER=fake
 GOOGLE_SEARCH_PROVIDER=fake
 GOOGLE_MAPS_PROVIDER=fake
 ```
+
+MiMo acquisition uses a tenant-scoped encrypted secret named `mimo_api_key`. Save the key through
+the application SecretStore; do not put it in a Job payload, log line, checked-in `.env`, screenshot,
+or browser-worker environment. Configure only the non-secret connection metadata as environment
+variables:
+
+```text
+MIMO_BASE_URL=<OpenAI-compatible-base-url-from-the-MiMo-console>
+MIMO_MODEL=mimo-v2.5
+```
+
+Pay-as-you-go and Token Plan keys use different base URLs and cannot be mixed. Use the exact base URL
+shown with the key in the MiMo console. The live web-search smoke is disabled by default. To run it
+locally, provide `MIMO_API_KEY` only in the process environment and execute:
+
+```powershell
+$env:RUN_LIVE_MIMO="1"
+.\scripts\smoke_mimo.ps1
+```
+
+The smoke prints only a bounded PASS/FAIL category and never prints the key or provider response.
+MiMo JSON mode is still followed by local Pydantic validation; syntactically valid provider JSON is
+not trusted as application data until it passes that schema.
 
 Future real provider variables should be named clearly and stored outside Git, for example:
 
