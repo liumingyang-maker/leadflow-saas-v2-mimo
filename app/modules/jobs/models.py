@@ -11,7 +11,20 @@ from sqlalchemy.orm import Mapped, mapped_column
 from app.extensions import Base
 
 VALID_STATUSES = ("queued", "running", "retrying", "succeeded", "failed", "cancelled")
-VALID_JOB_TYPES = ("google_search", "google_maps", "csv_import", "xlsx_import")
+VALID_JOB_TYPES = (
+    "google_search",
+    "google_maps",
+    "csv_import",
+    "xlsx_import",
+    "acquisition_plan",
+    "web_discovery",
+    "website_verify",
+    "candidate_assess",
+    "candidate_promote",
+    "feedback_summarize",
+    "notification_dispatch",
+    "acquisition_reconcile",
+)
 MAX_ATTEMPTS_DEFAULT = 3
 
 
@@ -59,7 +72,10 @@ class Job(Base):
             name="job_status",
         ),
         CheckConstraint(
-            "job_type in ('google_search', 'google_maps', 'csv_import', 'xlsx_import')",
+            "job_type in ('google_search', 'google_maps', 'csv_import', 'xlsx_import', "
+            "'acquisition_plan', 'web_discovery', 'website_verify', 'candidate_assess', "
+            "'candidate_promote', 'feedback_summarize', 'notification_dispatch', "
+            "'acquisition_reconcile')",
             name="job_type",
         ),
         CheckConstraint("progress >= 0 AND progress <= 100", name="job_progress_range"),

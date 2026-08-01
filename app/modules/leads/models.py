@@ -60,6 +60,7 @@ class Company(Base):
     size: Mapped[str] = mapped_column(String(60), default="", nullable=False)
     revenue_range: Mapped[str] = mapped_column(String(60), default="", nullable=False)
     country: Mapped[str] = mapped_column(String(120), default="", nullable=False)
+    country_code: Mapped[str] = mapped_column(String(2), default="", nullable=False, index=True)
     notes: Mapped[str] = mapped_column(Text, default="", nullable=False)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=_now, nullable=False
@@ -106,8 +107,13 @@ class Lead(Base):
             name="lead_stage",
         ),
         CheckConstraint(
-            "source in ('manual', 'import', 'collection', 'inbound', 'api')",
+            "source in ('manual', 'import', 'collection', 'inbound', 'api', 'acquisition')",
             name="lead_source",
+        ),
+        UniqueConstraint(
+            "tenant_id",
+            "acquisition_candidate_id",
+            name="uq_leads_tenant_acquisition_candidate",
         ),
     )
 
@@ -137,6 +143,17 @@ class Lead(Base):
     follow_up_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     reviewed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     reviewed_by: Mapped[str] = mapped_column(String(36), default="", nullable=False)
+    opportunity_country_code: Mapped[str] = mapped_column(
+        String(2), default="", nullable=False, index=True
+    )
+    fit_score: Mapped[int | None] = mapped_column(Integer)
+    intent_score: Mapped[int | None] = mapped_column(Integer)
+    data_quality_score: Mapped[int | None] = mapped_column(Integer)
+    priority_score: Mapped[int | None] = mapped_column(Integer, index=True)
+    priority_band: Mapped[str] = mapped_column(String(16), default="", nullable=False, index=True)
+    score_version: Mapped[str] = mapped_column(String(40), default="", nullable=False)
+    score_explanation_json: Mapped[str] = mapped_column(Text, default="{}", nullable=False)
+    acquisition_candidate_id: Mapped[str | None] = mapped_column(String(64), index=True)
 
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=_now, nullable=False

@@ -191,3 +191,55 @@ def test_null_processing_lease_backfill() -> None:
         assert row[0] is not None
         assert "2020" in str(row[0])
         engine.dispose()
+
+
+def test_acquisition_core_tables_and_crm_columns_exist_at_head() -> None:
+    with tempfile.TemporaryDirectory() as tmpdir:
+        db_path = os.path.join(tmpdir, "acquisition.db")
+        cfg = _alembic_cfg(db_path)
+        command.upgrade(cfg, "head")
+
+        engine = create_engine(f"sqlite:///{db_path}")
+        insp = inspect(engine)
+        tables = set(insp.get_table_names())
+        lead_columns = {column["name"] for column in insp.get_columns("leads")}
+        company_columns = {column["name"] for column in insp.get_columns("companies")}
+        engine.dispose()
+
+        assert {
+            "product_knowledge_snapshots",
+            "acquisition_missions",
+            "acquisition_candidates",
+            "candidate_evidence",
+            "candidate_assessments",
+            "mission_suggestions",
+            "notifications",
+            "provider_statuses",
+        } <= tables
+        assert {
+            "opportunity_country_code",
+            "fit_score",
+            "intent_score",
+            "data_quality_score",
+            "priority_score",
+            "priority_band",
+            "score_version",
+            "score_explanation_json",
+            "acquisition_candidate_id",
+        } <= lead_columns
+        assert "country_code" in company_columns
+
+        command.downgrade(cfg, "0013_admin_auth_version")
+        engine = create_engine(f"sqlite:///{db_path}")
+        insp = inspect(engine)
+        assert "acquisition_candidates" not in set(insp.get_table_names())
+        assert "acquisition_candidate_id" not in {
+            column["name"] for column in insp.get_columns("leads")
+        }
+        assert "country_code" not in {column["name"] for column in insp.get_columns("companies")}
+        engine.dispose()
+
+        command.upgrade(cfg, "0014_acquisition_core")
+        engine = create_engine(f"sqlite:///{db_path}")
+        assert "acquisition_candidates" in set(inspect(engine).get_table_names())
+        engine.dispose()
