@@ -52,6 +52,12 @@
   {% endif %}
 
   <div class="lf-candidate-actions" aria-label="候选审核动作">
+    {% if candidate.status == 'needs_evidence' %}
+    <form method="post" action="/acquisition/candidates/{{ candidate.id }}/retry-verification" hx-post="/acquisition/candidates/{{ candidate.id }}/retry-verification" hx-target="#candidate-{{ candidate.id }}" hx-swap="outerHTML">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+      {{ button("重新验证公开网页", "primary", "submit") }}
+    </form>
+    {% endif %}
     {% if candidate.status == 'eligible' and candidate.country_resolution_status == 'confirmed' %}
     <form method="post" action="/acquisition/candidates/{{ candidate.id }}/review" hx-post="/acquisition/candidates/{{ candidate.id }}/review" hx-target="#candidate-{{ candidate.id }}" hx-swap="outerHTML">
       <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">

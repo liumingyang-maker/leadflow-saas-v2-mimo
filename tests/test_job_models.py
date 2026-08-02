@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from datetime import UTC, datetime, timedelta
 
 import pytest
@@ -71,6 +72,65 @@ def test_job_repository_tenant_isolation(monkeypatch) -> None:
         t1_id = t1_jobs[0].id
         assert repo.get_for_tenant(t1_id, tenant_id="t1") is not None
         assert repo.get_for_tenant(t1_id, tenant_id="t2") is None
+
+
+def test_active_candidate_job_lookup_matches_exact_tenant_type_status_and_payload(
+    monkeypatch,
+) -> None:
+    engine = _engine(monkeypatch)
+    from app.modules.jobs.models import Job
+    from app.modules.jobs.repository import JobRepository
+
+    with Session(engine) as session:
+        session.add_all(
+            [
+                Job(
+                    tenant_id="t1",
+                    job_type="website_verify",
+                    status="running",
+                    payload_json=json.dumps({"candidate_id": "candidate-1"}),
+                ),
+                Job(
+                    tenant_id="t1",
+                    job_type="website_verify",
+                    status="failed",
+                    payload_json=json.dumps({"candidate_id": "historical"}),
+                ),
+                Job(
+                    tenant_id="t2",
+                    job_type="website_verify",
+                    status="queued",
+                    payload_json=json.dumps({"candidate_id": "private"}),
+                ),
+                Job(
+                    tenant_id="t1",
+                    job_type="candidate_assess",
+                    status="queued",
+                    payload_json=json.dumps({"candidate_id": "different-type"}),
+                ),
+                Job(
+                    tenant_id="t1",
+                    job_type="website_verify",
+                    status="retrying",
+                    payload_json="not-json",
+                ),
+            ]
+        )
+        session.commit()
+        repo = JobRepository(session)
+
+        assert repo.has_active_for_candidate(
+            "candidate-1", job_type="website_verify", tenant_id="t1"
+        )
+        assert not repo.has_active_for_candidate(
+            "historical", job_type="website_verify", tenant_id="t1"
+        )
+        assert not repo.has_active_for_candidate(
+            "private", job_type="website_verify", tenant_id="t1"
+        )
+        assert not repo.has_active_for_candidate(
+            "different-type", job_type="website_verify", tenant_id="t1"
+        )
 
 
 def test_workbench_terminal_projection_has_hard_bound_and_reports_truncation(

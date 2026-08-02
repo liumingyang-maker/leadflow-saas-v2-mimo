@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
@@ -87,6 +88,35 @@ class JobRepository:
             .limit(bounded_limit)
         )
         return list(self.session.scalars(query))
+
+    def has_active_for_candidate(
+        self,
+        candidate_id: str,
+        *,
+        job_type: str,
+        tenant_id: str,
+    ) -> bool:
+        """Return whether one exact candidate already has an active job.
+
+        Payload inspection stays in Python because the supported databases do not
+        share one portable JSON query syntax. Malformed payloads are ignored rather
+        than making a tenant's retry page fail.
+        """
+
+        tenant_id = _require_tenant(tenant_id)
+        query = select(Job.payload_json).where(
+            Job.tenant_id == tenant_id,
+            Job.job_type == job_type,
+            Job.status.in_(WORKBENCH_ACTIVE_JOB_STATUSES),
+        )
+        for payload_json in self.session.scalars(query):
+            try:
+                payload = json.loads(payload_json)
+            except (TypeError, ValueError):
+                continue
+            if isinstance(payload, dict) and payload.get("candidate_id") == candidate_id:
+                return True
+        return False
 
     def list_recent_terminal_for_workbench(
         self, *, tenant_id: str, limit: int = MAX_WORKBENCH_TERMINAL_JOBS

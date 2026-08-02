@@ -45,6 +45,7 @@ from app.modules.acquisition.workbench import (
     mark_notification_read,
 )
 from app.modules.audit.service import add_event
+from app.modules.jobs.repository import JobRepository
 from app.modules.jobs.service import JobServiceError, create_and_enqueue
 
 COUNTRY_CHOICES = (
@@ -372,6 +373,74 @@ def register_acquisition_routes(app: Flask) -> None:
     @tenant_required(app)
     def acquisition_candidate_detail(candidate_id: str):
         return _render_candidate(app, candidate_id=candidate_id)
+
+    @app.post("/acquisition/candidates/<candidate_id>/retry-verification")
+    @tenant_required(app)
+    def acquisition_candidate_retry_verification(candidate_id: str):
+        """Queue one manual retry for the tenant-owned candidate.
+
+        The active-Job check is sufficient for the current single-user runtime.
+        A future concurrent SaaS deployment must add a database-backed workflow
+        identity before treating this preflight check as strict idempotency.
+        """
+
+        tenant_id, actor_id = _identity()
+        with Session(get_engine(app)) as db_session:
+            candidate = CandidateRepository(db_session).get(candidate_id, tenant_id=tenant_id)
+            if candidate is None:
+                abort(404)
+            if candidate.status != "needs_evidence":
+                return _render_retry_verification_error(
+                    app,
+                    candidate_id=candidate_id,
+                    error="这个候选当前不能重新验证。",
+                    status_code=409,
+                )
+            if JobRepository(db_session).has_active_for_candidate(
+                candidate_id,
+                job_type="website_verify",
+                tenant_id=tenant_id,
+            ):
+                return _render_retry_verification_error(
+                    app,
+                    candidate_id=candidate_id,
+                    error="这个候选已经在验证队列中。",
+                    status_code=409,
+                )
+
+        try:
+            create_and_enqueue(
+                app,
+                tenant_id=tenant_id,
+                job_type="website_verify",
+                payload={"candidate_id": candidate_id},
+            )
+        except JobServiceError:
+            return _render_retry_verification_error(
+                app,
+                candidate_id=candidate_id,
+                error="验证任务暂时无法加入队列，请稍后重试。",
+                status_code=503,
+            )
+
+        with Session(get_engine(app)) as db_session:
+            candidate = CandidateRepository(db_session).get(candidate_id, tenant_id=tenant_id)
+            if candidate is None:
+                abort(404)
+            candidate.status = "verifying"
+            add_event(
+                db_session,
+                tenant_id=tenant_id,
+                actor_user_id=actor_id,
+                action="acquisition_candidate.verification_retried",
+                target_type="acquisition_candidate",
+                target_id=candidate.id,
+                safe_summary="Candidate website verification retried",
+            )
+            db_session.commit()
+        if _is_htmx():
+            return _render_candidate_card(app, candidate_id)
+        return redirect(url_for("acquisition_candidate_detail", candidate_id=candidate_id))
 
     @app.post("/acquisition/candidates/<candidate_id>/country-evidence")
     @tenant_required(app)
@@ -718,6 +787,30 @@ def _render_country_evidence_error(
         error=error,
         status_code=status_code,
         country_evidence_form=bounded_form,
+    )
+
+
+def _render_retry_verification_error(
+    app: Flask,
+    *,
+    candidate_id: str,
+    error: str,
+    status_code: int,
+):
+    if _is_htmx():
+        response = make_response(
+            _render_candidate_card(app, candidate_id, error=error),
+            status_code,
+        )
+        response.headers["HX-LeadFlow-Swap-Error"] = "true"
+        response.headers["HX-Retarget"] = f"#candidate-{candidate_id}"
+        response.headers["HX-Reswap"] = "outerHTML"
+        return response
+    return _render_candidate(
+        app,
+        candidate_id=candidate_id,
+        error=error,
+        status_code=status_code,
     )
 
 

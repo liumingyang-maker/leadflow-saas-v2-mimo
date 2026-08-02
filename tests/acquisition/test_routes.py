@@ -444,6 +444,305 @@ def test_country_evidence_requires_csrf_when_enabled(csrf_client) -> None:
     assert response.status_code == 400
 
 
+def test_retry_verification_enqueues_exact_payload_then_updates_state_and_audits_actor(
+    acquisition_app, logged_in_client, monkeypatch
+) -> None:
+    from app.extensions import get_engine
+    from app.modules.acquisition.models import AcquisitionCandidate
+    from app.modules.audit.models import AuditEvent
+
+    client, tenant_id = logged_in_client
+    actor_id = _actor_id(client)
+    mission = _seed_mission(acquisition_app, tenant_id=tenant_id, actor_id=actor_id)
+    candidate = _seed_candidate(
+        acquisition_app,
+        tenant_id=tenant_id,
+        mission_id=mission.id,
+        suffix="retry-success",
+        status="needs_evidence",
+    )
+    captured: dict[str, object] = {}
+
+    def fake_enqueue(app, **kwargs):
+        captured.update(kwargs)
+        return SimpleNamespace(id="retry-job")
+
+    monkeypatch.setattr("app.modules.acquisition.routes.create_and_enqueue", fake_enqueue)
+
+    response = client.post(
+        f"/acquisition/candidates/{candidate.id}/retry-verification",
+    )
+
+    assert response.status_code == 302
+    assert response.headers["Location"].endswith(f"/acquisition/candidates/{candidate.id}")
+    assert captured == {
+        "tenant_id": tenant_id,
+        "job_type": "website_verify",
+        "payload": {"candidate_id": candidate.id},
+    }
+    with Session(get_engine(acquisition_app)) as db_session:
+        stored = db_session.get(AcquisitionCandidate, candidate.id)
+        event = db_session.scalar(
+            select(AuditEvent).where(
+                AuditEvent.tenant_id == tenant_id,
+                AuditEvent.action == "acquisition_candidate.verification_retried",
+                AuditEvent.target_id == candidate.id,
+            )
+        )
+
+    assert stored is not None
+    assert stored.status == "verifying"
+    assert event is not None
+    assert event.actor_user_id == actor_id
+    assert event.safe_summary == "Candidate website verification retried"
+
+
+@pytest.mark.parametrize("candidate_id", ["not-present", "cross-tenant"])
+def test_retry_verification_returns_404_for_missing_or_cross_tenant_candidate(
+    acquisition_app,
+    logged_in_client,
+    seed_acquisition_mission,
+    candidate_id: str,
+) -> None:
+    client, _tenant_id = logged_in_client
+    if candidate_id == "cross-tenant":
+        mission_id = seed_acquisition_mission(tenant_id="other-tenant", suffix="retry-private")
+        candidate_id = _seed_candidate(
+            acquisition_app,
+            tenant_id="other-tenant",
+            mission_id=mission_id,
+            suffix="retry-private",
+            status="needs_evidence",
+        ).id
+
+    response = client.post(f"/acquisition/candidates/{candidate_id}/retry-verification")
+
+    assert response.status_code == 404
+
+
+def test_retry_verification_rejects_candidate_outside_needs_evidence(
+    acquisition_app, logged_in_client, monkeypatch
+) -> None:
+    client, tenant_id = logged_in_client
+    mission = _seed_mission(acquisition_app, tenant_id=tenant_id, actor_id=_actor_id(client))
+    candidate = _seed_candidate(
+        acquisition_app,
+        tenant_id=tenant_id,
+        mission_id=mission.id,
+        suffix="retry-ineligible",
+        status="eligible",
+    )
+    monkeypatch.setattr(
+        "app.modules.acquisition.routes.create_and_enqueue",
+        lambda *_args, **_kwargs: pytest.fail("ineligible candidate must not enqueue"),
+    )
+
+    response = client.post(f"/acquisition/candidates/{candidate.id}/retry-verification")
+
+    assert response.status_code == 409
+    assert "这个候选当前不能重新验证" in response.get_data(as_text=True)
+
+
+def test_retry_verification_rejects_exact_candidate_with_active_verification_job(
+    acquisition_app, logged_in_client, monkeypatch
+) -> None:
+    from app.extensions import get_engine
+    from app.modules.jobs.models import Job
+
+    client, tenant_id = logged_in_client
+    mission = _seed_mission(acquisition_app, tenant_id=tenant_id, actor_id=_actor_id(client))
+    candidate = _seed_candidate(
+        acquisition_app,
+        tenant_id=tenant_id,
+        mission_id=mission.id,
+        suffix="retry-active",
+        status="needs_evidence",
+    )
+    with Session(get_engine(acquisition_app)) as db_session:
+        db_session.add(
+            Job(
+                tenant_id=tenant_id,
+                job_type="website_verify",
+                status="queued",
+                payload_json=json.dumps({"candidate_id": candidate.id}),
+            )
+        )
+        db_session.commit()
+    monkeypatch.setattr(
+        "app.modules.acquisition.routes.create_and_enqueue",
+        lambda *_args, **_kwargs: pytest.fail("duplicate verification must not enqueue"),
+    )
+
+    response = client.post(
+        f"/acquisition/candidates/{candidate.id}/retry-verification",
+        headers={"HX-Request": "true"},
+    )
+
+    assert response.status_code == 409
+    assert "这个候选已经在验证队列中" in response.get_data(as_text=True)
+    assert response.headers["HX-Retarget"] == f"#candidate-{candidate.id}"
+    assert response.headers["HX-Reswap"] == "outerHTML"
+
+
+@pytest.mark.parametrize("existing_job", ["historical", "unrelated"])
+def test_retry_verification_ignores_nonblocking_jobs(
+    acquisition_app, logged_in_client, monkeypatch, existing_job: str
+) -> None:
+    from app.extensions import get_engine
+    from app.modules.jobs.models import Job
+
+    client, tenant_id = logged_in_client
+    mission = _seed_mission(acquisition_app, tenant_id=tenant_id, actor_id=_actor_id(client))
+    candidate = _seed_candidate(
+        acquisition_app,
+        tenant_id=tenant_id,
+        mission_id=mission.id,
+        suffix=f"retry-{existing_job}",
+        status="needs_evidence",
+    )
+    payload_candidate_id = candidate.id if existing_job == "historical" else "other-candidate"
+    status = "failed" if existing_job == "historical" else "running"
+    with Session(get_engine(acquisition_app)) as db_session:
+        db_session.add(
+            Job(
+                tenant_id=tenant_id,
+                job_type="website_verify",
+                status=status,
+                payload_json=json.dumps({"candidate_id": payload_candidate_id}),
+            )
+        )
+        db_session.commit()
+    enqueued: list[dict[str, object]] = []
+
+    def fake_enqueue(_app, **kwargs):
+        enqueued.append(kwargs)
+        return SimpleNamespace(id="retry-job")
+
+    monkeypatch.setattr("app.modules.acquisition.routes.create_and_enqueue", fake_enqueue)
+
+    response = client.post(f"/acquisition/candidates/{candidate.id}/retry-verification")
+
+    assert response.status_code == 302
+    assert enqueued == [
+        {
+            "tenant_id": tenant_id,
+            "job_type": "website_verify",
+            "payload": {"candidate_id": candidate.id},
+        }
+    ]
+
+
+def test_retry_verification_enqueue_failure_preserves_candidate_and_hides_detail(
+    acquisition_app, logged_in_client, monkeypatch
+) -> None:
+    from app.extensions import get_engine
+    from app.modules.acquisition.models import AcquisitionCandidate
+    from app.modules.audit.models import AuditEvent
+    from app.modules.jobs.service import JobServiceError
+
+    client, tenant_id = logged_in_client
+    mission = _seed_mission(acquisition_app, tenant_id=tenant_id, actor_id=_actor_id(client))
+    candidate = _seed_candidate(
+        acquisition_app,
+        tenant_id=tenant_id,
+        mission_id=mission.id,
+        suffix="retry-unavailable",
+        status="needs_evidence",
+    )
+
+    def fail_enqueue(*_args, **_kwargs):
+        raise JobServiceError("redis password sk-sensitive-detail")
+
+    monkeypatch.setattr("app.modules.acquisition.routes.create_and_enqueue", fail_enqueue)
+
+    response = client.post(f"/acquisition/candidates/{candidate.id}/retry-verification")
+
+    assert response.status_code == 503
+    html = response.get_data(as_text=True)
+    assert "验证任务暂时无法加入队列，请稍后重试" in html
+    assert "sk-sensitive-detail" not in html
+    with Session(get_engine(acquisition_app)) as db_session:
+        stored = db_session.get(AcquisitionCandidate, candidate.id)
+        event = db_session.scalar(
+            select(AuditEvent).where(
+                AuditEvent.action == "acquisition_candidate.verification_retried",
+                AuditEvent.target_id == candidate.id,
+            )
+        )
+    assert stored is not None
+    assert stored.status == "needs_evidence"
+    assert event is None
+
+
+def test_retry_verification_requires_csrf_when_enabled(csrf_client) -> None:
+    client, _tenant_id = csrf_client
+
+    response = client.post("/acquisition/candidates/not-present/retry-verification")
+
+    assert response.status_code == 400
+
+
+def test_retry_verification_button_is_only_shown_for_needs_evidence_candidate(
+    acquisition_app, logged_in_client
+) -> None:
+    client, tenant_id = logged_in_client
+    mission = _seed_mission(acquisition_app, tenant_id=tenant_id, actor_id=_actor_id(client))
+    retry_candidate = _seed_candidate(
+        acquisition_app,
+        tenant_id=tenant_id,
+        mission_id=mission.id,
+        suffix="retry-button",
+        status="needs_evidence",
+    )
+    eligible_candidate = _seed_candidate(
+        acquisition_app,
+        tenant_id=tenant_id,
+        mission_id=mission.id,
+        suffix="no-retry-button",
+        status="eligible",
+    )
+
+    retry_html = client.get(f"/acquisition/candidates/{retry_candidate.id}").get_data(as_text=True)
+    eligible_html = client.get(f"/acquisition/candidates/{eligible_candidate.id}").get_data(
+        as_text=True
+    )
+    retry_path = f"/acquisition/candidates/{retry_candidate.id}/retry-verification"
+
+    assert f'action="{retry_path}"' in retry_html
+    assert f'hx-post="{retry_path}"' in retry_html
+    assert f'hx-target="#candidate-{retry_candidate.id}"' in retry_html
+    assert 'name="csrf_token"' in retry_html
+    assert retry_path not in eligible_html
+
+
+def test_retry_verification_htmx_returns_updated_candidate_card(
+    acquisition_app, logged_in_client, monkeypatch
+) -> None:
+    client, tenant_id = logged_in_client
+    mission = _seed_mission(acquisition_app, tenant_id=tenant_id, actor_id=_actor_id(client))
+    candidate = _seed_candidate(
+        acquisition_app,
+        tenant_id=tenant_id,
+        mission_id=mission.id,
+        suffix="retry-htmx",
+        status="needs_evidence",
+    )
+    monkeypatch.setattr(
+        "app.modules.acquisition.routes.create_and_enqueue",
+        lambda *_args, **_kwargs: SimpleNamespace(id="retry-job"),
+    )
+
+    response = client.post(
+        f"/acquisition/candidates/{candidate.id}/retry-verification",
+        headers={"HX-Request": "true"},
+    )
+
+    assert response.status_code == 200
+    html = response.get_data(as_text=True)
+    assert f'id="candidate-{candidate.id}"' in html
+    assert f"/acquisition/candidates/{candidate.id}/retry-verification" not in html
+
+
 def test_country_evidence_form_is_visible_only_for_country_resolution_state(
     acquisition_app, logged_in_client
 ) -> None:
