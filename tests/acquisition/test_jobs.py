@@ -193,9 +193,7 @@ def test_reconciler_failed_verification_marks_candidate_unusable(
     with Session(get_engine(acquisition_app)) as session:
         candidate = session.get(AcquisitionCandidate, candidate_id)
         mission = session.get(AcquisitionMission, mission_id)
-        notification = session.scalar(
-            select(Notification).where(Notification.tenant_id == "t1")
-        )
+        notification = session.scalar(select(Notification).where(Notification.tenant_id == "t1"))
         assert candidate is not None
         assert candidate.status == "needs_evidence"
         assert mission is not None
@@ -203,6 +201,140 @@ def test_reconciler_failed_verification_marks_candidate_unusable(
         assert notification is not None
         assert notification.kind == "mission_failed"
         assert notification.body == "Mission 1: 0 usable candidates"
+
+
+def test_reconciler_repairs_inconsistent_completed_mission_and_notification(
+    acquisition_app, seed_acquisition_mission
+):
+    from app.extensions import get_engine
+    from app.modules.acquisition.jobs import reconcile_missions
+    from app.modules.acquisition.models import (
+        AcquisitionCandidate,
+        AcquisitionMission,
+        Notification,
+    )
+    from app.modules.jobs.models import Job
+
+    mission_id = seed_acquisition_mission(suffix="stale")
+    candidate_id = "candidate-stale-terminal"
+    completed_key = f"mission-terminal:{mission_id}:completed"
+    with Session(get_engine(acquisition_app)) as session:
+        mission = session.get(AcquisitionMission, mission_id)
+        assert mission is not None
+        mission.status = "completed"
+        mission.finished_at = datetime.now(UTC) - timedelta(hours=1)
+        session.add(
+            AcquisitionCandidate(
+                id=candidate_id,
+                tenant_id="t1",
+                mission_id=mission_id,
+                status="verifying",
+                dedupe_key="domain:stale-terminal.example",
+            )
+        )
+        session.add(
+            Job(
+                tenant_id="t1",
+                job_type="website_verify",
+                status="failed",
+                error_code="source_unreachable",
+                payload_json=json.dumps({"candidate_id": candidate_id}),
+            )
+        )
+        session.add(
+            Notification(
+                id="notification-stale-completed",
+                tenant_id="t1",
+                kind="mission_completed",
+                title="Acquisition mission completed",
+                body="Mission stale: 1 usable candidates",
+                target_url=f"/acquisition/missions/{mission_id}",
+                status="unread",
+                dedupe_key=completed_key,
+            )
+        )
+        session.commit()
+
+    assert reconcile_missions(acquisition_app, tenant_id="t1", now=datetime.now(UTC)) == 1
+
+    with Session(get_engine(acquisition_app)) as session:
+        candidate = session.get(AcquisitionCandidate, candidate_id)
+        mission = session.get(AcquisitionMission, mission_id)
+        notifications = list(
+            session.scalars(
+                select(Notification).where(
+                    Notification.tenant_id == "t1",
+                    Notification.target_url == f"/acquisition/missions/{mission_id}",
+                )
+            )
+        )
+        assert candidate is not None
+        assert candidate.status == "needs_evidence"
+        assert mission is not None
+        assert mission.status == "failed"
+        stale = next(item for item in notifications if item.dedupe_key == completed_key)
+        assert stale.status == "archived"
+        current = [item for item in notifications if item.status == "unread"]
+        assert len(current) == 1
+        assert current[0].kind == "mission_failed"
+        assert current[0].body == "Mission stale: 0 usable candidates"
+
+
+@pytest.mark.parametrize(
+    ("mission_status", "candidate_status"),
+    [("completed", "eligible"), ("failed", "needs_evidence")],
+)
+def test_reconciler_skips_consistent_terminal_missions(
+    acquisition_app,
+    seed_acquisition_mission,
+    mission_status,
+    candidate_status,
+):
+    from app.extensions import get_engine
+    from app.modules.acquisition.jobs import reconcile_missions
+    from app.modules.acquisition.models import (
+        AcquisitionCandidate,
+        AcquisitionMission,
+        Notification,
+    )
+    from app.modules.jobs.models import Job
+
+    mission_id = seed_acquisition_mission(suffix=f"{mission_status}-{candidate_status}")
+    candidate_id = f"candidate-{mission_status}-{candidate_status}"
+    with Session(get_engine(acquisition_app)) as session:
+        mission = session.get(AcquisitionMission, mission_id)
+        assert mission is not None
+        mission.status = mission_status
+        session.add(
+            AcquisitionCandidate(
+                id=candidate_id,
+                tenant_id="t1",
+                mission_id=mission_id,
+                status=candidate_status,
+                dedupe_key=f"domain:{mission_status}-{candidate_status}.example",
+            )
+        )
+        session.add(
+            Job(
+                tenant_id="t1",
+                job_type="website_verify",
+                status="failed",
+                error_code="source_unreachable",
+                payload_json=json.dumps({"candidate_id": candidate_id}),
+            )
+        )
+        session.commit()
+
+    assert reconcile_missions(acquisition_app, tenant_id="t1", now=datetime.now(UTC)) == 0
+
+    with Session(get_engine(acquisition_app)) as session:
+        candidate = session.get(AcquisitionCandidate, candidate_id)
+        mission = session.get(AcquisitionMission, mission_id)
+        assert candidate is not None
+        assert candidate.status == candidate_status
+        assert mission is not None
+        assert mission.status == mission_status
+        assert session.scalar(select(func.count()).select_from(Notification)) == 0
 
 
 @pytest.mark.parametrize(
@@ -264,9 +396,7 @@ def test_reconciler_uses_only_actionable_candidates_after_failed_verification(
     with Session(get_engine(acquisition_app)) as session:
         candidate = session.get(AcquisitionCandidate, candidate_id)
         mission = session.get(AcquisitionMission, mission_id)
-        notification = session.scalar(
-            select(Notification).where(Notification.tenant_id == "t1")
-        )
+        notification = session.scalar(select(Notification).where(Notification.tenant_id == "t1"))
         assert candidate is not None
         assert candidate.status == expected_candidate_status
         assert mission is not None

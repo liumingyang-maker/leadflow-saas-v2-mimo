@@ -616,16 +616,28 @@ def reconcile_missions(app, *, tenant_id: str | None = None, now: datetime) -> i
         for provider_status in session.scalars(provider_query):
             _ensure_provider_failure_notification(session, provider_status)
 
-        mission_query = select(AcquisitionMission).where(
-            AcquisitionMission.status.in_(["queued", "running"])
-        )
+        job_query = select(Job).where(Job.job_type.in_(_ACQUISITION_JOB_TYPES))
+        candidate_query = select(AcquisitionCandidate)
+        if tenant_id is not None:
+            job_query = job_query.where(Job.tenant_id == tenant_id)
+            candidate_query = candidate_query.where(AcquisitionCandidate.tenant_id == tenant_id)
+        all_jobs = list(session.scalars(job_query))
+        candidates = list(session.scalars(candidate_query))
+        repairable_terminal_ids = {
+            candidate.mission_id
+            for candidate in _failed_verification_candidates(session, all_jobs)
+            if candidate.status in {"discovered", "verifying"}
+        }
+        mission_filter = AcquisitionMission.status.in_(["queued", "running"])
+        if repairable_terminal_ids:
+            mission_filter = mission_filter | (
+                AcquisitionMission.status.in_(["completed", "failed"])
+                & AcquisitionMission.id.in_(repairable_terminal_ids)
+            )
+        mission_query = select(AcquisitionMission).where(mission_filter)
         if tenant_id is not None:
             mission_query = mission_query.where(AcquisitionMission.tenant_id == tenant_id)
         missions = list(session.scalars(mission_query))
-        all_jobs = list(
-            session.scalars(select(Job).where(Job.job_type.in_(_ACQUISITION_JOB_TYPES)))
-        )
-        candidates = list(session.scalars(select(AcquisitionCandidate)))
         candidate_missions = {item.id: item.mission_id for item in candidates}
 
         for mission in missions:
@@ -672,6 +684,13 @@ def reconcile_missions(app, *, tenant_id: str | None = None, now: datetime) -> i
 
             notification_key = f"mission-terminal:{mission.id}:{next_status}"
             notifications = NotificationRepository(session)
+            stale_status = "failed" if next_status == "completed" else "completed"
+            stale_notification = notifications.find_by_dedupe_key(
+                f"mission-terminal:{mission.id}:{stale_status}",
+                tenant_id=mission.tenant_id,
+            )
+            if stale_notification is not None:
+                stale_notification.status = "archived"
             if (
                 notifications.find_by_dedupe_key(notification_key, tenant_id=mission.tenant_id)
                 is None
@@ -699,13 +718,12 @@ def reconcile_missions(app, *, tenant_id: str | None = None, now: datetime) -> i
     return changed
 
 
-def _reconcile_failed_verification_candidates(
+def _failed_verification_candidates(
     session: Session,
     jobs: list[Job],
-    *,
-    mission_id: str,
-) -> None:
+) -> list[AcquisitionCandidate]:
     candidates = CandidateRepository(session)
+    failed_candidates = []
     for job in jobs:
         if job.job_type != "website_verify" or job.status != "failed":
             continue
@@ -713,11 +731,19 @@ def _reconcile_failed_verification_candidates(
         if not isinstance(candidate_id, str):
             continue
         candidate = candidates.get(candidate_id, tenant_id=job.tenant_id)
-        if (
-            candidate is not None
-            and candidate.mission_id == mission_id
-            and candidate.status in {"discovered", "verifying"}
-        ):
+        if candidate is not None:
+            failed_candidates.append(candidate)
+    return failed_candidates
+
+
+def _reconcile_failed_verification_candidates(
+    session: Session,
+    jobs: list[Job],
+    *,
+    mission_id: str,
+) -> None:
+    for candidate in _failed_verification_candidates(session, jobs):
+        if candidate.mission_id == mission_id and candidate.status in {"discovered", "verifying"}:
             candidate.status = "needs_evidence"
 
 
