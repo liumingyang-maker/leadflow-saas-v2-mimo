@@ -510,13 +510,17 @@ def test_worker_does_not_retry_invalid_acquisition_payload(acquisition_app, monk
 def test_due_retry_is_requeued_with_incremented_attempt(acquisition_app, monkeypatch):
     from app.extensions import get_engine
     from app.modules.jobs.models import Job
+    from app.modules.jobs.service import JOB_HANDLER
     from app.modules.jobs.worker import recover_stale_jobs
+
+    enqueue_calls = []
 
     class FakeQueue:
         def __init__(self, *_args, **_kwargs):
             pass
 
-        def enqueue(self, *_args, **_kwargs):
+        def enqueue(self, *args, **kwargs):
+            enqueue_calls.append((args, kwargs))
             return SimpleNamespace(id="rq-retry")
 
     monkeypatch.setattr("rq.Queue", FakeQueue)
@@ -534,6 +538,8 @@ def test_due_retry_is_requeued_with_incremented_attempt(acquisition_app, monkeyp
         job_id = job.id
 
     assert recover_stale_jobs(acquisition_app) == 1
+    assert enqueue_calls == [((JOB_HANDLER, job_id), {"result_ttl": 86400})]
+    assert "job_result_ttl" not in enqueue_calls[0][1]
     with Session(get_engine(acquisition_app)) as session:
         job = session.get(Job, job_id)
         assert job is not None

@@ -14,7 +14,7 @@ import sys
 os.environ["APP_ENV"] = os.environ.get("APP_ENV", "development")
 
 from redis import Redis
-from rq import Worker
+from rq import SimpleWorker, Worker
 from rq.serializers import JSONSerializer
 
 redis_url = os.environ.get("REDIS_URL", "redis://localhost:6379/0")
@@ -24,6 +24,10 @@ skip_recovery = "--skip-recovery" in sys.argv
 queue_names = [a for a in (sys.argv[1:] or ["default"]) if a != "--skip-recovery"]
 
 redis_conn = Redis.from_url(redis_url)
+
+
+def _worker_class_for(platform_name: str):
+    return SimpleWorker if platform_name == "nt" else Worker
 
 
 def _run_recovery() -> None:
@@ -45,5 +49,6 @@ if __name__ == "__main__":
         _run_recovery()
         print("Recovery complete.")
 
-    worker = Worker(queue_names, connection=redis_conn, serializer=JSONSerializer)
+    worker_class = _worker_class_for(os.name)
+    worker = worker_class(queue_names, connection=redis_conn, serializer=JSONSerializer)
     worker.work()

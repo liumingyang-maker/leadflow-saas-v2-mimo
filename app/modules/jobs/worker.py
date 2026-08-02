@@ -417,7 +417,7 @@ def _enqueue_recovered_job(
         rq_job = queue.enqueue(
             JOB_HANDLER,
             recovered_job.id,
-            job_result_ttl=86400,
+            result_ttl=86400,
         )
         recovered_job.rq_job_id = rq_job.id or ""
         session.commit()

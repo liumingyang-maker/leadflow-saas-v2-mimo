@@ -56,10 +56,10 @@ def csrf_client(acquisition_app, logged_in_client):
 
 @pytest.fixture
 def seed_acquisition_mission(acquisition_app):
-    from app.modules.acquisition.models import AcquisitionMission, ProductKnowledgeSnapshot
     from sqlalchemy.orm import Session
 
     from app.extensions import get_engine
+    from app.modules.acquisition.models import AcquisitionMission, ProductKnowledgeSnapshot
 
     def seed(*, tenant_id: str = "t1", suffix: str = "1") -> str:
         product_id = f"product-{tenant_id}-{suffix}"

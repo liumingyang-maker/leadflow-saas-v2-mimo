@@ -95,7 +95,7 @@ def create_and_enqueue(
         rq_job = q.enqueue(
             JOB_HANDLER,
             saved_id,
-            job_result_ttl=86400,
+            result_ttl=86400,
         )
         # Update the RQ job ID
         with _session(app) as session:

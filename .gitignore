@@ -7,4 +7,6 @@
 __pycache__/
 *.pyc
 leadflow-v2-dev.db
+*.db-wal
+*.db-shm
 .env

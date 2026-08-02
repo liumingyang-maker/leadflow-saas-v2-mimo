@@ -59,7 +59,7 @@ def test_create_enqueue_passes_only_job_id_to_rq(monkeypatch) -> None:
         payload={"query": "x", "max_results": 1},
     )
 
-    assert calls == [((JOB_HANDLER, job.id), {"job_result_ttl": 86400})]
+    assert calls == [((JOB_HANDLER, job.id), {"result_ttl": 86400})]
 
 
 def test_enqueue_failure_marks_job_failed(monkeypatch) -> None:
