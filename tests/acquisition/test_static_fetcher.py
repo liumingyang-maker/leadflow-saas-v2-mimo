@@ -183,3 +183,26 @@ def test_fetcher_never_sends_session_or_secret_headers():
     assert "cookie" not in seen_headers[0]
     assert "authorization" not in seen_headers[0]
     assert "referer" not in seen_headers[0]
+
+
+def test_static_fetcher_context_manager_closes_owned_client_once(monkeypatch):
+    from app.integrations.web.fetcher import StaticFetcher
+
+    class OwnedClient:
+        def __init__(self) -> None:
+            self.close_calls = 0
+
+        def close(self) -> None:
+            self.close_calls += 1
+
+    client = OwnedClient()
+    monkeypatch.setattr(
+        "app.integrations.web.fetcher.httpx.Client",
+        lambda **_kwargs: client,
+    )
+
+    with StaticFetcher() as fetcher:
+        assert fetcher.client is client
+
+    fetcher.close()
+    assert client.close_calls == 1

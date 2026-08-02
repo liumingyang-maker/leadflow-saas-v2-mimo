@@ -10,8 +10,15 @@ from pydantic import ValidationError
 from sqlalchemy.orm import Session
 
 from app.extensions import get_engine
+from app.integrations.ai.mimo import ProviderError, build_mimo_provider
+from app.integrations.web.fetcher import FetchError, StaticFetcher
 from app.modules.accounts.guards import tenant_required
-from app.modules.acquisition.contracts import DEFAULT_LANGUAGES, MissionCreateInput
+from app.modules.acquisition.contracts import (
+    DEFAULT_LANGUAGES,
+    ManualCompanyFactsInput,
+    MissionCreateInput,
+)
+from app.modules.acquisition.manual_evidence import ManualEvidenceError
 from app.modules.acquisition.models import AcquisitionCandidate
 from app.modules.acquisition.repository import (
     AssessmentRepository,
@@ -22,9 +29,12 @@ from app.modules.acquisition.repository import (
 )
 from app.modules.acquisition.service import (
     AcquisitionError,
+    AcquisitionStateError,
     bulk_review_candidates,
     create_mission,
     create_product_snapshot,
+    process_manual_facts,
+    process_manual_url,
     review_candidate,
 )
 from app.modules.acquisition.workbench import (
@@ -162,6 +172,118 @@ def register_acquisition_routes(app: Flask) -> None:
     @tenant_required(app)
     def acquisition_mission_detail(mission_id: str):
         return _render_mission(app, mission_id=mission_id)
+
+    @app.post("/acquisition/missions/<mission_id>/manual-url")
+    @tenant_required(app)
+    def acquisition_mission_manual_url(mission_id: str):
+        tenant_id, _actor_id = _identity()
+        with Session(get_engine(app)) as db_session:
+            mission = MissionRepository(db_session).get(mission_id, tenant_id=tenant_id)
+            if mission is None:
+                abort(404)
+            channel_policy = _json_value(mission.channel_policy_json, {})
+            if mission.status == "cancelled" or not _manual_url_policy_allows(channel_policy):
+                return _render_mission(
+                    app,
+                    mission_id=mission_id,
+                    error="这个任务当前不能补充企业网址。",
+                    status_code=409,
+                )
+
+        mode = request.form.get("mode", "").strip()
+        if mode not in {"ai_extract", "manual_facts"}:
+            return _render_mission(
+                app,
+                mission_id=mission_id,
+                error="请选择有效的网址补充方式。",
+                status_code=400,
+            )
+
+        manual_url_values = _manual_url_form_values()
+        manual_url_form = _bounded_manual_url_form(manual_url_values)
+        if mode == "ai_extract" and len(manual_url_values["url"]) > 1000:
+            return _render_mission(
+                app,
+                mission_id=mission_id,
+                error="企业网址不能超过 1000 个字符。",
+                status_code=400,
+                manual_url_form=manual_url_form,
+            )
+
+        fetcher = None
+        provider = None
+        try:
+            if mode == "ai_extract":
+                provider = build_mimo_provider(app, tenant_id=tenant_id)
+                fetcher = StaticFetcher.from_app(app)
+                candidate = process_manual_url(
+                    app,
+                    tenant_id=tenant_id,
+                    mission_id=mission_id,
+                    url=manual_url_values["url"],
+                    fetcher=fetcher,
+                    extractor=provider,
+                )
+            else:
+                value = ManualCompanyFactsInput(**manual_url_values)
+                fetcher = StaticFetcher.from_app(app)
+                candidate = process_manual_facts(
+                    app,
+                    tenant_id=tenant_id,
+                    mission_id=mission_id,
+                    value=value,
+                    fetcher=fetcher,
+                )
+        except AcquisitionStateError:
+            return _render_mission(
+                app,
+                mission_id=mission_id,
+                error="这个任务当前不能补充企业网址。",
+                status_code=409,
+                manual_url_form=manual_url_form,
+                manual_mode_open=mode == "manual_facts",
+            )
+        except ProviderError:
+            return _render_mission(
+                app,
+                mission_id=mission_id,
+                error="MiMo 暂时不可用。你可以手工填写公开网页中的企业证据，或稍后重试。",
+                status_code=503,
+                manual_url_form=manual_url_form,
+                manual_mode_open=True,
+            )
+        except FetchError as exc:
+            status_code = 503 if exc.code in {"source_timeout", "source_unreachable"} else 400
+            return _render_mission(
+                app,
+                mission_id=mission_id,
+                error=exc.safe_summary,
+                status_code=status_code,
+                manual_url_form=manual_url_form,
+                manual_mode_open=mode == "manual_facts",
+            )
+        except ValidationError as exc:
+            return _render_mission(
+                app,
+                mission_id=mission_id,
+                error=_friendly_error(exc),
+                status_code=400,
+                manual_url_form=manual_url_form,
+                manual_mode_open=mode == "manual_facts",
+            )
+        except (AcquisitionError, ManualEvidenceError):
+            return _render_mission(
+                app,
+                mission_id=mission_id,
+                error="无法处理这份企业证据，请检查填写内容后重试。",
+                status_code=400,
+                manual_url_form=manual_url_form,
+                manual_mode_open=mode == "manual_facts",
+            )
+        finally:
+            _close_adapter(fetcher)
+            _close_adapter(provider)
+        return redirect(url_for("acquisition_candidate_detail", candidate_id=candidate.id))
 
     @app.post("/acquisition/missions/<mission_id>/start")
     @tenant_required(app)
@@ -398,6 +520,8 @@ def _render_mission(
     error: str = "",
     status_code: int = 200,
     bulk_confirmation: list[AcquisitionCandidate] | None = None,
+    manual_url_form: dict[str, str] | None = None,
+    manual_mode_open: bool = False,
 ):
     tenant_id, _actor_id = _identity()
     with Session(get_engine(app)) as db_session:
@@ -413,12 +537,16 @@ def _render_mission(
         candidate_views = [
             _candidate_view(db_session, item, tenant_id=tenant_id) for item in candidates
         ]
+        channel_policy = _json_value(mission.channel_policy_json, {})
         view = {
             "target": _json_value(mission.target_profile_json, {}),
-            "channels": _json_value(mission.channel_policy_json, {}),
+            "channels": channel_policy,
             "budget": _json_value(mission.budget_json, {}),
             "plan": _json_value(mission.plan_json, {}),
         }
+        manual_url_available = mission.status != "cancelled" and _manual_url_policy_allows(
+            channel_policy
+        )
     return (
         render_template(
             "acquisition/mission_detail.html",
@@ -429,6 +557,9 @@ def _render_mission(
             rejection_reasons=REJECTION_REASONS,
             error=error,
             bulk_confirmation=bulk_confirmation or [],
+            manual_url_form=manual_url_form or _empty_manual_url_form(),
+            manual_mode_open=manual_mode_open,
+            manual_url_available=manual_url_available,
         ),
         status_code,
     )
@@ -613,6 +744,59 @@ def _mission_form_values() -> dict[str, Any]:
         "max_search_actions": request.form.get("max_search_actions", "5"),
         "max_seconds": request.form.get("max_seconds", "900"),
     }
+
+
+def _manual_url_policy_allows(policy: Any) -> bool:
+    if not isinstance(policy, dict):
+        return False
+    allowed_channels = policy.get("allowed_channels")
+    return isinstance(allowed_channels, list) and "manual_url" in allowed_channels
+
+
+def _close_adapter(adapter: Any | None) -> None:
+    close = getattr(adapter, "close", None)
+    if not callable(close):
+        return
+    try:
+        close()
+    except Exception:
+        return
+
+
+def _empty_manual_url_form() -> dict[str, str]:
+    return {
+        "url": "",
+        "company_name": "",
+        "opportunity_country_code": "",
+        "buyer_type": "",
+        "evidence_text": "",
+        "contact_path": "",
+    }
+
+
+def _manual_url_form_values() -> dict[str, str]:
+    return {
+        "url": request.form.get("url", "").strip(),
+        "company_name": request.form.get("company_name", "").strip(),
+        "opportunity_country_code": request.form.get("opportunity_country_code", "")
+        .strip()
+        .upper(),
+        "buyer_type": request.form.get("buyer_type", "").strip().lower(),
+        "evidence_text": request.form.get("evidence_text", "").strip(),
+        "contact_path": request.form.get("contact_path", "").strip(),
+    }
+
+
+def _bounded_manual_url_form(values: dict[str, str]) -> dict[str, str]:
+    limits = {
+        "url": 1000,
+        "company_name": 300,
+        "opportunity_country_code": 2,
+        "buyer_type": 120,
+        "evidence_text": 1000,
+        "contact_path": 1000,
+    }
+    return {name: values.get(name, "")[:limit] for name, limit in limits.items()}
 
 
 def _friendly_error(exc: Exception) -> str:

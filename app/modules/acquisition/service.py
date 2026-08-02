@@ -75,6 +75,10 @@ class AcquisitionError(ValueError):
     pass
 
 
+class AcquisitionStateError(AcquisitionError):
+    pass
+
+
 @dataclass(frozen=True)
 class PromotionResult:
     candidate_id: str
@@ -225,6 +229,7 @@ def process_manual_url(
         mission = MissionRepository(session).get(mission_id, tenant_id=tenant_id)
         if mission is None:
             raise AcquisitionError("mission was not found")
+        _require_manual_url_active(mission)
         _require_manual_url_channel(mission)
 
     snapshot = fetcher.fetch(url)
@@ -238,6 +243,7 @@ def process_manual_url(
         mission = MissionRepository(session).get(mission_id, tenant_id=tenant_id)
         if mission is None:
             raise AcquisitionError("mission was not found")
+        _require_manual_url_active(mission)
         _require_manual_url_channel(mission)
         candidate = _persist_url_candidate(
             session,
@@ -267,6 +273,7 @@ def process_manual_facts(
         mission = MissionRepository(session).get(mission_id, tenant_id=tenant_id)
         if mission is None:
             raise AcquisitionError("mission was not found")
+        _require_manual_url_active(mission)
         _require_manual_url_channel(mission)
 
     primary = fetcher.fetch(value.url)
@@ -325,6 +332,7 @@ def process_manual_facts(
         mission = MissionRepository(session).get(mission_id, tenant_id=tenant_id)
         if mission is None:
             raise AcquisitionError("mission was not found")
+        _require_manual_url_active(mission)
         _require_manual_url_channel(mission)
         candidate = _persist_url_candidate(
             session,
@@ -463,6 +471,11 @@ def _require_manual_url_channel(mission: AcquisitionMission) -> None:
     allowed_channels = policy.get("allowed_channels", [])
     if not isinstance(allowed_channels, list) or "manual_url" not in allowed_channels:
         raise AcquisitionError("manual URL acquisition channel is not allowed")
+
+
+def _require_manual_url_active(mission: AcquisitionMission) -> None:
+    if mission.status == "cancelled":
+        raise AcquisitionStateError("manual URL acquisition is unavailable for cancelled mission")
 
 
 def review_candidate(

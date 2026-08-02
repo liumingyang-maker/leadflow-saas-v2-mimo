@@ -59,6 +59,7 @@ class StaticFetcher:
         self.max_bytes = max_bytes
         self.max_redirects = max_redirects
         self.now = now or (lambda: datetime.now(UTC))
+        self._closed = False
         self.client = httpx.Client(
             transport=transport,
             follow_redirects=False,
@@ -70,6 +71,20 @@ class StaticFetcher:
                 "User-Agent": "LeadFlowEvidenceFetcher/1.0",
             },
         )
+
+    def close(self) -> None:
+        if self._closed:
+            return
+        self._closed = True
+        close = getattr(self.client, "close", None)
+        if callable(close):
+            close()
+
+    def __enter__(self) -> StaticFetcher:
+        return self
+
+    def __exit__(self, _exc_type, _exc, _traceback) -> None:
+        self.close()
 
     @classmethod
     def from_app(cls, app) -> StaticFetcher:

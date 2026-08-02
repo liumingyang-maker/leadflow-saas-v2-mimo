@@ -213,6 +213,35 @@ def _generic_facts(
     )
 
 
+def _manual_artifact_counts(app, mission_id: str) -> tuple[int, int, int]:
+    from app.extensions import get_engine
+    from app.modules.acquisition.models import (
+        AcquisitionCandidate,
+        CandidateAssessment,
+        CandidateEvidence,
+    )
+
+    with Session(get_engine(app)) as session:
+        candidate_count = session.scalar(
+            select(func.count())
+            .select_from(AcquisitionCandidate)
+            .where(AcquisitionCandidate.mission_id == mission_id)
+        )
+        evidence_count = session.scalar(
+            select(func.count())
+            .select_from(CandidateEvidence)
+            .join(AcquisitionCandidate)
+            .where(AcquisitionCandidate.mission_id == mission_id)
+        )
+        assessment_count = session.scalar(
+            select(func.count())
+            .select_from(CandidateAssessment)
+            .join(AcquisitionCandidate)
+            .where(AcquisitionCandidate.mission_id == mission_id)
+        )
+    return int(candidate_count or 0), int(evidence_count or 0), int(assessment_count or 0)
+
+
 def test_country_unknown_cannot_be_accepted(acquisition_app):
     from app.modules.acquisition.service import AcquisitionError, review_candidate
 
@@ -446,6 +475,171 @@ def test_manual_facts_need_no_mimo_and_are_idempotent(acquisition_app):
         assert assessment.model_id == "human-confirmed-v1"
         assert assessment.prompt_version == "manual-facts-v1"
         assert assessment.score_version == "priority-v2"
+
+
+@pytest.mark.parametrize("mode", ["ai_extract", "manual_facts"])
+def test_cancelled_manual_mission_rejects_before_fetch(acquisition_app, mode: str):
+    from app.extensions import get_engine
+    from app.modules.acquisition.contracts import ManualCompanyFactsInput
+    from app.modules.acquisition.models import AcquisitionMission
+    from app.modules.acquisition.service import (
+        AcquisitionError,
+        process_manual_facts,
+        process_manual_url,
+    )
+
+    mission_id = _seed_manual_mission(acquisition_app, mission_id=f"cancelled-{mode}")
+    with Session(get_engine(acquisition_app)) as session:
+        mission = session.get(AcquisitionMission, mission_id)
+        assert mission is not None
+        mission.status = "cancelled"
+        session.commit()
+
+    calls: list[str] = []
+
+    class Fetcher:
+        def fetch(self, _url):
+            calls.append("fetch")
+            raise AssertionError("cancelled mission must not fetch")
+
+    if mode == "ai_extract":
+        extractor = type(
+            "Extractor",
+            (),
+            {"extract": lambda self, _snapshot: calls.append("extract")},
+        )()
+
+        def operation():
+            return process_manual_url(
+                acquisition_app,
+                tenant_id="t1",
+                mission_id=mission_id,
+                url="https://manual.example/products",
+                fetcher=Fetcher(),
+                extractor=extractor,
+            )
+
+    else:
+        value = ManualCompanyFactsInput(
+            url="https://manual.example/products",
+            company_name="Manual Co",
+            opportunity_country_code="MX",
+            buyer_type="distributor",
+            evidence_text="motorcycle engine distributor in Mexico",
+            contact_path="sales@manual.example",
+        )
+
+        def operation():
+            return process_manual_facts(
+                acquisition_app,
+                tenant_id="t1",
+                mission_id=mission_id,
+                value=value,
+                fetcher=Fetcher(),
+            )
+
+    with pytest.raises(AcquisitionError) as raised:
+        operation()
+
+    assert type(raised.value).__name__ == "AcquisitionStateError"
+    assert str(raised.value) == "manual URL acquisition is unavailable for cancelled mission"
+    assert calls == []
+    assert _manual_artifact_counts(acquisition_app, mission_id) == (0, 0, 0)
+
+
+def test_manual_url_cancellation_race_writes_no_artifacts(acquisition_app):
+    from app.extensions import get_engine
+    from app.modules.acquisition.models import AcquisitionMission
+    from app.modules.acquisition.service import AcquisitionError, process_manual_url
+
+    mission_id = _seed_manual_mission(acquisition_app, mission_id="manual-url-race")
+    source_url = "https://manual.example/products"
+    snapshot = _fetch_result(
+        requested_url=source_url,
+        text="Motorcycle engine distributor in Mexico. Contact sales@manual.example.",
+        content_hash="d" * 64,
+    )
+    facts = _generic_facts(source_url)
+    calls: list[str] = []
+
+    class CancellingFetcher:
+        def fetch(self, _url):
+            calls.append("fetch")
+            with Session(get_engine(acquisition_app)) as session:
+                mission = session.get(AcquisitionMission, mission_id)
+                assert mission is not None
+                mission.status = "cancelled"
+                session.commit()
+            return snapshot
+
+    class Extractor:
+        def extract(self, _snapshot):
+            calls.append("extract")
+            return facts
+
+    with pytest.raises(AcquisitionError) as raised:
+        process_manual_url(
+            acquisition_app,
+            tenant_id="t1",
+            mission_id=mission_id,
+            url=source_url,
+            fetcher=CancellingFetcher(),
+            extractor=Extractor(),
+        )
+
+    assert type(raised.value).__name__ == "AcquisitionStateError"
+    assert str(raised.value) == "manual URL acquisition is unavailable for cancelled mission"
+    assert calls == ["fetch", "extract"]
+    assert _manual_artifact_counts(acquisition_app, mission_id) == (0, 0, 0)
+
+
+def test_manual_facts_cancellation_race_writes_no_artifacts(acquisition_app):
+    from app.extensions import get_engine
+    from app.modules.acquisition.contracts import ManualCompanyFactsInput
+    from app.modules.acquisition.models import AcquisitionMission
+    from app.modules.acquisition.service import AcquisitionError, process_manual_facts
+
+    mission_id = _seed_manual_mission(acquisition_app, mission_id="manual-facts-race")
+    source_url = "https://manual.example/products"
+    snapshot = _fetch_result(
+        requested_url=source_url,
+        text="Manual Co is a motorcycle engine distributor in Mexico. "
+        "Contact sales@manual.example.",
+        content_hash="f" * 64,
+    )
+    value = ManualCompanyFactsInput(
+        url=source_url,
+        company_name="Manual Co",
+        opportunity_country_code="MX",
+        buyer_type="distributor",
+        evidence_text="motorcycle engine distributor in Mexico",
+        contact_path="sales@manual.example",
+    )
+    calls: list[str] = []
+
+    class CancellingFetcher:
+        def fetch(self, _url):
+            calls.append("fetch")
+            with Session(get_engine(acquisition_app)) as session:
+                mission = session.get(AcquisitionMission, mission_id)
+                assert mission is not None
+                mission.status = "cancelled"
+                session.commit()
+            return snapshot
+
+    with pytest.raises(AcquisitionError) as raised:
+        process_manual_facts(
+            acquisition_app,
+            tenant_id="t1",
+            mission_id=mission_id,
+            value=value,
+            fetcher=CancellingFetcher(),
+        )
+
+    assert type(raised.value).__name__ == "AcquisitionStateError"
+    assert str(raised.value) == "manual URL acquisition is unavailable for cancelled mission"
+    assert calls == ["fetch"]
+    assert _manual_artifact_counts(acquisition_app, mission_id) == (0, 0, 0)
 
 
 def test_manual_facts_same_domain_contact_url_persists_each_snapshot_once(acquisition_app):

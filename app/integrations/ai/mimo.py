@@ -59,6 +59,21 @@ class MiMoProvider:
         self.client = client
         self.model = model
         self.web_search_enabled = web_search_enabled
+        self._closed = False
+
+    def close(self) -> None:
+        if self._closed:
+            return
+        self._closed = True
+        close = getattr(self.client, "close", None)
+        if callable(close):
+            close()
+
+    def __enter__(self) -> MiMoProvider:
+        return self
+
+    def __exit__(self, _exc_type, _exc, _traceback) -> None:
+        self.close()
 
     def plan_mission(
         self,

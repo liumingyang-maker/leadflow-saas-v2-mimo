@@ -20,6 +20,24 @@ class FakeOpenAI:
         self.responses = FakeResponses(output_text)
 
 
+def test_mimo_provider_context_manager_closes_owned_client_once():
+    from app.integrations.ai.mimo import MiMoProvider
+
+    class OwnedClient:
+        def __init__(self) -> None:
+            self.close_calls = 0
+
+        def close(self) -> None:
+            self.close_calls += 1
+
+    client = OwnedClient()
+    with MiMoProvider(client=client, model="mimo-v2.5") as provider:
+        assert provider.client is client
+
+    provider.close()
+    assert client.close_calls == 1
+
+
 def test_mimo_planner_returns_one_run_per_country():
     from app.integrations.ai.mimo import MiMoProvider
 

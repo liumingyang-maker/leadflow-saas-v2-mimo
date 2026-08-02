@@ -65,6 +65,67 @@
   </section>
 </div>
 
+{% if manual_url_available %}
+<section class="lf-panel lf-form-stack lf-section" aria-labelledby="manual-url-title">
+  <div>
+    <span class="lf-eyebrow">公开网页证据</span>
+    <h2 id="manual-url-title">补充企业网址</h2>
+    <p class="lf-muted">系统只读取可公开访问的页面，并会先执行网址安全检查。此操作只补充候选证据，不会发送任何消息。</p>
+  </div>
+  <form class="lf-form-stack" method="post" action="/acquisition/missions/{{ mission.id }}/manual-url">
+    {{ csrf_input() }}
+    <input type="hidden" name="mode" value="ai_extract">
+    <div class="lf-field-group">
+      <label class="lf-label" for="manual-ai-url">企业网址</label>
+      <input class="lf-field" id="manual-ai-url" name="url" type="url" maxlength="1000" autocomplete="url" value="{{ manual_url_form.url }}" required>
+      <span class="lf-muted">请填写企业官网或公开的企业介绍页面。</span>
+    </div>
+    {{ button("用 MiMo 提取这个网址", "primary", "submit") }}
+  </form>
+  <details class="lf-form-stack"{% if manual_mode_open %} open{% endif %}>
+    <summary>MiMo 不可用？手工填写证据</summary>
+    <form class="lf-form-stack" method="post" action="/acquisition/missions/{{ mission.id }}/manual-url">
+      {{ csrf_input() }}
+      <input type="hidden" name="mode" value="manual_facts">
+      <div class="lf-field-group">
+        <label class="lf-label" for="manual-facts-url">企业网址</label>
+        <input class="lf-field" id="manual-facts-url" name="url" type="url" maxlength="1000" autocomplete="url" value="{{ manual_url_form.url }}" required>
+      </div>
+      <div class="lf-field-group">
+        <label class="lf-label" for="manual-company-name">企业名称</label>
+        <input class="lf-field" id="manual-company-name" name="company_name" maxlength="300" autocomplete="organization" value="{{ manual_url_form.company_name }}" required>
+      </div>
+      <div class="lf-field-group">
+        <label class="lf-label" for="manual-country">目标国家（ISO 两位代码）</label>
+        <input class="lf-field" id="manual-country" name="opportunity_country_code" maxlength="2" value="{{ manual_url_form.opportunity_country_code }}" placeholder="MX" required>
+      </div>
+      <div class="lf-field-group">
+        <label class="lf-label" for="manual-buyer-type">买家类型</label>
+        <select class="lf-field" id="manual-buyer-type" name="buyer_type" required>
+          <option value="">请选择</option>
+          <option value="importer"{% if manual_url_form.buyer_type == 'importer' %} selected{% endif %}>进口商</option>
+          <option value="distributor"{% if manual_url_form.buyer_type == 'distributor' %} selected{% endif %}>经销商</option>
+          <option value="wholesaler"{% if manual_url_form.buyer_type == 'wholesaler' %} selected{% endif %}>批发商</option>
+          <option value="assembler"{% if manual_url_form.buyer_type == 'assembler' %} selected{% endif %}>装配商</option>
+          <option value="repair_network"{% if manual_url_form.buyer_type == 'repair_network' %} selected{% endif %}>维修网络</option>
+        </select>
+      </div>
+      <div class="lf-field-group">
+        <label class="lf-label" for="manual-evidence">证据句子</label>
+        <textarea class="lf-field lf-textarea" id="manual-evidence" name="evidence_text" maxlength="1000" rows="4" required>{{ manual_url_form.evidence_text }}</textarea>
+        <span class="lf-muted">请摘录能支持企业身份和买家类型的公开页面原文。</span>
+      </div>
+      <div class="lf-field-group">
+        <label class="lf-label" for="manual-contact">联系路径</label>
+        <input class="lf-field" id="manual-contact" name="contact_path" maxlength="1000" value="{{ manual_url_form.contact_path }}" placeholder="buyer@example.com" required>
+        <span class="lf-muted">填写该公开页面能够支持的邮箱、电话或同域联系页网址。</span>
+      </div>
+      {{ button("保存手工证据", "secondary", "submit") }}
+    </form>
+  </details>
+</section>
+{% endif %}
+
 <section class="lf-section" aria-labelledby="candidate-list-title">
   <div class="lf-page-header">
     <div><span class="lf-eyebrow">审核队列</span><h2 id="candidate-list-title">候选客户（{{ candidate_views|length }}）</h2></div>
