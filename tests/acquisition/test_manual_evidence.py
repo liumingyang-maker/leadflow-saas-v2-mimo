@@ -18,9 +18,7 @@ from app.modules.acquisition.manual_evidence import (
 )
 
 
-def _snapshot(
-    *, final_url: str, text: str, requested_url: str | None = None
-) -> FetchResult:
+def _snapshot(*, final_url: str, text: str, requested_url: str | None = None) -> FetchResult:
     return FetchResult(
         requested_url=requested_url or final_url,
         final_url=final_url,
@@ -53,9 +51,10 @@ def test_evidence_matching_uses_nfkc_casefold_and_collapsed_whitespace() -> None
     assert normalize_evidence_text("  ＳＴＲＡＳＳＥ  INDUSTRIAL\tpumps ") == (
         "strasse industrial pumps"
     )
-    assert require_supported_text(
-        claim="  ＳＴＲＡＳＳＥ  INDUSTRIAL\tpumps ", page_text=page_text
-    ) == "ＳＴＲＡＳＳＥ INDUSTRIAL pumps"
+    assert (
+        require_supported_text(claim="  ＳＴＲＡＳＳＥ  INDUSTRIAL\tpumps ", page_text=page_text)
+        == "ＳＴＲＡＳＳＥ INDUSTRIAL pumps"
+    )
 
 
 def test_rejects_evidence_sentence_absent_from_primary_page() -> None:
@@ -220,10 +219,7 @@ def test_phone_does_not_match_with_digits_joined_through_phone_separators(
             _input(contact_path=contact),
             primary=_snapshot(
                 final_url="https://example.com/products",
-                text=(
-                    "Industrial pumps for regional distributors. "
-                    f"Call {page_contact}."
-                ),
+                text=(f"Industrial pumps for regional distributors. Call {page_contact}."),
             ),
             contact_snapshot=None,
         )
@@ -240,10 +236,7 @@ def test_phone_accepts_standalone_text_and_punctuation_boundaries(
         _input(contact_path="1234567"),
         primary=_snapshot(
             final_url="https://example.com/products",
-            text=(
-                "Industrial pumps for regional distributors. "
-                f"Call {page_contact}"
-            ),
+            text=(f"Industrial pumps for regional distributors. Call {page_contact}"),
         ),
         contact_snapshot=None,
     )
@@ -278,8 +271,7 @@ def test_formatted_phone_matches_at_non_digit_boundaries() -> None:
         primary=_snapshot(
             final_url="https://example.com/products",
             text=(
-                "Industrial pumps for regional distributors. "
-                "Call: +52 (55) 1234-5678, weekdays."
+                "Industrial pumps for regional distributors. Call: +52 (55) 1234-5678, weekdays."
             ),
         ),
         contact_snapshot=None,
@@ -361,9 +353,7 @@ def test_rejects_invalid_idna_domain_with_safe_error() -> None:
 
 
 def test_rejects_same_domain_contact_url_without_snapshot() -> None:
-    with pytest.raises(
-        ManualEvidenceError, match="^Contact URL requires a fetched contact page$"
-    ):
+    with pytest.raises(ManualEvidenceError, match="^Contact URL requires a fetched contact page$"):
         build_manual_company_facts(
             _input(contact_path="https://example.com/contact"),
             primary=_snapshot(
@@ -443,10 +433,7 @@ def test_rejects_malformed_primary_final_url_safely() -> None:
             _input(),
             primary=_snapshot(
                 final_url=malformed,
-                text=(
-                    "Industrial pumps for regional distributors. "
-                    "Contact sales@example.com."
-                ),
+                text=("Industrial pumps for regional distributors. Contact sales@example.com."),
             ),
             contact_snapshot=None,
         )
@@ -486,7 +473,8 @@ def test_claim_source_is_primary_final_url_not_submitted_or_contact_url() -> Non
         primary=primary,
         contact_snapshot=_snapshot(
             requested_url="https://real-company.example/contact",
-            final_url="https://www.real-company.example/contact-us", text="Contact us."
+            final_url="https://www.real-company.example/contact-us",
+            text="Contact us.",
         ),
     )
 
