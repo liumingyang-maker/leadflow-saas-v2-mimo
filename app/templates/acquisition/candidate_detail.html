@@ -7,6 +7,7 @@
   <a href="/leads">CRM</a>
 </nav>
 <header class="lf-page-header"><div><span class="lf-eyebrow">候选客户审核</span><h1 class="lf-page-title">{{ view.candidate.company_name or view.candidate.domain or "待确认公司" }}</h1></div></header>
+{% if verification_retried %}<div class="lf-alert lf-alert-success" role="status"><strong>已加入队列</strong><span>已重新加入公开网页验证队列。</span></div>{% endif %}
 {% if error %}<div class="lf-alert" role="alert"><strong>操作未执行</strong><span>{{ error }}</span></div>{% endif %}
 <div class="lf-section">{% include "acquisition/_candidate_card.html" %}</div>
 {% endcall %}

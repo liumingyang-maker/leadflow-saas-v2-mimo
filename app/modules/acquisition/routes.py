@@ -440,7 +440,13 @@ def register_acquisition_routes(app: Flask) -> None:
             db_session.commit()
         if _is_htmx():
             return _render_candidate_card(app, candidate_id)
-        return redirect(url_for("acquisition_candidate_detail", candidate_id=candidate_id))
+        return redirect(
+            url_for(
+                "acquisition_candidate_detail",
+                candidate_id=candidate_id,
+                verification_retried=1,
+            )
+        )
 
     @app.post("/acquisition/candidates/<candidate_id>/country-evidence")
     @tenant_required(app)
@@ -730,6 +736,9 @@ def _render_candidate(
             view=candidate_view,
             rejection_reasons=REJECTION_REASONS,
             error=error,
+            verification_retried=(
+                request.method == "GET" and request.args.get("verification_retried") == "1"
+            ),
             country_evidence_form=country_evidence_form or {},
         ),
         status_code,

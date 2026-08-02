@@ -474,7 +474,9 @@ def test_retry_verification_enqueues_exact_payload_then_updates_state_and_audits
     )
 
     assert response.status_code == 302
-    assert response.headers["Location"].endswith(f"/acquisition/candidates/{candidate.id}")
+    assert response.headers["Location"].endswith(
+        f"/acquisition/candidates/{candidate.id}?verification_retried=1"
+    )
     assert captured == {
         "tenant_id": tenant_id,
         "job_type": "website_verify",
@@ -495,6 +497,40 @@ def test_retry_verification_enqueues_exact_payload_then_updates_state_and_audits
     assert event is not None
     assert event.actor_user_id == actor_id
     assert event.safe_summary == "Candidate website verification retried"
+
+
+def test_retry_verification_redirect_shows_fixed_safe_success_banner(
+    acquisition_app, logged_in_client, monkeypatch
+) -> None:
+    client, tenant_id = logged_in_client
+    mission = _seed_mission(acquisition_app, tenant_id=tenant_id, actor_id=_actor_id(client))
+    candidate = _seed_candidate(
+        acquisition_app,
+        tenant_id=tenant_id,
+        mission_id=mission.id,
+        suffix="retry-banner",
+        status="needs_evidence",
+    )
+    monkeypatch.setattr(
+        "app.modules.acquisition.routes.create_and_enqueue",
+        lambda *_args, **_kwargs: SimpleNamespace(id="retry-job"),
+    )
+
+    response = client.post(
+        f"/acquisition/candidates/{candidate.id}/retry-verification",
+        follow_redirects=True,
+    )
+
+    assert response.status_code == 200
+    assert len(response.history) == 1
+    assert (
+        response.history[0]
+        .headers["Location"]
+        .endswith(f"/acquisition/candidates/{candidate.id}?verification_retried=1")
+    )
+    html = response.get_data(as_text=True)
+    assert 'class="lf-alert lf-alert-success" role="status"' in html
+    assert "已重新加入公开网页验证队列。" in html
 
 
 @pytest.mark.parametrize("candidate_id", ["not-present", "cross-tenant"])
