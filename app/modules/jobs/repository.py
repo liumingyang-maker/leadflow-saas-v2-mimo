@@ -118,6 +118,28 @@ class JobRepository:
                 return True
         return False
 
+    def cancel_queued_for_tenant(self, job_id: str, *, tenant_id: str) -> bool:
+        """Atomically cancel a queued tenant Job before a worker can claim it."""
+
+        tenant_id = _require_tenant(tenant_id)
+        now = datetime.now(UTC)
+        result = self.session.execute(
+            update(Job)
+            .where(
+                Job.id == job_id,
+                Job.tenant_id == tenant_id,
+                Job.status == "queued",
+            )
+            .values(
+                status="cancelled",
+                progress_message="Cancelled after candidate state changed",
+                finished_at=now,
+                updated_at=now,
+            )
+            .execution_options(synchronize_session=False)
+        )
+        return result.rowcount == 1
+
     def list_recent_terminal_for_workbench(
         self, *, tenant_id: str, limit: int = MAX_WORKBENCH_TERMINAL_JOBS
     ) -> TerminalJobProjection:

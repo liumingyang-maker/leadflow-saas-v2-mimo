@@ -2,6 +2,7 @@
 {% set candidate = view.candidate %}
 {% set country_form = country_evidence_form if country_evidence_form is defined else {} %}
 <article class="lf-candidate-card" id="candidate-{{ candidate.id }}" data-candidate-id="{{ candidate.id }}">
+  {% if verification_retried %}<div class="lf-alert lf-alert-success" role="status"><strong>已加入队列</strong><span>已重新加入公开网页验证队列。</span></div>{% endif %}
   {% if card_error %}<div class="lf-alert" role="alert"><strong>操作未执行</strong><span>{{ card_error }}</span></div>{% endif %}
   <header class="lf-candidate-header">
     {% if bulk_form_id %}<input class="lf-candidate-check" type="checkbox" name="candidate_ids" value="{{ candidate.id }}" form="{{ bulk_form_id }}" aria-label="选择 {{ candidate.company_name or candidate.domain }}">{% endif %}

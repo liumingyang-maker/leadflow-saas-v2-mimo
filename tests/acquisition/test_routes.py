@@ -710,6 +710,88 @@ def test_retry_verification_enqueue_failure_preserves_candidate_and_hides_detail
     assert event is None
 
 
+def test_retry_verification_does_not_overwrite_concurrent_human_decision(
+    acquisition_app, logged_in_client, monkeypatch
+) -> None:
+    from app.extensions import get_engine
+    from app.modules.acquisition.models import AcquisitionCandidate
+    from app.modules.audit.models import AuditEvent
+    from app.modules.jobs.models import Job
+
+    client, tenant_id = logged_in_client
+    mission = _seed_mission(acquisition_app, tenant_id=tenant_id, actor_id=_actor_id(client))
+    candidate = _seed_candidate(
+        acquisition_app,
+        tenant_id=tenant_id,
+        mission_id=mission.id,
+        suffix="retry-human-race",
+        status="needs_evidence",
+    )
+    decided_at = datetime(2026, 8, 3, 12, 0, tzinfo=UTC)
+    queued_job_id = "retry-human-race-job"
+
+    def enqueue_after_human_decision(_app, **_kwargs):
+        with Session(get_engine(acquisition_app)) as db_session:
+            stored = db_session.get(AcquisitionCandidate, candidate.id)
+            assert stored is not None
+            stored.status = "rejected"
+            stored.eligibility_code = "human_rejected"
+            stored.decision_reason_code = "wrong_buyer_type"
+            stored.decision_note = "Reviewed before retry claim"
+            stored.decided_by = "human-reviewer"
+            stored.decided_at = decided_at
+            db_session.add(
+                Job(
+                    id=queued_job_id,
+                    tenant_id=tenant_id,
+                    job_type="website_verify",
+                    status="queued",
+                    payload_json=json.dumps({"candidate_id": candidate.id}),
+                )
+            )
+            db_session.commit()
+        return SimpleNamespace(id=queued_job_id)
+
+    monkeypatch.setattr(
+        "app.modules.acquisition.routes.create_and_enqueue",
+        enqueue_after_human_decision,
+    )
+
+    response = client.post(f"/acquisition/candidates/{candidate.id}/retry-verification")
+
+    assert response.status_code == 409
+    assert "候选状态已经改变，未重新验证" in response.get_data(as_text=True)
+    with Session(get_engine(acquisition_app)) as db_session:
+        stored = db_session.get(AcquisitionCandidate, candidate.id)
+        queued_job = db_session.get(Job, queued_job_id)
+        event = db_session.scalar(
+            select(AuditEvent).where(
+                AuditEvent.action == "acquisition_candidate.verification_retried",
+                AuditEvent.target_id == candidate.id,
+            )
+        )
+
+    assert stored is not None
+    assert (
+        stored.status,
+        stored.eligibility_code,
+        stored.decision_reason_code,
+        stored.decision_note,
+        stored.decided_by,
+        stored.decided_at,
+    ) == (
+        "rejected",
+        "human_rejected",
+        "wrong_buyer_type",
+        "Reviewed before retry claim",
+        "human-reviewer",
+        decided_at.replace(tzinfo=None),
+    )
+    assert queued_job is not None
+    assert queued_job.status == "cancelled"
+    assert event is None
+
+
 def test_retry_verification_requires_csrf_when_enabled(csrf_client) -> None:
     client, _tenant_id = csrf_client
 
@@ -777,6 +859,8 @@ def test_retry_verification_htmx_returns_updated_candidate_card(
     html = response.get_data(as_text=True)
     assert f'id="candidate-{candidate.id}"' in html
     assert f"/acquisition/candidates/{candidate.id}/retry-verification" not in html
+    assert 'class="lf-alert lf-alert-success" role="status"' in html
+    assert "已重新加入公开网页验证队列。" in html
 
 
 def test_country_evidence_form_is_visible_only_for_country_resolution_state(

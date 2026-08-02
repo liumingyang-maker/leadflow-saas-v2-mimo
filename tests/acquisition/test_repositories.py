@@ -80,6 +80,37 @@ def test_candidate_status_map_is_tenant_scoped(acquisition_app, seed_acquisition
     assert statuses == {own.id: "needs_evidence"}
 
 
+def test_candidate_repository_atomically_marks_only_needs_evidence_candidate_verifying(
+    acquisition_app, seed_acquisition_mission
+):
+    from app.extensions import get_engine
+    from app.modules.acquisition.models import AcquisitionCandidate
+    from app.modules.acquisition.repository import CandidateRepository
+
+    mission_id = seed_acquisition_mission(tenant_id="t1", suffix="atomic-retry")
+    with Session(get_engine(acquisition_app)) as session:
+        candidate = AcquisitionCandidate(
+            tenant_id="t1",
+            mission_id=mission_id,
+            status="needs_evidence",
+            dedupe_key="domain:atomic-retry.example",
+        )
+        session.add(candidate)
+        session.commit()
+        candidate_id = candidate.id
+
+        repo = CandidateRepository(session)
+        assert repo.mark_verifying_if_needs_evidence(candidate_id, tenant_id="t1") is True
+        assert repo.mark_verifying_if_needs_evidence(candidate_id, tenant_id="t1") is False
+        assert repo.mark_verifying_if_needs_evidence(candidate_id, tenant_id="t2") is False
+        session.commit()
+
+    with Session(get_engine(acquisition_app)) as session:
+        stored = session.get(AcquisitionCandidate, candidate_id)
+        assert stored is not None
+        assert stored.status == "verifying"
+
+
 def test_mission_repository_selects_oldest_needs_evidence_mission(acquisition_app):
     from app.extensions import get_engine
     from app.modules.acquisition.models import (

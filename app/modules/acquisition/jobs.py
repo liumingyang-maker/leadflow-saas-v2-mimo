@@ -53,6 +53,7 @@ from app.modules.acquisition.versions import (
 )
 from app.modules.audit.service import add_event
 from app.modules.jobs.models import Job
+from app.modules.jobs.repository import JobRepository
 from app.modules.jobs.service import create_and_enqueue
 
 _ACTIVE_JOB_STATUSES = {"queued", "running", "retrying"}
@@ -445,9 +446,13 @@ def handle_website_verify(app, job: Job, payload: dict[str, Any]) -> dict[str, A
         candidate.unknowns_json = canonical_json(facts.unknowns)
         session.commit()
 
-    if not _job_exists(
-        app, tenant_id=tenant_id, job_type="candidate_assess", entity_id=candidate_id
-    ):
+    with Session(get_engine(app)) as session:
+        assessment_active = JobRepository(session).has_active_for_candidate(
+            candidate_id,
+            job_type="candidate_assess",
+            tenant_id=tenant_id,
+        )
+    if not assessment_active:
         create_and_enqueue(
             app,
             tenant_id=tenant_id,

@@ -3,7 +3,7 @@ from __future__ import annotations
 from collections.abc import Sequence
 from datetime import UTC, datetime
 
-from sqlalchemy import select
+from sqlalchemy import select, update
 from sqlalchemy.orm import Session
 
 from app.modules.acquisition.models import (
@@ -185,6 +185,22 @@ class CandidateRepository:
             )
         ).all()
         return dict(rows)
+
+    def mark_verifying_if_needs_evidence(self, candidate_id: str, *, tenant_id: str) -> bool:
+        """Atomically claim one candidate for a user-requested verification retry."""
+
+        tenant_id = _require_tenant(tenant_id)
+        result = self.session.execute(
+            update(AcquisitionCandidate)
+            .where(
+                AcquisitionCandidate.id == candidate_id,
+                AcquisitionCandidate.tenant_id == tenant_id,
+                AcquisitionCandidate.status == "needs_evidence",
+            )
+            .values(status="verifying")
+            .execution_options(synchronize_session=False)
+        )
+        return result.rowcount == 1
 
     def find_by_dedupe_key(
         self, mission_id: str, dedupe_key: str, *, tenant_id: str

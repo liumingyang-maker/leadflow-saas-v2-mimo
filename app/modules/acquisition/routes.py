@@ -381,7 +381,10 @@ def register_acquisition_routes(app: Flask) -> None:
 
         The active-Job check is sufficient for the current single-user runtime.
         A future concurrent SaaS deployment must add a database-backed workflow
-        identity before treating this preflight check as strict idempotency.
+        identity before treating this preflight check as strict idempotency. The
+        post-enqueue state claim never overwrites a human decision; if a worker
+        wins the queued-Job cancellation race, the human terminal-state guards
+        still prevent its later assessment from changing that decision.
         """
 
         tenant_id, actor_id = _identity()
@@ -409,7 +412,7 @@ def register_acquisition_routes(app: Flask) -> None:
                 )
 
         try:
-            create_and_enqueue(
+            queued_job = create_and_enqueue(
                 app,
                 tenant_id=tenant_id,
                 job_type="website_verify",
@@ -424,22 +427,34 @@ def register_acquisition_routes(app: Flask) -> None:
             )
 
         with Session(get_engine(app)) as db_session:
-            candidate = CandidateRepository(db_session).get(candidate_id, tenant_id=tenant_id)
-            if candidate is None:
-                abort(404)
-            candidate.status = "verifying"
+            transitioned = CandidateRepository(db_session).mark_verifying_if_needs_evidence(
+                candidate_id,
+                tenant_id=tenant_id,
+            )
+            if not transitioned:
+                JobRepository(db_session).cancel_queued_for_tenant(
+                    queued_job.id,
+                    tenant_id=tenant_id,
+                )
+                db_session.commit()
+                return _render_retry_verification_error(
+                    app,
+                    candidate_id=candidate_id,
+                    error="候选状态已经改变，未重新验证。",
+                    status_code=409,
+                )
             add_event(
                 db_session,
                 tenant_id=tenant_id,
                 actor_user_id=actor_id,
                 action="acquisition_candidate.verification_retried",
                 target_type="acquisition_candidate",
-                target_id=candidate.id,
+                target_id=candidate_id,
                 safe_summary="Candidate website verification retried",
             )
             db_session.commit()
         if _is_htmx():
-            return _render_candidate_card(app, candidate_id)
+            return _render_candidate_card(app, candidate_id, verification_retried=True)
         return redirect(
             url_for(
                 "acquisition_candidate_detail",
@@ -751,6 +766,7 @@ def _render_candidate_card(
     *,
     error: str = "",
     country_evidence_form: dict[str, str] | None = None,
+    verification_retried: bool = False,
 ):
     tenant_id, _actor_id = _identity()
     with Session(get_engine(app)) as db_session:
@@ -763,6 +779,7 @@ def _render_candidate_card(
         view=view,
         rejection_reasons=REJECTION_REASONS,
         card_error=error,
+        verification_retried=verification_retried,
         country_evidence_form=country_evidence_form or {},
     )
 

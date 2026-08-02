@@ -133,6 +133,33 @@ def test_active_candidate_job_lookup_matches_exact_tenant_type_status_and_payloa
         )
 
 
+def test_job_repository_atomically_cancels_only_tenant_owned_queued_job(monkeypatch) -> None:
+    engine = _engine(monkeypatch)
+    from app.modules.jobs.models import Job
+    from app.modules.jobs.repository import JobRepository
+
+    with Session(engine) as session:
+        queued = Job(tenant_id="t1", job_type="website_verify", status="queued")
+        running = Job(tenant_id="t1", job_type="website_verify", status="running")
+        private = Job(tenant_id="t2", job_type="website_verify", status="queued")
+        session.add_all([queued, running, private])
+        session.commit()
+        queued_id = queued.id
+        running_id = running.id
+        private_id = private.id
+        repo = JobRepository(session)
+
+        assert repo.cancel_queued_for_tenant(queued_id, tenant_id="t1") is True
+        assert repo.cancel_queued_for_tenant(running_id, tenant_id="t1") is False
+        assert repo.cancel_queued_for_tenant(private_id, tenant_id="t1") is False
+        session.commit()
+
+    with Session(engine) as session:
+        assert session.get(Job, queued_id).status == "cancelled"
+        assert session.get(Job, running_id).status == "running"
+        assert session.get(Job, private_id).status == "queued"
+
+
 def test_workbench_terminal_projection_has_hard_bound_and_reports_truncation(
     monkeypatch,
 ) -> None:

@@ -865,6 +865,105 @@ def test_discovery_verify_and_assess_handlers_preserve_evidence_boundary(
             assert session.scalar(select(func.count()).select_from(CandidateAssessment)) == 2
 
 
+@pytest.mark.parametrize(
+    ("prior_assessment_status", "expected_enqueues"),
+    [
+        ("succeeded", 1),
+        ("failed", 1),
+        ("queued", 0),
+        ("running", 0),
+        ("retrying", 0),
+    ],
+)
+def test_successful_reverification_queues_assessment_unless_exact_assessment_is_active(
+    acquisition_app,
+    seed_acquisition_mission,
+    monkeypatch,
+    prior_assessment_status: str,
+    expected_enqueues: int,
+) -> None:
+    from app.extensions import get_engine
+    from app.integrations.ai.contracts import ExtractedCompanyFacts
+    from app.integrations.web.fetcher import FetchResult
+    from app.modules.acquisition.jobs import handle_website_verify
+    from app.modules.acquisition.models import AcquisitionCandidate
+    from app.modules.jobs.models import Job
+
+    mission_id = seed_acquisition_mission(suffix=f"reverify-{prior_assessment_status}")
+    candidate_id = f"candidate-reverify-{prior_assessment_status}"
+    with Session(get_engine(acquisition_app)) as session:
+        session.add(
+            AcquisitionCandidate(
+                id=candidate_id,
+                tenant_id="t1",
+                mission_id=mission_id,
+                status="verifying",
+                website="https://reverify.example/products",
+                dedupe_key=f"domain:reverify-{prior_assessment_status}.example",
+            )
+        )
+        session.add(
+            Job(
+                tenant_id="t1",
+                job_type="candidate_assess",
+                status=prior_assessment_status,
+                payload_json=json.dumps({"candidate_id": candidate_id}),
+            )
+        )
+        session.commit()
+
+    snapshot = FetchResult(
+        requested_url="https://reverify.example/products",
+        final_url="https://reverify.example/products",
+        status_code=200,
+        content_type="text/html",
+        title="Reverify Example",
+        text="Motorcycle engine distributor in Mexico. Contact us.",
+        content_hash="b" * 64,
+        retrieved_at=datetime.now(UTC),
+        redirect_chain=(),
+    )
+    facts = ExtractedCompanyFacts(
+        company_name="Reverify Example",
+        canonical_domain="reverify.example",
+        hq_country_code="MX",
+        opportunity_country_code="MX",
+        buyer_type="distributor",
+        product_terms=["motorcycle engine"],
+        contact_paths=["https://reverify.example/contact"],
+    )
+    monkeypatch.setattr(
+        "app.modules.acquisition.jobs.StaticFetcher",
+        SimpleNamespace(
+            from_app=lambda _app: SimpleNamespace(fetch=lambda _url: snapshot),
+        ),
+    )
+    monkeypatch.setattr(
+        "app.modules.acquisition.jobs.build_mimo_provider",
+        lambda _app, tenant_id: SimpleNamespace(extract=lambda _snapshot: facts),
+    )
+    queued: list[dict[str, object]] = []
+    monkeypatch.setattr(
+        "app.modules.acquisition.jobs.create_and_enqueue",
+        lambda _app, **kwargs: queued.append(kwargs),
+    )
+
+    result = handle_website_verify(
+        acquisition_app,
+        Job(id="reverify-job", tenant_id="t1", job_type="website_verify"),
+        {"candidate_id": candidate_id},
+    )
+
+    assert result["stage"] == "verified"
+    assert len(queued) == expected_enqueues
+    if expected_enqueues:
+        assert queued[0] == {
+            "tenant_id": "t1",
+            "job_type": "candidate_assess",
+            "payload": {"candidate_id": candidate_id},
+        }
+
+
 def test_worker_does_not_retry_invalid_acquisition_payload(acquisition_app, monkeypatch):
     from app.extensions import get_engine
     from app.modules.jobs.models import Job
