@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
@@ -7,6 +8,15 @@ from types import SimpleNamespace
 import pytest
 from sqlalchemy import func, select, update
 from sqlalchemy.orm import Session
+
+
+def _assessment_snapshot(assessment):
+    from app.modules.acquisition.models import CandidateAssessment
+
+    return {
+        column.name: getattr(assessment, column.name)
+        for column in CandidateAssessment.__table__.columns
+    }
 
 
 def test_acquisition_job_payload_contains_ids_not_secrets(acquisition_app, monkeypatch):
@@ -216,6 +226,7 @@ def test_discovery_verify_and_assess_handlers_preserve_evidence_boundary(
         CandidateAssessment,
         CandidateEvidence,
     )
+    from app.modules.acquisition.policies import canonical_json
     from app.modules.acquisition.repository import CandidateRepository
     from app.modules.jobs.models import Job
 
@@ -314,6 +325,42 @@ def test_discovery_verify_and_assess_handlers_preserve_evidence_boundary(
     assert verified["stage"] == "verified"
     assert queued.pop()["payload"] == {"candidate_id": candidate_id}
 
+    with Session(get_engine(acquisition_app)) as session:
+        evidence_items = list(
+            session.scalars(
+                select(CandidateEvidence).where(CandidateEvidence.candidate_id == candidate_id)
+            )
+        )
+        bundle_hash = hashlib.sha256(
+            canonical_json(
+                sorted(
+                    (item.canonical_url, item.content_hash, item.validation_status)
+                    for item in evidence_items
+                )
+            ).encode("utf-8")
+        ).hexdigest()
+        historical = CandidateAssessment(
+            tenant_id="t1",
+            candidate_id=candidate_id,
+            evidence_bundle_hash=bundle_hash,
+            policy_version="eligibility-v1",
+            score_version="priority-v1",
+            prompt_version="company-extract-v1",
+            model_provider="mimo",
+            model_id="mimo-v2.5",
+            input_json=canonical_json({"historical": "job-input"}),
+            hard_gate_json=canonical_json({"historical": "job-gate"}),
+            score_breakdown_json=canonical_json({"historical": "job-score"}),
+            signal_coverage=77,
+            priority_mode="full_v1",
+            explanation="Historical background assessment",
+            created_at=datetime(2025, 12, 30, 23, 59, tzinfo=UTC),
+        )
+        session.add(historical)
+        session.commit()
+        historical_id = historical.id
+        historical_before = _assessment_snapshot(historical)
+
     assess_job = Job(id="assess-job", tenant_id="t1", job_type="candidate_assess")
     assessed = handle_candidate_assess(acquisition_app, assess_job, {"candidate_id": candidate_id})
     assert assessed["disposition"] == "eligible"
@@ -323,7 +370,15 @@ def test_discovery_verify_and_assess_handlers_preserve_evidence_boundary(
         assert candidate.status == "eligible"
         assert candidate.priority_score is not None
         assert session.scalar(select(func.count()).select_from(CandidateEvidence)) == 2
-        assert session.scalar(select(func.count()).select_from(CandidateAssessment)) == 1
+        assert session.scalar(select(func.count()).select_from(CandidateAssessment)) == 2
+        historical = session.get(CandidateAssessment, historical_id)
+        assert historical is not None
+        assert _assessment_snapshot(historical) == historical_before
+        assessment = session.scalar(
+            select(CandidateAssessment).where(CandidateAssessment.score_version == "priority-v2")
+        )
+        assert assessment is not None
+        assert assessment.score_version == "priority-v2"
         mission = session.get(AcquisitionMission, mission_id)
         costs = json.loads(mission.cost_summary_json)["providers"]
         assert costs["mimo"]["requests"] == 2
@@ -377,7 +432,7 @@ def test_discovery_verify_and_assess_handlers_preserve_evidence_boundary(
             "race-reviewer",
             raced_decided_at.replace(tzinfo=None),
         )
-        assert session.scalar(select(func.count()).select_from(CandidateAssessment)) == 1
+        assert session.scalar(select(func.count()).select_from(CandidateAssessment)) == 2
 
     for index, status in enumerate(("accepted", "promoted", "rejected"), start=1):
         with Session(get_engine(acquisition_app)) as session:
@@ -423,7 +478,7 @@ def test_discovery_verify_and_assess_handlers_preserve_evidence_boundary(
             assert candidate.priority_score is not None
             assert candidate.priority_band
             assert candidate.signal_coverage > 0
-            assert session.scalar(select(func.count()).select_from(CandidateAssessment)) == 1
+            assert session.scalar(select(func.count()).select_from(CandidateAssessment)) == 2
 
 
 def test_worker_does_not_retry_invalid_acquisition_payload(acquisition_app, monkeypatch):

@@ -6,6 +6,7 @@ from dataclasses import dataclass
 from typing import Literal
 
 Disposition = Literal["eligible", "needs_evidence", "rejected"]
+PriorityMode = Literal["full_v1", "fit_quality_provisional_v1"]
 
 
 @dataclass(frozen=True)
@@ -54,7 +55,7 @@ class ScoreResult:
     priority_score: int | None
     priority_band: str
     signal_coverage: int
-    priority_mode: str
+    priority_mode: PriorityMode
 
 
 def evaluate_gate(facts: EligibilityFacts) -> GateResult:
@@ -104,10 +105,10 @@ def _weighted_known(
     return score, coverage
 
 
-def _band(score: int | None, coverage: int) -> str:
+def _band(score: int | None, coverage: int, mode: PriorityMode) -> str:
     if score is None:
         return "unknown"
-    if score >= 85 and coverage >= 60:
+    if score >= 85 and coverage >= 60 and mode == "full_v1":
         return "S"
     if score >= 70:
         return "A"
@@ -147,13 +148,13 @@ def score_candidate(value: ScoreInput) -> ScoreResult:
     )
     priority, _dimension_coverage = _weighted_known(((fit, 50), (intent, 30), (quality, 20)))
     total_coverage = round((fit_coverage * 50 + intent_coverage * 30 + quality_coverage * 20) / 100)
-    mode = "full_v1" if intent is not None else "fit_quality_provisional_v1"
+    mode: PriorityMode = "full_v1" if intent is not None else "fit_quality_provisional_v1"
     return ScoreResult(
         fit_score=fit,
         intent_score=intent,
         data_quality_score=quality,
         priority_score=priority,
-        priority_band=_band(priority, total_coverage),
+        priority_band=_band(priority, total_coverage, mode),
         signal_coverage=total_coverage,
         priority_mode=mode,
     )

@@ -43,6 +43,11 @@ from app.modules.acquisition.scoring import (
     score_candidate,
 )
 from app.modules.acquisition.states import update_assessment_state_if_mutable
+from app.modules.acquisition.versions import (
+    ELIGIBILITY_POLICY_VERSION,
+    MIMO_EXTRACT_PROMPT_VERSION,
+    PRIORITY_SCORE_VERSION,
+)
 from app.modules.audit.service import add_event
 from app.modules.jobs.models import Job
 from app.modules.jobs.service import create_and_enqueue
@@ -537,9 +542,9 @@ def handle_candidate_assess(app, job: Job, payload: dict[str, Any]) -> dict[str,
         existing = assessments.find_input_version(
             candidate_id,
             bundle_hash,
-            "eligibility-v1",
-            "priority-v1",
-            "company-extract-v1",
+            ELIGIBILITY_POLICY_VERSION,
+            PRIORITY_SCORE_VERSION,
+            MIMO_EXTRACT_PROMPT_VERSION,
             model_id,
             tenant_id=tenant_id,
         )
@@ -548,9 +553,9 @@ def handle_candidate_assess(app, job: Job, payload: dict[str, Any]) -> dict[str,
                 CandidateAssessment(
                     candidate_id=candidate_id,
                     evidence_bundle_hash=bundle_hash,
-                    policy_version="eligibility-v1",
-                    score_version="priority-v1",
-                    prompt_version="company-extract-v1",
+                    policy_version=ELIGIBILITY_POLICY_VERSION,
+                    score_version=PRIORITY_SCORE_VERSION,
+                    prompt_version=MIMO_EXTRACT_PROMPT_VERSION,
                     model_provider="mimo",
                     model_id=model_id,
                     input_json=canonical_json(score_input.__dict__),

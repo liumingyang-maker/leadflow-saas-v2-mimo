@@ -1,11 +1,21 @@
 from __future__ import annotations
 
+import hashlib
 import json
 from datetime import UTC, datetime
 
 import pytest
 from sqlalchemy import func, select, update
 from sqlalchemy.orm import Session
+
+
+def _assessment_snapshot(assessment):
+    from app.modules.acquisition.models import CandidateAssessment
+
+    return {
+        column.name: getattr(assessment, column.name)
+        for column in CandidateAssessment.__table__.columns
+    }
 
 
 def _seed_mission_and_candidate(
@@ -241,6 +251,8 @@ def test_create_mission_uses_validated_defaults(acquisition_app):
 
 
 def test_manual_url_still_fetches_extracts_and_assesses(acquisition_app):
+    from app.extensions import get_engine
+    from app.modules.acquisition.models import CandidateAssessment
     from app.modules.acquisition.service import process_manual_url
 
     _seed_mission_and_candidate(
@@ -258,6 +270,84 @@ def test_manual_url_still_fetches_extracts_and_assesses(acquisition_app):
     assert candidate.source_channel == "manual_url"
     assert candidate.status == "eligible"
     assert candidate.priority_score is not None
+    with Session(get_engine(acquisition_app)) as session:
+        assessment = session.scalar(select(CandidateAssessment))
+        assert assessment is not None
+        assert assessment.score_version == "priority-v2"
+
+
+def test_current_assessment_preserves_historical_priority_v1_row(acquisition_app):
+    from app.extensions import get_engine
+    from app.modules.acquisition.models import (
+        AcquisitionCandidate,
+        AcquisitionMission,
+        CandidateAssessment,
+    )
+    from app.modules.acquisition.policies import canonical_json
+    from app.modules.acquisition.service import _assess_candidate_in_session
+
+    candidate_id = _seed_mission_and_candidate(
+        acquisition_app,
+        status="eligible",
+        eligibility_code="eligible",
+        suffix="priority-history",
+    )
+    bundle_hash = hashlib.sha256(canonical_json([]).encode("utf-8")).hexdigest()
+    created_at = datetime(2025, 12, 31, 23, 59, tzinfo=UTC)
+    historical_json = canonical_json({"priority_score": 91, "priority_band": "S"})
+
+    with Session(get_engine(acquisition_app)) as session:
+        historical = CandidateAssessment(
+            tenant_id="t1",
+            candidate_id=candidate_id,
+            evidence_bundle_hash=bundle_hash,
+            policy_version="eligibility-v1",
+            score_version="priority-v1",
+            prompt_version="company-extract-v1",
+            model_provider="mimo",
+            model_id="mimo-v2.5",
+            input_json=canonical_json({"historical": True}),
+            hard_gate_json=canonical_json({"disposition": "eligible"}),
+            score_breakdown_json=historical_json,
+            signal_coverage=100,
+            priority_mode="full_v1",
+            explanation="Historical priority-v1 assessment",
+            created_at=created_at,
+        )
+        session.add(historical)
+        session.commit()
+        historical_id = historical.id
+        before = _assessment_snapshot(historical)
+
+    with Session(get_engine(acquisition_app)) as session:
+        candidate = session.get(AcquisitionCandidate, candidate_id)
+        mission = session.get(AcquisitionMission, "m1")
+        assert candidate is not None
+        assert mission is not None
+        _assess_candidate_in_session(
+            session,
+            app=acquisition_app,
+            candidate=candidate,
+            mission=mission,
+            tenant_id="t1",
+        )
+        session.commit()
+
+    with Session(get_engine(acquisition_app)) as session:
+        assessments = list(
+            session.scalars(
+                select(CandidateAssessment)
+                .where(CandidateAssessment.candidate_id == candidate_id)
+                .order_by(CandidateAssessment.score_version)
+            )
+        )
+        historical = session.get(CandidateAssessment, historical_id)
+        assert historical is not None
+        assert _assessment_snapshot(historical) == before
+        assert [assessment.score_version for assessment in assessments] == [
+            "priority-v1",
+            "priority-v2",
+        ]
 
 
 @pytest.mark.parametrize("status", ["accepted", "promoted", "rejected"])

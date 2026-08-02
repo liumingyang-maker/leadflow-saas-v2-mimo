@@ -49,6 +49,11 @@ from app.modules.acquisition.scoring import (
     score_candidate,
 )
 from app.modules.acquisition.states import update_assessment_state_if_mutable
+from app.modules.acquisition.versions import (
+    ELIGIBILITY_POLICY_VERSION,
+    MIMO_EXTRACT_PROMPT_VERSION,
+    PRIORITY_SCORE_VERSION,
+)
 from app.modules.audit.service import add_event
 from app.modules.jobs.service import create_and_enqueue
 from app.modules.leads.models import Activity, Company, Lead
@@ -599,7 +604,9 @@ def _promote_candidate_in_session(
                 data_quality_score=breakdown.get("data_quality_score"),
                 priority_score=candidate.priority_score,
                 priority_band=candidate.priority_band,
-                score_version=assessment.score_version if assessment else "priority-v1",
+                score_version=(
+                    assessment.score_version if assessment else PRIORITY_SCORE_VERSION
+                ),
                 score_explanation_json=(
                     canonical_json(
                         {
@@ -790,7 +797,7 @@ def apply_suggestion(app, *, tenant_id: str, actor_id: str, suggestion_id: str) 
             "base_target_profile": _json_object(mission.target_profile_json),
             "target_profile": next_profile,
             "proposed_change": original_proposal,
-            "score_version": "priority-v1",
+            "score_version": PRIORITY_SCORE_VERSION,
         }
         digest = hashlib.sha256(canonical_json(version_payload).encode("utf-8")).hexdigest()
         version = f"target-profile-{digest[:12]}"
@@ -951,9 +958,9 @@ def _assess_candidate_in_session(
         assessments.find_input_version(
             candidate.id,
             bundle_hash,
-            "eligibility-v1",
-            "priority-v1",
-            "company-extract-v1",
+            ELIGIBILITY_POLICY_VERSION,
+            PRIORITY_SCORE_VERSION,
+            MIMO_EXTRACT_PROMPT_VERSION,
             model_id,
             tenant_id=tenant_id,
         )
@@ -963,9 +970,9 @@ def _assess_candidate_in_session(
             CandidateAssessment(
                 candidate_id=candidate.id,
                 evidence_bundle_hash=bundle_hash,
-                policy_version="eligibility-v1",
-                score_version="priority-v1",
-                prompt_version="company-extract-v1",
+                policy_version=ELIGIBILITY_POLICY_VERSION,
+                score_version=PRIORITY_SCORE_VERSION,
+                prompt_version=MIMO_EXTRACT_PROMPT_VERSION,
                 model_provider="mimo",
                 model_id=model_id,
                 input_json=canonical_json(score_input.__dict__),

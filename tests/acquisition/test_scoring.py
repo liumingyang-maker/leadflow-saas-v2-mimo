@@ -47,6 +47,43 @@ def test_missing_intent_is_provisional_not_zero():
     assert result.signal_coverage < 100
 
 
+def test_provisional_priority_cannot_receive_s_band():
+    from app.modules.acquisition.scoring import ScoreInput, score_candidate
+
+    result = score_candidate(
+        ScoreInput(
+            product_relevance=100,
+            buyer_role=100,
+            country_match=100,
+            company_size=100,
+            industry_match=100,
+            direct_purchase=None,
+            recent_activity=None,
+            competitor_signal=None,
+            signal_recency=None,
+            identity_quality=100,
+            source_trust=100,
+            contactability=100,
+            independent_evidence=100,
+            data_recency=100,
+        )
+    )
+
+    assert result.priority_mode == "fit_quality_provisional_v1"
+    assert result.priority_band == "A"
+
+
+def test_full_priority_can_receive_s_band():
+    from app.modules.acquisition.scoring import ScoreInput, score_candidate
+
+    result = score_candidate(
+        ScoreInput(**{field: 100 for field in ScoreInput.__dataclass_fields__})
+    )
+
+    assert result.priority_mode == "full_v1"
+    assert result.priority_band == "S"
+
+
 def test_hard_rejections_take_precedence_over_country_unknown():
     from app.modules.acquisition.scoring import EligibilityFacts, evaluate_gate
 
