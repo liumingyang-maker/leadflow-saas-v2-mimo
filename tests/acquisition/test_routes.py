@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from datetime import UTC, datetime
 from types import SimpleNamespace
 
 import pytest
@@ -52,6 +53,7 @@ def _seed_candidate(
     suffix: str,
     status: str = "eligible",
     country_status: str = "confirmed",
+    eligibility_code: str | None = None,
 ):
     from app.extensions import get_engine
     from app.modules.acquisition.models import AcquisitionCandidate
@@ -72,7 +74,11 @@ def _seed_candidate(
             priority_band="A",
             signal_coverage=75,
             ai_confidence=78,
-            eligibility_code=("eligible" if status == "eligible" else "missing_contact_path"),
+            eligibility_code=(
+                eligibility_code
+                if eligibility_code is not None
+                else ("eligible" if status == "eligible" else "missing_contact_path")
+            ),
             observed_facts_json=json.dumps(
                 [{"claim_id": "claim-1", "field": "buyer_type", "value": "distributor"}]
             ),
@@ -327,6 +333,417 @@ def test_reject_requires_csrf_when_enabled(csrf_client) -> None:
     )
 
     assert response.status_code == 400
+
+
+def test_country_evidence_requires_csrf_when_enabled(csrf_client) -> None:
+    client, _tenant_id = csrf_client
+
+    response = client.post(
+        "/acquisition/candidates/not-present/country-evidence",
+        data={
+            "country_code": "MX",
+            "source_url": "https://example.com/contact",
+            "evidence_text": "Official Mexico office",
+            "reason_code": "official_contact_page",
+        },
+    )
+
+    assert response.status_code == 400
+
+
+def test_country_evidence_form_is_visible_only_for_country_resolution_state(
+    acquisition_app, logged_in_client
+) -> None:
+    client, tenant_id = logged_in_client
+    mission = _seed_mission(acquisition_app, tenant_id=tenant_id, actor_id=_actor_id(client))
+    _seed_candidate(
+        acquisition_app,
+        tenant_id=tenant_id,
+        mission_id=mission.id,
+        suffix="country-unknown",
+        status="needs_evidence",
+        country_status="unknown",
+        eligibility_code="country_unknown",
+    )
+    _seed_candidate(
+        acquisition_app,
+        tenant_id=tenant_id,
+        mission_id=mission.id,
+        suffix="country-conflicting",
+        status="needs_evidence",
+        country_status="conflicting",
+        eligibility_code="country_conflicting",
+    )
+    _seed_candidate(
+        acquisition_app,
+        tenant_id=tenant_id,
+        mission_id=mission.id,
+        suffix="missing-contact",
+        status="needs_evidence",
+        country_status="confirmed",
+        eligibility_code="missing_contact_path",
+    )
+
+    html = client.get(f"/acquisition/missions/{mission.id}").get_data(as_text=True)
+
+    assert html.count('name="country_code"') == 2
+    assert html.count("/country-evidence") == 4
+    assert "确认目标国家证据" in html
+
+
+def test_country_evidence_cross_tenant_returns_404_before_fetcher(
+    acquisition_app, logged_in_client, monkeypatch
+) -> None:
+    from app.modules.acquisition import routes
+
+    client, tenant_id = logged_in_client
+    mission = _seed_mission(acquisition_app, tenant_id="other-tenant", actor_id="other-actor")
+    candidate = _seed_candidate(
+        acquisition_app,
+        tenant_id="other-tenant",
+        mission_id=mission.id,
+        suffix="private-country",
+        status="needs_evidence",
+        country_status="unknown",
+        eligibility_code="country_unknown",
+    )
+    calls: list[str] = []
+
+    class NoFetcher:
+        @classmethod
+        def from_app(cls, _app):
+            calls.append("fetcher")
+            raise AssertionError("cross-tenant request must not build a fetcher")
+
+    monkeypatch.setattr(routes, "StaticFetcher", NoFetcher)
+    response = client.post(
+        f"/acquisition/candidates/{candidate.id}/country-evidence",
+        headers={"HX-Request": "true"},
+        data={
+            "country_code": "MX",
+            "source_url": "https://private.example/contact",
+            "evidence_text": "Official Mexico office",
+            "reason_code": "official_contact_page",
+        },
+    )
+
+    assert tenant_id != "other-tenant"
+    assert response.status_code == 404
+    assert calls == []
+
+
+def test_country_evidence_htmx_updates_candidate_without_redis(
+    acquisition_app, logged_in_client, monkeypatch
+) -> None:
+    from app.modules.acquisition import routes
+
+    client, tenant_id = logged_in_client
+    mission = _seed_mission(acquisition_app, tenant_id=tenant_id, actor_id=_actor_id(client))
+    candidate = _seed_candidate(
+        acquisition_app,
+        tenant_id=tenant_id,
+        mission_id=mission.id,
+        suffix="country-htmx",
+        status="needs_evidence",
+        country_status="unknown",
+        eligibility_code="country_unknown",
+    )
+    source_url = "https://country-htmx.example/contact"
+    evidence_text = "Official Mexico office"
+    snapshot = SimpleNamespace(
+        requested_url=source_url,
+        final_url=source_url,
+        status_code=200,
+        content_type="text/html",
+        title="Contact",
+        text=evidence_text,
+        content_hash="h" * 64,
+        retrieved_at=datetime.now(UTC),
+        redirect_chain=(),
+        detected_prompt_injection=False,
+    )
+    closed: list[str] = []
+
+    class FakeFetcher:
+        @classmethod
+        def from_app(cls, _app):
+            return cls()
+
+        def fetch(self, url):
+            assert url == source_url
+            return snapshot
+
+        def close(self):
+            closed.append("fetcher")
+
+    monkeypatch.setattr(routes, "StaticFetcher", FakeFetcher)
+    response = client.post(
+        f"/acquisition/candidates/{candidate.id}/country-evidence",
+        headers={"HX-Request": "true"},
+        data={
+            "country_code": " mx ",
+            "source_url": source_url,
+            "evidence_text": evidence_text,
+            "reason_code": "official_contact_page",
+        },
+    )
+
+    html = response.get_data(as_text=True)
+    assert response.status_code == 200
+    assert f'id="candidate-{candidate.id}"' in html
+    assert "/country-evidence" not in html
+    assert "MX" in html
+    assert closed == ["fetcher"]
+
+
+def test_country_evidence_illegal_state_returns_409_before_fetcher(
+    acquisition_app, logged_in_client, monkeypatch
+) -> None:
+    from app.modules.acquisition import routes
+
+    client, tenant_id = logged_in_client
+    mission = _seed_mission(acquisition_app, tenant_id=tenant_id, actor_id=_actor_id(client))
+    candidate = _seed_candidate(
+        acquisition_app,
+        tenant_id=tenant_id,
+        mission_id=mission.id,
+        suffix="country-illegal",
+    )
+    calls: list[str] = []
+
+    class NoFetcher:
+        @classmethod
+        def from_app(cls, _app):
+            calls.append("fetcher")
+            raise AssertionError("illegal state must not build a fetcher")
+
+    monkeypatch.setattr(routes, "StaticFetcher", NoFetcher)
+    response = client.post(
+        f"/acquisition/candidates/{candidate.id}/country-evidence",
+        data={
+            "country_code": "MX",
+            "source_url": "https://country-illegal.example/contact",
+            "evidence_text": "Official Mexico office",
+            "reason_code": "official_contact_page",
+        },
+    )
+
+    assert response.status_code == 409
+    assert calls == []
+
+
+def test_country_evidence_validates_before_fetcher(acquisition_app, logged_in_client, monkeypatch):
+    from app.modules.acquisition import routes
+
+    client, tenant_id = logged_in_client
+    mission = _seed_mission(acquisition_app, tenant_id=tenant_id, actor_id=_actor_id(client))
+    candidate = _seed_candidate(
+        acquisition_app,
+        tenant_id=tenant_id,
+        mission_id=mission.id,
+        suffix="country-invalid",
+        status="needs_evidence",
+        country_status="unknown",
+        eligibility_code="country_unknown",
+    )
+    calls: list[str] = []
+
+    class NoFetcher:
+        @classmethod
+        def from_app(cls, _app):
+            calls.append("fetcher")
+            raise AssertionError("invalid form must not build a fetcher")
+
+    monkeypatch.setattr(routes, "StaticFetcher", NoFetcher)
+    response = client.post(
+        f"/acquisition/candidates/{candidate.id}/country-evidence",
+        data={
+            "country_code": "MXX",
+            "source_url": "https://country-invalid.example/contact",
+            "evidence_text": "Official Mexico office",
+            "reason_code": "official_contact_page",
+        },
+    )
+
+    assert response.status_code == 400
+    assert calls == []
+
+
+def test_country_evidence_race_returns_safe_409_and_closes_fetcher(
+    acquisition_app, logged_in_client, monkeypatch
+) -> None:
+    from app.modules.acquisition import routes
+    from app.modules.acquisition.service import AcquisitionStateError
+
+    client, tenant_id = logged_in_client
+    mission = _seed_mission(acquisition_app, tenant_id=tenant_id, actor_id=_actor_id(client))
+    candidate = _seed_candidate(
+        acquisition_app,
+        tenant_id=tenant_id,
+        mission_id=mission.id,
+        suffix="country-race",
+        status="needs_evidence",
+        country_status="unknown",
+        eligibility_code="country_unknown",
+    )
+    closed: list[str] = []
+
+    class FakeFetcher:
+        @classmethod
+        def from_app(cls, _app):
+            return cls()
+
+        def close(self):
+            closed.append("fetcher")
+
+    def fail_race(*_args, **_kwargs):
+        raise AcquisitionStateError("RAW Assessment private query")
+
+    monkeypatch.setattr(routes, "StaticFetcher", FakeFetcher)
+    monkeypatch.setattr(routes, "override_candidate_country", fail_race)
+    response = client.post(
+        f"/acquisition/candidates/{candidate.id}/country-evidence",
+        headers={"HX-Request": "true"},
+        data={
+            "country_code": "MX",
+            "source_url": "https://country-race.example/contact?secret=query",
+            "evidence_text": "Official Mexico office",
+            "reason_code": "official_contact_page",
+        },
+    )
+
+    html = response.get_data(as_text=True)
+    assert response.status_code == 409
+    assert response.headers["HX-LeadFlow-Swap-Error"] == "true"
+    assert response.headers["HX-Reswap"] == "outerHTML"
+    assert response.headers["HX-Retarget"] == f"#candidate-{candidate.id}"
+    assert 'role="alert"' in html
+    assert "RAW Assessment" not in html
+    assert "https://country-race.example/contact?secret=query" in html
+    assert closed == ["fetcher"]
+
+
+@pytest.mark.parametrize("failure", ["fetch", "domain"])
+def test_country_evidence_errors_are_safe_and_close_fetcher(
+    acquisition_app, logged_in_client, monkeypatch, failure
+) -> None:
+    from app.integrations.web.fetcher import FetchError
+    from app.modules.acquisition import routes
+    from app.modules.acquisition.service import AcquisitionError
+
+    client, tenant_id = logged_in_client
+    mission = _seed_mission(acquisition_app, tenant_id=tenant_id, actor_id=_actor_id(client))
+    candidate = _seed_candidate(
+        acquisition_app,
+        tenant_id=tenant_id,
+        mission_id=mission.id,
+        suffix=f"country-error-{failure}",
+        status="needs_evidence",
+        country_status="unknown",
+        eligibility_code="country_unknown",
+    )
+    closed: list[str] = []
+
+    class FakeFetcher:
+        @classmethod
+        def from_app(cls, _app):
+            return cls()
+
+        def close(self):
+            closed.append("fetcher")
+
+    def fail_override(*_args, **_kwargs):
+        if failure == "fetch":
+            raise FetchError("policy_url_blocked", "Evidence URL was blocked safely")
+        raise AcquisitionError("RAW Assessment internal-table API_KEY page-body-secret")
+
+    monkeypatch.setattr(routes, "StaticFetcher", FakeFetcher)
+    monkeypatch.setattr(routes, "override_candidate_country", fail_override)
+    response = client.post(
+        f"/acquisition/candidates/{candidate.id}/country-evidence",
+        headers=({"HX-Request": "true"} if failure == "fetch" else {}),
+        data={
+            "country_code": "MX",
+            "source_url": "https://country-error.example/contact?private=query-secret",
+            "evidence_text": "Official Mexico office",
+            "reason_code": "official_contact_page",
+        },
+    )
+
+    html = response.get_data(as_text=True)
+    assert response.status_code == 400
+    if failure == "fetch":
+        assert "Evidence URL was blocked safely" in html
+        assert response.headers["HX-LeadFlow-Swap-Error"] == "true"
+        assert 'role="alert"' in html
+    else:
+        assert "无法确认这份国家证据" in html
+        assert "https://country-error.example/contact?private=query-secret" in html
+        assert "Official Mexico office" in html
+        assert 'value="official_contact_page" selected' in html
+    assert "RAW Assessment" not in html
+    assert "page-body-secret" not in html
+    assert closed == ["fetcher"]
+
+
+def test_country_evidence_error_swap_script_enables_marked_error_responses() -> None:
+    from pathlib import Path
+
+    root = Path(__file__).resolve().parents[2]
+    script = (root / "app" / "static" / "js" / "htmx-error-swap.js").read_text(encoding="utf-8")
+    shell = (root / "app" / "templates" / "components" / "_shell.html").read_text(encoding="utf-8")
+
+    assert 'getResponseHeader("HX-LeadFlow-Swap-Error")' in script
+    assert "event.detail.shouldSwap = true" in script
+    assert "event.detail.isError = false" in script
+    assert "js/htmx-error-swap.js" in shell
+
+
+def test_country_evidence_non_htmx_redirects_to_candidate(
+    acquisition_app, logged_in_client, monkeypatch
+) -> None:
+    from app.modules.acquisition import routes
+
+    client, tenant_id = logged_in_client
+    mission = _seed_mission(acquisition_app, tenant_id=tenant_id, actor_id=_actor_id(client))
+    candidate = _seed_candidate(
+        acquisition_app,
+        tenant_id=tenant_id,
+        mission_id=mission.id,
+        suffix="country-redirect",
+        status="needs_evidence",
+        country_status="unknown",
+        eligibility_code="country_unknown",
+    )
+    calls: list[object] = []
+
+    class FakeFetcher:
+        @classmethod
+        def from_app(cls, _app):
+            return cls()
+
+        def close(self):
+            calls.append("closed")
+
+    def fake_override(app, **kwargs):
+        calls.append((app, kwargs))
+        return SimpleNamespace(id=candidate.id)
+
+    monkeypatch.setattr(routes, "StaticFetcher", FakeFetcher)
+    monkeypatch.setattr(routes, "override_candidate_country", fake_override)
+    response = client.post(
+        f"/acquisition/candidates/{candidate.id}/country-evidence",
+        data={
+            "country_code": "MX",
+            "source_url": "https://country-redirect.example/contact",
+            "evidence_text": "Official Mexico office",
+            "reason_code": "official_contact_page",
+        },
+    )
+
+    assert response.status_code in {302, 303}
+    assert response.headers["Location"].endswith(f"/acquisition/candidates/{candidate.id}")
+    assert calls[-1] == "closed"
 
 
 def test_bulk_accept_is_atomic_when_any_candidate_is_ineligible(

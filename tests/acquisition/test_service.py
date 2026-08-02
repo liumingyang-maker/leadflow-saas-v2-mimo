@@ -1498,41 +1498,194 @@ def test_rejected_candidate_cannot_be_promoted(acquisition_app):
         )
 
 
-def test_country_override_is_audited_and_requeues_assessment(acquisition_app, monkeypatch):
+def test_country_override_persists_evidence_and_assesses_synchronously(
+    acquisition_app, monkeypatch
+):
     from app.extensions import get_engine
+    from app.modules.acquisition.contracts import CountryEvidenceInput
+    from app.modules.acquisition.models import (
+        AcquisitionCandidate,
+        CandidateAssessment,
+        CandidateEvidence,
+    )
     from app.modules.acquisition.service import override_candidate_country
     from app.modules.audit.models import AuditEvent
 
     candidate_id = _seed_mission_and_candidate(
         acquisition_app, status="needs_evidence", eligibility_code="country_unknown"
     )
-    queued: list[dict] = []
+    with Session(get_engine(acquisition_app)) as session:
+        candidate = session.get(AcquisitionCandidate, candidate_id)
+        assert candidate is not None
+        candidate.opportunity_country_code = ""
+        candidate.country_resolution_status = "unknown"
+        candidate.decision_reason_code = "country_unknown"
+        candidate.observed_facts_json = json.dumps(
+            {
+                "buyer_type": "distributor",
+                "product_terms": ["engine"],
+                "claims": [{"claim_id": "product-evidence", "text": "Engine distributor"}],
+            }
+        )
+        session.commit()
+
     monkeypatch.setattr(
         "app.modules.acquisition.service.create_and_enqueue",
-        lambda _app, **kwargs: queued.append(kwargs),
+        lambda *_args, **_kwargs: pytest.fail("country evidence must not use Redis"),
+        raising=False,
     )
+    evidence_text = "Official contact office for Mexico distributors."
+    snapshot = _fetch_result(
+        requested_url="https://moto1.example/contact?token=secret-query",
+        final_url="https://moto1.example/contact",
+        text=f"Company profile. {evidence_text} Call sales today.",
+        content_hash="e" * 64,
+    )
+    fetcher = type("StaticFetcher", (), {"fetch": lambda self, _url: snapshot})()
     candidate = override_candidate_country(
         acquisition_app,
         tenant_id="t1",
         actor_id="u1",
         candidate_id=candidate_id,
-        country_code="MX",
-        source_url="https://moto1.example/contact",
-        reason_code="official_contact_page",
+        value=CountryEvidenceInput(
+            country_code="MX",
+            source_url=snapshot.requested_url,
+            evidence_text=evidence_text,
+            reason_code="official_contact_page",
+        ),
+        fetcher=fetcher,
     )
+    assert candidate.opportunity_country_code == "MX"
     assert candidate.country_resolution_status == "confirmed"
-    assert candidate.status == "verifying"
-    assert queued[0]["payload"] == {"candidate_id": candidate_id}
+    assert candidate.eligibility_code == "eligible"
+    assert candidate.status == "eligible"
+    assert candidate.decision_reason_code == ""
     with Session(get_engine(acquisition_app)) as session:
+        evidence = session.scalars(
+            select(CandidateEvidence).where(CandidateEvidence.candidate_id == candidate_id)
+        ).one()
+        assessment = session.scalars(
+            select(CandidateAssessment).where(CandidateAssessment.candidate_id == candidate_id)
+        ).one()
         event = session.scalar(
             select(AuditEvent).where(AuditEvent.action == "candidate.country_overridden")
         )
         assert event is not None
+        assert evidence.provider == "manual"
+        assert evidence.source_type == "country_evidence"
+        assert evidence.trust_tier == "A"
+        assert evidence.source_url == snapshot.requested_url
+        assert evidence.canonical_url == snapshot.final_url
+        assert evidence.content_hash == snapshot.content_hash
+        assert json.loads(evidence.supports_json) == ["country-evidence"]
+        assert evidence.validation_status == "valid"
+        assert assessment.score_version == "priority-v2"
+        assert assessment.model_provider == "manual"
+        assert assessment.model_id == "human-confirmed-v1"
+        assert assessment.prompt_version == "country-evidence-v1"
+        assert "MX" in event.safe_summary
+        assert "official_contact_page" in event.safe_summary
+        assert "secret-query" not in event.safe_summary
+        assert evidence_text not in event.safe_summary
+
+
+def test_country_override_reuses_identical_evidence_and_unions_supports(acquisition_app):
+    from app.extensions import get_engine
+    from app.modules.acquisition.contracts import CountryEvidenceInput
+    from app.modules.acquisition.models import CandidateAssessment, CandidateEvidence
+    from app.modules.acquisition.service import override_candidate_country
+
+    candidate_id = _seed_mission_and_candidate(
+        acquisition_app,
+        status="needs_evidence",
+        eligibility_code="country_conflicting",
+        suffix="country-dedupe",
+    )
+    source_url = "https://country-dedupe.example/contact"
+    evidence_text = "Official Mexico office"
+    snapshot = _fetch_result(
+        requested_url=source_url,
+        text=("Earlier page content. " * 260) + evidence_text,
+        content_hash="d" * 64,
+    )
+    with Session(get_engine(acquisition_app)) as session:
+        session.add_all(
+            [
+                CandidateEvidence(
+                    tenant_id="t1",
+                    candidate_id=candidate_id,
+                    provider="manual",
+                    source_type="manual_url",
+                    trust_tier="E",
+                    source_url=source_url,
+                    canonical_url=snapshot.final_url,
+                    title="Existing source",
+                    excerpt="Earlier page content. " * 10,
+                    retrieved_at=datetime(2020, 1, 1, tzinfo=UTC),
+                    content_hash=snapshot.content_hash,
+                    supports_json=json.dumps(["existing-claim"]),
+                    validation_status="contradicted",
+                ),
+                CandidateEvidence(
+                    tenant_id="t1",
+                    candidate_id=candidate_id,
+                    provider="mimo",
+                    source_type="search_result",
+                    trust_tier="A",
+                    source_url="https://country-dedupe.example/old",
+                    canonical_url="https://country-dedupe.example/old",
+                    title="Contradicted source",
+                    excerpt="This row must not affect scoring.",
+                    retrieved_at=datetime(2020, 1, 1, tzinfo=UTC),
+                    content_hash="f" * 64,
+                    supports_json=json.dumps(["contradicted-claim"]),
+                    validation_status="contradicted",
+                ),
+            ]
+        )
+        session.commit()
+
+    candidate = override_candidate_country(
+        acquisition_app,
+        tenant_id="t1",
+        actor_id="u1",
+        candidate_id=candidate_id,
+        value=CountryEvidenceInput(
+            country_code="MX",
+            source_url=source_url,
+            evidence_text=evidence_text,
+            reason_code="official_contact_page",
+        ),
+        fetcher=type("StaticFetcher", (), {"fetch": lambda self, _url: snapshot})(),
+    )
+
+    assert candidate.country_resolution_status == "confirmed"
+    with Session(get_engine(acquisition_app)) as session:
+        rows = list(
+            session.scalars(
+                select(CandidateEvidence).where(CandidateEvidence.candidate_id == candidate_id)
+            )
+        )
+        assert len(rows) == 2
+        current = next(item for item in rows if item.content_hash == snapshot.content_hash)
+        contradicted = next(item for item in rows if item.content_hash == "f" * 64)
+        assert current.provider == "manual"
+        assert current.trust_tier == "A"
+        assert current.validation_status == "valid"
+        assert current.excerpt == evidence_text
+        assert current.retrieved_at.replace(tzinfo=UTC) == snapshot.retrieved_at
+        assert json.loads(current.supports_json) == ["country-evidence", "existing-claim"]
+        assert contradicted.validation_status == "contradicted"
+        assessment = session.scalars(
+            select(CandidateAssessment).where(CandidateAssessment.candidate_id == candidate_id)
+        ).one()
+        assert json.loads(assessment.input_json)["independent_evidence"] == 50
 
 
 @pytest.mark.parametrize("status", ["eligible", "accepted", "promoted", "rejected"])
 def test_country_override_requires_candidate_that_needs_evidence(acquisition_app, status):
-    from app.modules.acquisition.service import AcquisitionError, override_candidate_country
+    from app.modules.acquisition.contracts import CountryEvidenceInput
+    from app.modules.acquisition.service import AcquisitionStateError, override_candidate_country
 
     candidate_id = _seed_mission_and_candidate(
         acquisition_app,
@@ -1540,23 +1693,36 @@ def test_country_override_requires_candidate_that_needs_evidence(acquisition_app
         eligibility_code="country_unknown",
     )
 
-    with pytest.raises(AcquisitionError, match="need evidence"):
+    fetch_calls: list[str] = []
+
+    class NoFetch:
+        def fetch(self, url):
+            fetch_calls.append(url)
+            raise AssertionError("invalid candidate state must not fetch")
+
+    with pytest.raises(AcquisitionStateError, match="need evidence"):
         override_candidate_country(
             acquisition_app,
             tenant_id="t1",
             actor_id="u1",
             candidate_id=candidate_id,
-            country_code="MX",
-            source_url="https://moto1.example/contact",
-            reason_code="official_contact_page",
+            value=CountryEvidenceInput(
+                country_code="MX",
+                source_url="https://moto1.example/contact",
+                evidence_text="Official Mexico office",
+                reason_code="official_contact_page",
+            ),
+            fetcher=NoFetch(),
         )
+    assert fetch_calls == []
 
 
 def test_country_override_cas_rejects_stale_needs_evidence_state(acquisition_app, monkeypatch):
     from app.extensions import get_engine
+    from app.modules.acquisition.contracts import CountryEvidenceInput
     from app.modules.acquisition.models import AcquisitionCandidate
     from app.modules.acquisition.repository import CandidateRepository
-    from app.modules.acquisition.service import AcquisitionError, override_candidate_country
+    from app.modules.acquisition.service import AcquisitionStateError, override_candidate_country
     from app.modules.audit.models import AuditEvent
 
     candidate_id = _seed_mission_and_candidate(
@@ -1568,9 +1734,15 @@ def test_country_override_cas_rejects_stale_needs_evidence_state(acquisition_app
     decided_at = datetime(2026, 2, 2, tzinfo=UTC)
     original_get = CandidateRepository.get
 
+    get_calls = 0
+
     def get_then_commit_human_decision(repository, value, *, tenant_id):
+        nonlocal get_calls
+        get_calls += 1
         candidate = original_get(repository, value, tenant_id=tenant_id)
         assert candidate is not None
+        if get_calls == 1:
+            return candidate
         repository.session.execute(
             update(AcquisitionCandidate)
             .where(
@@ -1593,24 +1765,30 @@ def test_country_override_cas_rejects_stale_needs_evidence_state(acquisition_app
         return candidate
 
     monkeypatch.setattr(CandidateRepository, "get", get_then_commit_human_decision)
-    queued: list[dict] = []
-    monkeypatch.setattr(
-        "app.modules.acquisition.service.create_and_enqueue",
-        lambda _app, **kwargs: queued.append(kwargs),
+    source_url = "https://moto-override-cas.example/contact"
+    evidence_text = "Official Mexico office"
+    snapshot = _fetch_result(
+        requested_url=source_url,
+        text=evidence_text,
+        content_hash="c" * 64,
     )
+    fetcher = type("StaticFetcher", (), {"fetch": lambda self, _url: snapshot})()
 
-    with pytest.raises(AcquisitionError, match="need evidence"):
+    with pytest.raises(AcquisitionStateError, match="need evidence"):
         override_candidate_country(
             acquisition_app,
             tenant_id="t1",
             actor_id="u1",
             candidate_id=candidate_id,
-            country_code="MX",
-            source_url="https://moto-override-cas.example/contact",
-            reason_code="official_contact_page",
+            value=CountryEvidenceInput(
+                country_code="MX",
+                source_url=source_url,
+                evidence_text=evidence_text,
+                reason_code="official_contact_page",
+            ),
+            fetcher=fetcher,
         )
 
-    assert queued == []
     with Session(get_engine(acquisition_app)) as session:
         candidate = session.get(AcquisitionCandidate, candidate_id)
         assert candidate is not None
@@ -1631,6 +1809,156 @@ def test_country_override_cas_rejects_stale_needs_evidence_state(acquisition_app
             "human-reviewer",
             decided_at.replace(tzinfo=None),
         )
+        assert session.scalar(select(func.count()).select_from(AuditEvent)) == 0
+
+
+@pytest.mark.parametrize("failure", ["absent", "prompt_injection"])
+def test_country_override_rejects_unsupported_page_without_writes(acquisition_app, failure):
+    from app.extensions import get_engine
+    from app.modules.acquisition.contracts import CountryEvidenceInput
+    from app.modules.acquisition.models import (
+        AcquisitionCandidate,
+        CandidateAssessment,
+        CandidateEvidence,
+    )
+    from app.modules.acquisition.service import AcquisitionError, override_candidate_country
+    from app.modules.audit.models import AuditEvent
+
+    candidate_id = _seed_mission_and_candidate(
+        acquisition_app,
+        status="needs_evidence",
+        eligibility_code="country_unknown",
+        suffix=f"country-{failure}",
+    )
+    source_url = "https://country-failure.example/contact?private=query-secret"
+    snapshot = _fetch_result(
+        requested_url=source_url,
+        text="Private page body without the submitted sentence.",
+        content_hash=("a" if failure == "absent" else "b") * 64,
+        detected_prompt_injection=failure == "prompt_injection",
+    )
+    fetcher = type("StaticFetcher", (), {"fetch": lambda self, _url: snapshot})()
+    value = CountryEvidenceInput(
+        country_code="MX",
+        source_url=source_url,
+        evidence_text="Official Mexico office",
+        reason_code="official_contact_page",
+    )
+
+    with pytest.raises(AcquisitionError) as raised:
+        override_candidate_country(
+            acquisition_app,
+            tenant_id="t1",
+            actor_id="u1",
+            candidate_id=candidate_id,
+            value=value,
+            fetcher=fetcher,
+        )
+
+    message = str(raised.value)
+    assert "query-secret" not in message
+    assert "Private page body" not in message
+    with Session(get_engine(acquisition_app)) as session:
+        candidate = session.get(AcquisitionCandidate, candidate_id)
+        assert candidate is not None
+        assert candidate.status == "needs_evidence"
+        assert candidate.eligibility_code == "country_unknown"
+        assert session.scalar(select(func.count()).select_from(CandidateEvidence)) == 0
+        assert session.scalar(select(func.count()).select_from(CandidateAssessment)) == 0
+        assert session.scalar(select(func.count()).select_from(AuditEvent)) == 0
+
+
+def test_country_override_cross_tenant_rejects_before_fetch(acquisition_app):
+    from app.modules.acquisition.contracts import CountryEvidenceInput
+    from app.modules.acquisition.service import AcquisitionError, override_candidate_country
+
+    candidate_id = _seed_mission_and_candidate(
+        acquisition_app,
+        status="needs_evidence",
+        eligibility_code="country_unknown",
+        suffix="country-private",
+    )
+    fetch_calls: list[str] = []
+    value = CountryEvidenceInput(
+        country_code="MX",
+        source_url="https://private-country.example/contact",
+        evidence_text="Official Mexico office",
+        reason_code="official_contact_page",
+    )
+    fetcher = type(
+        "StaticFetcher",
+        (),
+        {"fetch": lambda self, url: fetch_calls.append(url)},
+    )()
+
+    with pytest.raises(AcquisitionError, match="not found"):
+        override_candidate_country(
+            acquisition_app,
+            tenant_id="other-tenant",
+            actor_id="other-user",
+            candidate_id=candidate_id,
+            value=value,
+            fetcher=fetcher,
+        )
+    assert fetch_calls == []
+
+
+def test_country_override_rolls_back_when_synchronous_assessment_fails(
+    acquisition_app, monkeypatch
+) -> None:
+    from app.extensions import get_engine
+    from app.modules.acquisition.contracts import CountryEvidenceInput
+    from app.modules.acquisition.models import (
+        AcquisitionCandidate,
+        CandidateAssessment,
+        CandidateEvidence,
+    )
+    from app.modules.acquisition.service import AcquisitionError, override_candidate_country
+    from app.modules.audit.models import AuditEvent
+
+    candidate_id = _seed_mission_and_candidate(
+        acquisition_app,
+        status="needs_evidence",
+        eligibility_code="country_unknown",
+        suffix="country-assessment-rollback",
+    )
+    source_url = "https://country-rollback.example/contact"
+    evidence_text = "Official Mexico office"
+    snapshot = _fetch_result(
+        requested_url=source_url,
+        text=evidence_text,
+        content_hash="r" * 64,
+    )
+
+    def fail_assessment(*_args, **_kwargs):
+        raise AcquisitionError("forced assessment failure")
+
+    monkeypatch.setattr(
+        "app.modules.acquisition.service._assess_candidate_in_session",
+        fail_assessment,
+    )
+    with pytest.raises(AcquisitionError, match="forced assessment failure"):
+        override_candidate_country(
+            acquisition_app,
+            tenant_id="t1",
+            actor_id="u1",
+            candidate_id=candidate_id,
+            value=CountryEvidenceInput(
+                country_code="MX",
+                source_url=source_url,
+                evidence_text=evidence_text,
+                reason_code="official_contact_page",
+            ),
+            fetcher=type("StaticFetcher", (), {"fetch": lambda self, _url: snapshot})(),
+        )
+
+    with Session(get_engine(acquisition_app)) as session:
+        candidate = session.get(AcquisitionCandidate, candidate_id)
+        assert candidate is not None
+        assert candidate.status == "needs_evidence"
+        assert candidate.eligibility_code == "country_unknown"
+        assert session.scalar(select(func.count()).select_from(CandidateEvidence)) == 0
+        assert session.scalar(select(func.count()).select_from(CandidateAssessment)) == 0
         assert session.scalar(select(func.count()).select_from(AuditEvent)) == 0
 
 

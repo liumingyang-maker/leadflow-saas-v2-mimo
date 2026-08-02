@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 from typing import Any
 
-from flask import Flask, abort, redirect, render_template, request, session, url_for
+from flask import Flask, abort, make_response, redirect, render_template, request, session, url_for
 from pydantic import ValidationError
 from sqlalchemy.orm import Session
 
@@ -15,6 +15,7 @@ from app.integrations.web.fetcher import FetchError, StaticFetcher
 from app.modules.accounts.guards import tenant_required
 from app.modules.acquisition.contracts import (
     DEFAULT_LANGUAGES,
+    CountryEvidenceInput,
     ManualCompanyFactsInput,
     MissionCreateInput,
 )
@@ -33,6 +34,7 @@ from app.modules.acquisition.service import (
     bulk_review_candidates,
     create_mission,
     create_product_snapshot,
+    override_candidate_country,
     process_manual_facts,
     process_manual_url,
     review_candidate,
@@ -371,6 +373,78 @@ def register_acquisition_routes(app: Flask) -> None:
     def acquisition_candidate_detail(candidate_id: str):
         return _render_candidate(app, candidate_id=candidate_id)
 
+    @app.post("/acquisition/candidates/<candidate_id>/country-evidence")
+    @tenant_required(app)
+    def acquisition_candidate_country_evidence(candidate_id: str):
+        tenant_id, actor_id = _identity()
+        with Session(get_engine(app)) as db_session:
+            candidate = CandidateRepository(db_session).get(candidate_id, tenant_id=tenant_id)
+            if candidate is None:
+                abort(404)
+            country_evidence_form = _country_evidence_form_values()
+            if not _candidate_accepts_country_evidence(candidate):
+                return _render_country_evidence_error(
+                    app,
+                    candidate_id=candidate_id,
+                    error="这个候选当前不需要确认国家证据。",
+                    status_code=409,
+                    country_evidence_form=country_evidence_form,
+                )
+
+        try:
+            value = CountryEvidenceInput(**country_evidence_form)
+        except ValidationError as exc:
+            return _render_country_evidence_error(
+                app,
+                candidate_id=candidate_id,
+                error=_friendly_error(exc),
+                status_code=400,
+                country_evidence_form=_bounded_country_evidence_form(country_evidence_form),
+            )
+        country_evidence_form = value.model_dump()
+
+        fetcher = None
+        try:
+            fetcher = StaticFetcher.from_app(app)
+            candidate = override_candidate_country(
+                app,
+                tenant_id=tenant_id,
+                actor_id=actor_id,
+                candidate_id=candidate_id,
+                value=value,
+                fetcher=fetcher,
+            )
+        except AcquisitionStateError:
+            return _render_country_evidence_error(
+                app,
+                candidate_id=candidate_id,
+                error="这个候选当前不需要确认国家证据。",
+                status_code=409,
+                country_evidence_form=country_evidence_form,
+            )
+        except FetchError as exc:
+            status_code = 503 if exc.code in {"source_timeout", "source_unreachable"} else 400
+            return _render_country_evidence_error(
+                app,
+                candidate_id=candidate_id,
+                error=exc.safe_summary,
+                status_code=status_code,
+                country_evidence_form=country_evidence_form,
+            )
+        except (AcquisitionError, ManualEvidenceError):
+            return _render_country_evidence_error(
+                app,
+                candidate_id=candidate_id,
+                error="无法确认这份国家证据，请检查公开页面和证据句子后重试。",
+                status_code=400,
+                country_evidence_form=country_evidence_form,
+            )
+        finally:
+            _close_adapter(fetcher)
+        if _is_htmx():
+            return _render_candidate_card(app, candidate.id)
+        return redirect(url_for("acquisition_candidate_detail", candidate_id=candidate.id))
+
     @app.post("/acquisition/candidates/<candidate_id>/review")
     @tenant_required(app)
     def acquisition_candidate_review(candidate_id: str):
@@ -571,6 +645,7 @@ def _render_candidate(
     candidate_id: str,
     error: str = "",
     status_code: int = 200,
+    country_evidence_form: dict[str, str] | None = None,
 ):
     tenant_id, _actor_id = _identity()
     with Session(get_engine(app)) as db_session:
@@ -586,12 +661,19 @@ def _render_candidate(
             view=candidate_view,
             rejection_reasons=REJECTION_REASONS,
             error=error,
+            country_evidence_form=country_evidence_form or {},
         ),
         status_code,
     )
 
 
-def _render_candidate_card(app: Flask, candidate_id: str):
+def _render_candidate_card(
+    app: Flask,
+    candidate_id: str,
+    *,
+    error: str = "",
+    country_evidence_form: dict[str, str] | None = None,
+):
     tenant_id, _actor_id = _identity()
     with Session(get_engine(app)) as db_session:
         candidate = CandidateRepository(db_session).get(candidate_id, tenant_id=tenant_id)
@@ -602,6 +684,40 @@ def _render_candidate_card(app: Flask, candidate_id: str):
         "acquisition/_candidate_card.html",
         view=view,
         rejection_reasons=REJECTION_REASONS,
+        card_error=error,
+        country_evidence_form=country_evidence_form or {},
+    )
+
+
+def _render_country_evidence_error(
+    app: Flask,
+    *,
+    candidate_id: str,
+    error: str,
+    status_code: int,
+    country_evidence_form: dict[str, str],
+):
+    bounded_form = _bounded_country_evidence_form(country_evidence_form)
+    if _is_htmx():
+        response = make_response(
+            _render_candidate_card(
+                app,
+                candidate_id,
+                error=error,
+                country_evidence_form=bounded_form,
+            ),
+            status_code,
+        )
+        response.headers["HX-LeadFlow-Swap-Error"] = "true"
+        response.headers["HX-Retarget"] = f"#candidate-{candidate_id}"
+        response.headers["HX-Reswap"] = "outerHTML"
+        return response
+    return _render_candidate(
+        app,
+        candidate_id=candidate_id,
+        error=error,
+        status_code=status_code,
+        country_evidence_form=bounded_form,
     )
 
 
@@ -751,6 +867,32 @@ def _manual_url_policy_allows(policy: Any) -> bool:
         return False
     allowed_channels = policy.get("allowed_channels")
     return isinstance(allowed_channels, list) and "manual_url" in allowed_channels
+
+
+def _candidate_accepts_country_evidence(candidate: AcquisitionCandidate) -> bool:
+    return candidate.status == "needs_evidence" and candidate.eligibility_code in {
+        "country_unknown",
+        "country_conflicting",
+    }
+
+
+def _country_evidence_form_values() -> dict[str, str]:
+    return {
+        "country_code": request.form.get("country_code", "").strip().upper(),
+        "source_url": request.form.get("source_url", "").strip(),
+        "evidence_text": request.form.get("evidence_text", "").strip(),
+        "reason_code": request.form.get("reason_code", "").strip(),
+    }
+
+
+def _bounded_country_evidence_form(values: dict[str, str]) -> dict[str, str]:
+    limits = {
+        "country_code": 2,
+        "source_url": 1000,
+        "evidence_text": 1000,
+        "reason_code": 40,
+    }
+    return {name: values.get(name, "")[:limit] for name, limit in limits.items()}
 
 
 def _close_adapter(adapter: Any | None) -> None:

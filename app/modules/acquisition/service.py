@@ -21,6 +21,7 @@ from app.integrations.ai.contracts import CompanyExtractor, ExtractedCompanyFact
 from app.integrations.web.fetcher import FetchResult, StaticFetcher
 from app.modules.acquisition.contracts import (
     CandidateDecisionInput,
+    CountryEvidenceInput,
     ManualCompanyFactsInput,
     MissionCreateInput,
 )
@@ -29,6 +30,7 @@ from app.modules.acquisition.manual_evidence import (
     build_manual_company_facts,
     contact_url,
     normalise_domain,
+    require_supported_text,
 )
 from app.modules.acquisition.models import (
     AcquisitionCandidate,
@@ -60,13 +62,13 @@ from app.modules.acquisition.scoring import (
 )
 from app.modules.acquisition.states import update_assessment_state_if_mutable
 from app.modules.acquisition.versions import (
+    COUNTRY_EVIDENCE_PROMPT_VERSION,
     ELIGIBILITY_POLICY_VERSION,
     MANUAL_FACTS_PROMPT_VERSION,
     MIMO_EXTRACT_PROMPT_VERSION,
     PRIORITY_SCORE_VERSION,
 )
 from app.modules.audit.service import add_event
-from app.modules.jobs.service import create_and_enqueue
 from app.modules.leads.models import Activity, Company, Lead
 from app.modules.leads.repository import CompanyRepository, LeadRepository
 
@@ -662,45 +664,49 @@ def override_candidate_country(
     tenant_id: str,
     actor_id: str,
     candidate_id: str,
-    country_code: str,
-    source_url: str,
-    reason_code: str,
+    value: CountryEvidenceInput,
+    fetcher: StaticFetcher,
 ) -> AcquisitionCandidate:
     tenant_id, actor_id = _require_identity(tenant_id, actor_id)
-    country = (country_code or "").strip().upper()
-    if not re.fullmatch(r"[A-Z]{2}", country):
-        raise AcquisitionError("valid ISO alpha-2 country code is required")
-    allowed_reasons = {
-        "official_contact_page",
-        "registry_record",
-        "manual_verification",
-        "other",
-    }
-    if reason_code not in allowed_reasons:
-        raise AcquisitionError("structured country override reason is required")
-    parsed_source = urlsplit((source_url or "").strip())
-    if (
-        parsed_source.scheme not in {"http", "https"}
-        or not parsed_source.hostname
-        or parsed_source.username
-        or parsed_source.password
-    ):
-        raise AcquisitionError("country override source URL is required")
-    canonical_source = parsed_source._replace(fragment="").geturl()[:350]
+    allowed_states = {"country_unknown", "country_conflicting"}
 
     with _session(app) as session:
         candidate = CandidateRepository(session).get(candidate_id, tenant_id=tenant_id)
         if candidate is None:
             raise AcquisitionError("candidate was not found")
+        if candidate.status != "needs_evidence" or candidate.eligibility_code not in allowed_states:
+            raise AcquisitionStateError(
+                "only country evidence candidates that need evidence can override country"
+            )
+
+    snapshot = fetcher.fetch(value.source_url)
+    if snapshot.detected_prompt_injection:
+        raise AcquisitionError("prompt injection detected in country evidence")
+    try:
+        evidence_text = require_supported_text(
+            claim=value.evidence_text,
+            page_text=snapshot.text,
+        )
+    except ManualEvidenceError as exc:
+        raise AcquisitionError("country evidence is not supported by the fetched page") from exc
+
+    with _session(app) as session:
+        candidate = CandidateRepository(session).get(candidate_id, tenant_id=tenant_id)
+        if candidate is None:
+            raise AcquisitionError("candidate was not found")
+        mission = MissionRepository(session).get(candidate.mission_id, tenant_id=tenant_id)
+        if mission is None:
+            raise AcquisitionError("mission was not found")
         result = session.execute(
             update(AcquisitionCandidate)
             .where(
                 AcquisitionCandidate.id == candidate_id,
                 AcquisitionCandidate.tenant_id == tenant_id,
                 AcquisitionCandidate.status == "needs_evidence",
+                AcquisitionCandidate.eligibility_code.in_(allowed_states),
             )
             .values(
-                opportunity_country_code=country,
+                opportunity_country_code=value.country_code,
                 country_resolution_status="confirmed",
                 eligibility_code="country_confirmed",
                 status="verifying",
@@ -709,7 +715,9 @@ def override_candidate_country(
             execution_options={"synchronize_session": False},
         )
         if result.rowcount != 1:
-            raise AcquisitionError("only candidates that need evidence can override country")
+            raise AcquisitionStateError(
+                "only country evidence candidates that need evidence can override country"
+            )
         session.refresh(
             candidate,
             attribute_names=[
@@ -720,6 +728,45 @@ def override_candidate_country(
                 "decision_reason_code",
             ],
         )
+        evidence = EvidenceRepository(session)
+        existing_evidence = evidence.find_content(
+            candidate.id,
+            snapshot.final_url,
+            snapshot.content_hash,
+            tenant_id=tenant_id,
+        )
+        if existing_evidence is None:
+            evidence.add(
+                CandidateEvidence(
+                    candidate_id=candidate.id,
+                    provider="manual",
+                    source_type="country_evidence",
+                    trust_tier="A",
+                    source_url=snapshot.requested_url,
+                    canonical_url=snapshot.final_url,
+                    title=snapshot.title[:500],
+                    excerpt=evidence_text[:4000],
+                    retrieved_at=snapshot.retrieved_at,
+                    content_hash=snapshot.content_hash,
+                    supports_json=canonical_json(["country-evidence"]),
+                    validation_status="valid",
+                ),
+                tenant_id=tenant_id,
+            )
+        else:
+            existing_evidence.provider = "manual"
+            existing_evidence.trust_tier = "A"
+            existing_evidence.source_url = snapshot.requested_url
+            existing_evidence.canonical_url = snapshot.final_url
+            existing_evidence.title = snapshot.title[:500]
+            existing_evidence.excerpt = evidence_text[:4000]
+            existing_evidence.retrieved_at = snapshot.retrieved_at
+            existing_evidence.validation_status = "valid"
+            existing_evidence.supports_json = canonical_json(
+                sorted(
+                    _validated_support_ids(existing_evidence.supports_json) | {"country-evidence"}
+                )
+            )
         add_event(
             session,
             tenant_id=tenant_id,
@@ -727,19 +774,22 @@ def override_candidate_country(
             action="candidate.country_overridden",
             target_type="acquisition_candidate",
             target_id=candidate.id,
-            safe_summary=(
-                f"Country set to {country}; reason={reason_code}; source_url={canonical_source}"
+            safe_summary=f"Country set to {value.country_code}; reason={value.reason_code}",
+        )
+        _assess_candidate_in_session(
+            session,
+            app=app,
+            candidate=candidate,
+            mission=mission,
+            tenant_id=tenant_id,
+            provenance=AssessmentProvenance(
+                "manual",
+                "human-confirmed-v1",
+                COUNTRY_EVIDENCE_PROMPT_VERSION,
             ),
         )
         session.commit()
-
-    create_and_enqueue(
-        app,
-        tenant_id=tenant_id,
-        job_type="candidate_assess",
-        payload={"candidate_id": candidate_id},
-    )
-    return candidate
+        return candidate
 
 
 def _promote_candidate_in_session(
@@ -1122,9 +1172,13 @@ def _assess_candidate_in_session(
             contact_path=bool(paths),
         )
     )
-    evidence = list(
-        EvidenceRepository(session).list_for_candidate(candidate.id, tenant_id=tenant_id)
-    )
+    evidence = [
+        item
+        for item in EvidenceRepository(session).list_for_candidate(
+            candidate.id, tenant_id=tenant_id
+        )
+        if item.validation_status == "valid"
+    ]
     trust = {"A": 100, "B": 80, "C": 60, "D": 40, "E": 20}
     best_trust = max((trust.get(item.trust_tier, 0) for item in evidence), default=0)
     score_input = ScoreInput(

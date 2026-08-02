@@ -1,6 +1,8 @@
 {% from "components/_buttons.html" import button %}
 {% set candidate = view.candidate %}
+{% set country_form = country_evidence_form if country_evidence_form is defined else {} %}
 <article class="lf-candidate-card" id="candidate-{{ candidate.id }}" data-candidate-id="{{ candidate.id }}">
+  {% if card_error %}<div class="lf-alert" role="alert"><strong>操作未执行</strong><span>{{ card_error }}</span></div>{% endif %}
   <header class="lf-candidate-header">
     {% if bulk_form_id %}<input class="lf-candidate-check" type="checkbox" name="candidate_ids" value="{{ candidate.id }}" form="{{ bulk_form_id }}" aria-label="选择 {{ candidate.company_name or candidate.domain }}">{% endif %}
     <div class="lf-candidate-heading">
@@ -12,6 +14,41 @@
       {% if candidate.website %}<a class="lf-safe-link" href="{{ candidate.website }}" target="_blank" rel="noopener noreferrer">访问公司网站</a>{% endif %}
     </div>
   </header>
+
+  {% if candidate.status == 'needs_evidence' and candidate.eligibility_code in ['country_unknown', 'country_conflicting'] %}
+  <section class="lf-form-stack" aria-labelledby="country-evidence-title-{{ candidate.id }}">
+    <div>
+      <h4 id="country-evidence-title-{{ candidate.id }}">确认目标国家证据</h4>
+      <p class="lf-muted">提交公开页面中的准确句子。系统会先执行网址安全检查，再同步重新评估候选，不依赖后台队列。</p>
+    </div>
+    <form class="lf-form-stack" method="post" action="/acquisition/candidates/{{ candidate.id }}/country-evidence" hx-post="/acquisition/candidates/{{ candidate.id }}/country-evidence" hx-target="#candidate-{{ candidate.id }}" hx-swap="outerHTML">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+      <div class="lf-field-group">
+        <label class="lf-label" for="country-code-{{ candidate.id }}">目标国家（ISO 两位代码）</label>
+        <input class="lf-field" id="country-code-{{ candidate.id }}" name="country_code" maxlength="2" placeholder="MX" value="{{ country_form.get('country_code', '') }}" required>
+      </div>
+      <div class="lf-field-group">
+        <label class="lf-label" for="country-source-{{ candidate.id }}">公开证据网址</label>
+        <input class="lf-field" id="country-source-{{ candidate.id }}" name="source_url" type="url" maxlength="1000" value="{{ country_form.get('source_url', '') }}" required>
+      </div>
+      <div class="lf-field-group">
+        <label class="lf-label" for="country-evidence-{{ candidate.id }}">准确证据句子</label>
+        <textarea class="lf-field lf-textarea" id="country-evidence-{{ candidate.id }}" name="evidence_text" maxlength="1000" rows="3" required>{{ country_form.get('evidence_text', '') }}</textarea>
+      </div>
+      <div class="lf-field-group">
+        <label class="lf-label" for="country-reason-{{ candidate.id }}">证据类型</label>
+        <select class="lf-field" id="country-reason-{{ candidate.id }}" name="reason_code" required>
+          <option value="">请选择</option>
+          <option value="official_contact_page"{% if country_form.get('reason_code') == 'official_contact_page' %} selected{% endif %}>企业官方联系页</option>
+          <option value="registry_record"{% if country_form.get('reason_code') == 'registry_record' %} selected{% endif %}>公开注册记录</option>
+          <option value="manual_verification"{% if country_form.get('reason_code') == 'manual_verification' %} selected{% endif %}>人工核验</option>
+          <option value="other"{% if country_form.get('reason_code') == 'other' %} selected{% endif %}>其他公开证据</option>
+        </select>
+      </div>
+      {{ button("确认国家并重新评估", "primary", "submit") }}
+    </form>
+  </section>
+  {% endif %}
 
   <div class="lf-candidate-actions" aria-label="候选审核动作">
     {% if candidate.status == 'eligible' and candidate.country_resolution_status == 'confirmed' %}
