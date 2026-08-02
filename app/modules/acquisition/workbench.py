@@ -13,7 +13,11 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.extensions import get_engine
-from app.modules.acquisition.models import AcquisitionCandidate, Notification
+from app.modules.acquisition.models import (
+    AcquisitionCandidate,
+    Notification,
+    ProductKnowledgeSnapshot,
+)
 from app.modules.acquisition.repository import NotificationRepository
 from app.modules.jobs.models import Job
 from app.modules.leads.models import Activity, Lead
@@ -67,6 +71,7 @@ class WorkbenchView:
     next_action_url: str
     review_url: str
     attention_url: str
+    has_product_knowledge: bool
 
 
 def _session(app) -> Session:
@@ -177,11 +182,22 @@ def load_workbench(app, *, tenant_id: str, now: datetime | None = None) -> Workb
             .order_by(AcquisitionCandidate.created_at.asc())
             .limit(1)
         )
+        has_product_knowledge = (
+            db_session.scalar(
+                select(ProductKnowledgeSnapshot.id)
+                .where(ProductKnowledgeSnapshot.tenant_id == tenant_id)
+                .limit(1)
+            )
+            is not None
+        )
 
+    acquisition_start_url = (
+        "/acquisition/missions/new" if has_product_knowledge else "/acquisition/products"
+    )
     review_url = (
         f"/acquisition/candidates/{review_candidate_id}"
         if review_candidate_id
-        else "/acquisition/missions/new"
+        else acquisition_start_url
     )
     attention_url = (
         "/workbench?focus=failed"
@@ -199,7 +215,7 @@ def load_workbench(app, *, tenant_id: str, now: datetime | None = None) -> Workb
     elif replies_to_handle or follow_ups_due:
         next_action_url = "/leads"
     else:
-        next_action_url = "/acquisition/missions/new"
+        next_action_url = acquisition_start_url
     return WorkbenchView(
         candidates_to_review=candidates_to_review,
         replies_to_handle=replies_to_handle,
@@ -212,6 +228,7 @@ def load_workbench(app, *, tenant_id: str, now: datetime | None = None) -> Workb
         next_action_url=next_action_url,
         review_url=review_url,
         attention_url=attention_url,
+        has_product_knowledge=has_product_knowledge,
     )
 
 

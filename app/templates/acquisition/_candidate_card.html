@@ -8,9 +8,10 @@
     <div class="lf-candidate-heading">
       <div class="lf-status-row">
         <h3>{{ candidate.company_name or candidate.domain or "待确认公司" }}</h3>
-        <span class="lf-badge{% if candidate.priority_band in ['A', 'B'] %} lf-badge-success{% endif %}">{{ candidate.priority_band or "暂定" }} 优先级</span>
+        <span class="lf-badge{% if view.has_assessment and candidate.priority_band in ['A', 'B'] %} lf-badge-success{% endif %}">{% if not view.has_assessment %}待评估{% elif view.is_provisional %}暂定 {{ candidate.priority_band or "待评估" }}{% else %}{{ candidate.priority_band or "待评估" }} 优先级{% endif %}</span>
       </div>
       <p><strong>{{ candidate.opportunity_country_code or "国家待确认" }}</strong> · <span>为什么推荐：{{ view.primary_reason }}</span></p>
+      {% if view.is_provisional %}<p class="lf-muted">暂无意向信号，当前排序只依据匹配度和数据质量。</p>{% endif %}
       {% if candidate.website %}<a class="lf-safe-link" href="{{ candidate.website }}" target="_blank" rel="noopener noreferrer">访问公司网站</a>{% endif %}
     </div>
   </header>
@@ -97,12 +98,14 @@
       </section>
       <section>
         <h4>评分概览</h4>
+        {% if view.has_assessment %}
         <dl class="lf-dl">
           <dt>综合优先级</dt><dd>{{ candidate.priority_score if candidate.priority_score is not none else '待评估' }}</dd>
           <dt>信号覆盖</dt><dd>{{ candidate.signal_coverage }}%</dd>
           <dt>AI 置信度</dt><dd>{{ candidate.ai_confidence }}%</dd>
           {% for key, value in view.score_breakdown.items() %}<dt>{{ key|replace('_', ' ') }}</dt><dd>{{ value }}</dd>{% endfor %}
         </dl>
+        {% else %}<p class="lf-muted">尚未生成评估。</p>{% endif %}
       </section>
       <section>
         <h4>观察事实</h4>
@@ -129,6 +132,7 @@
         <dt>提示版本</dt><dd>{{ view.assessment.prompt_version }}</dd>
         <dt>政策版本</dt><dd>{{ view.assessment.policy_version }}</dd>
         <dt>评分版本</dt><dd>{{ view.assessment.score_version }}</dd>
+        <dt>优先级模式</dt><dd>{{ view.priority_mode }}</dd>
         <dt>证据包 Hash</dt><dd>{{ view.assessment.evidence_bundle_hash }}</dd>
         {% endif %}
       </dl>

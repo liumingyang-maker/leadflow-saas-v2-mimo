@@ -733,6 +733,9 @@ def _candidate_view(
     assessment = AssessmentRepository(db_session).latest_for_candidate(
         candidate.id, tenant_id=tenant_id
     )
+    has_assessment = assessment is not None
+    priority_mode = assessment.priority_mode if assessment else ""
+    is_provisional = priority_mode == "fit_quality_provisional_v1"
     reason = assessment.explanation if assessment and assessment.explanation else ""
     if not reason:
         reason = {
@@ -751,6 +754,9 @@ def _candidate_view(
         "unknowns": _json_value(candidate.unknowns_json, []),
         "evidence": evidence,
         "assessment": assessment,
+        "has_assessment": has_assessment,
+        "priority_mode": priority_mode,
+        "is_provisional": is_provisional,
         "score_breakdown": (_json_value(assessment.score_breakdown_json, {}) if assessment else {}),
     }
 

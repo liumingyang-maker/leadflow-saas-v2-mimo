@@ -92,6 +92,38 @@ def _seed_candidate(
         return SimpleNamespace(id=candidate.id)
 
 
+def _seed_assessment(
+    app,
+    *,
+    tenant_id: str,
+    candidate_id: str,
+    priority_mode: str,
+) -> None:
+    from app.extensions import get_engine
+    from app.modules.acquisition.models import CandidateAssessment
+
+    with Session(get_engine(app)) as db_session:
+        db_session.add(
+            CandidateAssessment(
+                tenant_id=tenant_id,
+                candidate_id=candidate_id,
+                evidence_bundle_hash=f"bundle-{priority_mode}",
+                policy_version="policy-v1",
+                score_version="priority-v2",
+                prompt_version="candidate-assess-v1",
+                model_provider="deterministic",
+                model_id="deterministic",
+                input_json="{}",
+                hard_gate_json="{}",
+                score_breakdown_json='{"fit": 80, "data_quality": 72}',
+                signal_coverage=50,
+                priority_mode=priority_mode,
+                explanation="适合当前目标市场。",
+            )
+        )
+        db_session.commit()
+
+
 def _configure_mission(
     app,
     mission_id: str,
@@ -319,9 +351,70 @@ def test_candidate_detail_uses_progressive_disclosure(acquisition_app, logged_in
     first_layer = html.split("证据、评分和未知项")[0]
     assert "Distribuidora visible" in first_layer
     assert "为什么推荐" in first_layer
+    assert "待评估" in first_layer
+    assert "A 优先级" not in first_layer
     assert "TrustTier" not in first_layer
     assert "ScoreVersion" not in first_layer
     assert 'rel="noopener noreferrer"' in html
+    score_overview = html.split("<h4>评分概览</h4>", 1)[1].split("</section>", 1)[0]
+    assert "尚未生成评估" in score_overview
+    assert "<dd>82</dd>" not in score_overview
+    assert "<dd>75%</dd>" not in score_overview
+    assert "<dd>78%</dd>" not in score_overview
+
+
+def test_candidate_detail_labels_provisional_priority_and_explains_missing_intent(
+    acquisition_app, logged_in_client
+) -> None:
+    client, tenant_id = logged_in_client
+    mission = _seed_mission(acquisition_app, tenant_id=tenant_id, actor_id=_actor_id(client))
+    candidate = _seed_candidate(
+        acquisition_app,
+        tenant_id=tenant_id,
+        mission_id=mission.id,
+        suffix="provisional-priority",
+    )
+    _seed_assessment(
+        acquisition_app,
+        tenant_id=tenant_id,
+        candidate_id=candidate.id,
+        priority_mode="fit_quality_provisional_v1",
+    )
+
+    response = client.get(f"/acquisition/candidates/{candidate.id}")
+    html = response.get_data(as_text=True)
+
+    assert response.status_code == 200
+    assert "暂定 A" in html
+    assert "暂无意向信号，当前排序只依据匹配度和数据质量。" in html
+    assert "priority-v2" in html
+    assert "fit_quality_provisional_v1" in html
+
+
+def test_candidate_detail_does_not_call_full_priority_missing_intent(
+    acquisition_app, logged_in_client
+) -> None:
+    client, tenant_id = logged_in_client
+    mission = _seed_mission(acquisition_app, tenant_id=tenant_id, actor_id=_actor_id(client))
+    candidate = _seed_candidate(
+        acquisition_app,
+        tenant_id=tenant_id,
+        mission_id=mission.id,
+        suffix="full-priority",
+    )
+    _seed_assessment(
+        acquisition_app,
+        tenant_id=tenant_id,
+        candidate_id=candidate.id,
+        priority_mode="full_v1",
+    )
+
+    response = client.get(f"/acquisition/candidates/{candidate.id}")
+    html = response.get_data(as_text=True)
+
+    assert response.status_code == 200
+    assert "A 优先级" in html
+    assert "暂无意向信号" not in html
 
 
 def test_reject_requires_csrf_when_enabled(csrf_client) -> None:

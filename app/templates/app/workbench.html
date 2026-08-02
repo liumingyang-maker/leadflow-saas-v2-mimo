@@ -2,7 +2,7 @@
 {% call shell("今日工作台 · LeadFlow") %}
 <nav class="lf-top-nav" aria-label="Primary navigation">
   <a href="/workbench" aria-current="page">今日工作台</a>
-  <a href="/acquisition/missions/new">创建找客户任务</a>
+  <a href="{% if view.has_product_knowledge %}/acquisition/missions/new{% else %}/acquisition/products{% endif %}">{% if view.has_product_knowledge %}创建找客户任务{% else %}先添加产品知识{% endif %}</a>
   <a href="/leads">候选与 CRM</a>
   <a href="/notifications">通知{% if view.notifications_unread %}（{{ view.notifications_unread }}）{% endif %}</a>
   <a href="/outreach">外联</a>
@@ -16,7 +16,7 @@
     <p class="lf-muted">只看现在需要处理的客户、回复和后台任务。</p>
   </div>
   <a class="lf-button lf-button-primary" href="{{ view.next_action_url }}">
-    {% if view.jobs_failed %}处理失败任务{% elif view.candidates_to_review %}审核下一个候选{% elif view.replies_to_handle or view.follow_ups_due %}处理客户事项{% else %}创建找客户任务{% endif %}
+    {% if view.jobs_failed %}处理失败任务{% elif view.candidates_to_review %}审核下一个候选{% elif view.replies_to_handle or view.follow_ups_due %}处理客户事项{% elif not view.has_product_knowledge %}先添加产品知识{% else %}创建找客户任务{% endif %}
   </a>
 </header>
 
@@ -42,7 +42,7 @@
     {% endfor %}
   </div>
   {% else %}
-  <div class="lf-empty-state"><strong>现在没有后台任务</strong><span>创建找客户任务后，搜索和验证进度会显示在这里。</span><a class="lf-button lf-button-primary" href="/acquisition/missions/new">创建找客户任务</a></div>
+  <div class="lf-empty-state"><strong>现在没有后台任务</strong><span>创建找客户任务后，搜索和验证进度会显示在这里。</span><a class="lf-button lf-button-primary" href="{% if view.has_product_knowledge %}/acquisition/missions/new{% else %}/acquisition/products{% endif %}">{% if view.has_product_knowledge %}创建找客户任务{% else %}先添加产品知识{% endif %}</a></div>
   {% endif %}
 </section>
 {% endcall %}

@@ -123,15 +123,105 @@ def test_workbench_uses_tenant_scoped_real_counts(
     assert private_view.needs_evidence == 0
 
 
-def test_empty_workbench_points_to_new_mission(acquisition_app) -> None:
+def test_empty_workbench_without_product_points_to_product_knowledge(acquisition_app) -> None:
     from app.modules.acquisition.workbench import load_workbench
 
-    view = load_workbench(acquisition_app, tenant_id="empty-tenant")
+    view = load_workbench(acquisition_app, tenant_id="new-tenant")
+
+    assert view.next_action_url == "/acquisition/products"
+    assert view.review_url == "/acquisition/products"
+    assert view.has_product_knowledge is False
+    assert view.attention_url == "/workbench#current-jobs"
+    assert view.current_jobs == ()
+
+
+def test_empty_workbench_with_product_points_to_new_mission(acquisition_app) -> None:
+    from app.modules.acquisition.service import create_product_snapshot
+    from app.modules.acquisition.workbench import load_workbench
+
+    create_product_snapshot(
+        acquisition_app,
+        tenant_id="t1",
+        actor_id="u1",
+        product_name="Engine",
+        summary="Motorcycle engine",
+        facts=[{"name": "product", "value": "engine"}],
+        prohibited_claims=[],
+    )
+
+    view = load_workbench(acquisition_app, tenant_id="t1")
 
     assert view.next_action_url == "/acquisition/missions/new"
     assert view.review_url == "/acquisition/missions/new"
-    assert view.attention_url == "/workbench#current-jobs"
-    assert view.current_jobs == ()
+    assert view.has_product_knowledge is True
+
+
+def test_other_tenant_product_does_not_unlock_new_mission(acquisition_app) -> None:
+    from app.modules.acquisition.service import create_product_snapshot
+    from app.modules.acquisition.workbench import load_workbench
+
+    create_product_snapshot(
+        acquisition_app,
+        tenant_id="other-tenant",
+        actor_id="u1",
+        product_name="Private engine",
+        summary="Other tenant product",
+        facts=[{"name": "product", "value": "engine"}],
+        prohibited_claims=[],
+    )
+
+    view = load_workbench(acquisition_app, tenant_id="current-tenant")
+
+    assert view.has_product_knowledge is False
+    assert view.next_action_url == "/acquisition/products"
+    assert view.review_url == "/acquisition/products"
+
+
+def test_empty_workbench_route_prompts_for_product_knowledge(
+    logged_in_client,
+) -> None:
+    client, _tenant_id = logged_in_client
+
+    response = client.get("/workbench")
+    html = response.get_data(as_text=True)
+
+    assert response.status_code == 200
+    top_nav = html.split('<nav class="lf-top-nav"', 1)[1].split("</nav>", 1)[0]
+    page_header = html.split('<header class="lf-page-header">', 1)[1].split("</header>", 1)[0]
+    empty_state = html.split('<div class="lf-empty-state">', 1)[1].split("</div>", 1)[0]
+    assert '<a href="/acquisition/products">先添加产品知识</a>' in top_nav
+    assert 'href="/acquisition/products"' in page_header
+    assert "先添加产品知识" in page_header
+    assert 'href="/acquisition/products"' in empty_state
+    assert "先添加产品知识" in empty_state
+
+
+def test_empty_workbench_route_with_product_offers_new_mission(logged_in_client) -> None:
+    from app.modules.acquisition.service import create_product_snapshot
+
+    client, tenant_id = logged_in_client
+    create_product_snapshot(
+        client.application,
+        tenant_id=tenant_id,
+        actor_id="u1",
+        product_name="Engine",
+        summary="Motorcycle engine",
+        facts=[{"name": "product", "value": "engine"}],
+        prohibited_claims=[],
+    )
+
+    response = client.get("/workbench")
+    html = response.get_data(as_text=True)
+
+    assert response.status_code == 200
+    top_nav = html.split('<nav class="lf-top-nav"', 1)[1].split("</nav>", 1)[0]
+    page_header = html.split('<header class="lf-page-header">', 1)[1].split("</header>", 1)[0]
+    empty_state = html.split('<div class="lf-empty-state">', 1)[1].split("</div>", 1)[0]
+    assert '<a href="/acquisition/missions/new">创建找客户任务</a>' in top_nav
+    assert 'href="/acquisition/missions/new"' in page_header
+    assert "创建找客户任务" in page_header
+    assert 'href="/acquisition/missions/new"' in empty_state
+    assert "创建找客户任务" in empty_state
 
 
 def test_notification_dedupe_is_exactly_once(acquisition_app) -> None:
