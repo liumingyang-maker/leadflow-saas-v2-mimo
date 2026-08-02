@@ -6,9 +6,15 @@ Phase 1A is a single-operator deployment with a daily backup target: **RPO 24 ho
 
 Store backups outside the application volume and test a restore at least monthly. A backup is not considered successful until its file size is non-zero and the latest restore drill passes.
 
+## Solo SQLite and WAL safety
+
+The file-backed SQLite database runs in WAL mode for Solo local use. The main `.db` file and its live `-wal` and `-shm` companions are one active dataset. Never copy only the `.db` file while the application is running; committed data may still be present in the WAL file.
+
+For an online backup, use SQLite's backup API through `sqlite3 source.db ".backup 'destination.db'"`. For a direct file copy, first stop Web, the single RQ Worker, and the reconciler, then copy the stopped database files. SQLite hardening permits bounded Web-plus-reconciler contention; it does not change the rule that Solo SQLite runs exactly one RQ Worker.
+
 ## Daily backup
 
-Stop the Worker and reconciler, or use SQLite's online backup command, so the copy is consistent.
+Stop Web, the Worker and reconciler, or use SQLite's online backup command, so the copy is consistent.
 
 ```bash
 # SQLite inside the Docker volume
@@ -41,7 +47,7 @@ DATABASE_URL=postgresql://localhost/leadflow_restore alembic upgrade head
 ## Required restore verification
 
 1. Run `alembic current` and confirm it equals `alembic heads`.
-2. Compare per-tenant counts for ProductKnowledgeSnapshot, AcquisitionMission, AcquisitionCandidate, CandidateEvidence, CandidateAssessment, MissionSuggestion, Notification and Lead against the backup manifest.
+2. Compare tenant-scoped row counts for ProductKnowledgeSnapshot, AcquisitionMission, AcquisitionCandidate, CandidateEvidence, CandidateAssessment, MissionSuggestion, Notification and Lead against the backup manifest. Do not accept only a database-wide total because it cannot verify tenant ownership boundaries.
 3. Sample at least five Evidence rows and verify canonical URL, content hash and Candidate foreign key.
 4. Sample accepted Candidates and confirm each Candidate-to-Lead promotion is present and tenant-scoped.
 5. Start Redis, one `default` Worker and the reconciler. Run `/health/live` and `/health/ready`.

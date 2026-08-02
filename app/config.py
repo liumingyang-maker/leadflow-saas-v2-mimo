@@ -3,6 +3,9 @@ from __future__ import annotations
 import os
 from typing import ClassVar, Literal, TypeAlias
 
+from sqlalchemy.engine import URL, make_url
+from sqlalchemy.util import asbool
+
 ConfigName: TypeAlias = Literal["development", "testing", "production"]
 
 
@@ -17,12 +20,31 @@ def _bounded_int(name: str, default: int, *, minimum: int, maximum: int) -> int:
     return value
 
 
+def _is_file_sqlite_uri(database_uri: str | URL) -> bool:
+    url = make_url(database_uri)
+    if url.get_backend_name() != "sqlite":
+        return False
+    database = url.database
+    if database in {None, "", ":memory:"}:
+        return False
+    raw_uri_mode = url.query.get("uri")
+    uri_mode = asbool(raw_uri_mode) if raw_uri_mode is not None else False
+    return not (
+        uri_mode
+        and (
+            database.casefold().startswith("file::memory:")
+            or url.query.get("mode", "").casefold() == "memory"
+        )
+    )
+
+
 class BaseConfig:
     SECRET_KEY: ClassVar[str] = os.environ.get("SECRET_KEY", "dev-only-change-me")
     SQLALCHEMY_DATABASE_URI: ClassVar[str] = os.environ.get(
         "DATABASE_URL", "sqlite:///leadflow-v2-dev.db"
     )
     SQLALCHEMY_ENGINE_OPTIONS: ClassVar[dict[str, object]] = {"future": True}
+    SQLITE_BUSY_TIMEOUT_MS: ClassVar[int] = 5000
     TESTING: ClassVar[bool] = False
     DEBUG: ClassVar[bool] = False
     WTF_CSRF_ENABLED: ClassVar[bool] = True
@@ -105,6 +127,12 @@ def resolve_config(config_name: str | None = None) -> type[BaseConfig]:
     config_class.FETCH_MAX_PAGES_PER_SITE = _bounded_int(
         "FETCH_MAX_PAGES_PER_SITE", 5, minimum=1, maximum=10
     )
+    if _is_file_sqlite_uri(config_class.SQLALCHEMY_DATABASE_URI):
+        config_class.SQLITE_BUSY_TIMEOUT_MS = _bounded_int(
+            "SQLITE_BUSY_TIMEOUT_MS", 5000, minimum=1000, maximum=30000
+        )
+    else:
+        config_class.SQLITE_BUSY_TIMEOUT_MS = 5000
     config_class.REDIS_URL = os.environ.get("REDIS_URL", "redis://localhost:6379/0")
     config_class.MIMO_BASE_URL = os.environ.get("MIMO_BASE_URL", "")
     config_class.MIMO_MODEL = os.environ.get("MIMO_MODEL", "mimo-v2.5")
