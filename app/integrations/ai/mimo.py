@@ -20,8 +20,9 @@ from app.integrations.ai.contracts import (
 from app.modules.accounts.secret_store import SecretStore, SecretStoreError
 
 if TYPE_CHECKING:
-    from app.integrations.web.fetcher import FetchResult
     from flask import Flask
+
+    from app.integrations.web.fetcher import FetchResult
 
 
 _Schema = TypeVar("_Schema", bound=BaseModel)

@@ -79,11 +79,14 @@ blueprint -> service -> repository -> database
 
 V2-04 引入 RQ。Web 仅入队，Worker 执行。每个 Job 持久化 ID、tenant_id、status、progress、error summary。
 
+Phase 1A 的单人部署固定为一个 `default` 队列 Worker，避免 SQLite 多写入者带来的锁竞争。独立 `reconciler` 每分钟恢复过期 heartbeat、推导 Mission 终态并以 `dedupe_key` 生成通知。只有迁移到 PostgreSQL，并完成并发与队列压测后，才允许把 Worker 扩到 2 个；继续扩容必须有新的容量数据。
+
+获客研究是可降级能力：MiMo 负责计划、联网发现与结构化抽取，但不属于 Web 就绪依赖。MiMo 不可用时，用户仍可提交公开网站 URL，通过静态抓取、证据保存、确定性评分和人工审核完成流程。浏览器自动化不在 Phase 1A 的无人值守执行边界内。
+
 ## 配置
 
 - DevelopmentConfig
 - TestingConfig
-- StagingConfig
 - ProductionConfig
 
 生产环境缺秘密时启动失败，不允许弱默认值。
@@ -94,4 +97,13 @@ V2-04 引入 RQ。Web 仅入队，Worker 执行。每个 Job 持久化 ID、tena
 
 ## Observability
 
-每个请求有 request ID，每个 job 有 job ID 和 tenant ID。结构化日志禁止秘密和正文。健康端点：`/health/live`、`/health/ready`。
+每个请求有 request ID，每个 job 有 job ID。结构化 JSON 日志只接受事件名、request/job/mission/candidate ID、provider、stage、safe error code 和耗时；tenant_id 只保留 12 位哈希引用。Key、token、secret、password、authorization、cookie、body、HTML 一律丢弃；URL 只记录 scheme、host、path，不记录 query/fragment。
+
+- `/health/live`：仅证明进程活着，不访问外部依赖。
+- `/health/ready`：检查 SQL 与 Redis；失败返回 503 和安全错误码，不回显连接串或异常。
+- MiMo 状态：保存在 `provider_statuses`，设置页展示最近检查、最近成功、连续失败和安全错误码。连续 3 次失败生成一次应用内通知；恢复写不可变审计事件。
+- Docker 的 Web、Worker、reconciler 日志按 10 MB × 5 文件轮转。
+
+产品数据、Mission、Candidate、Evidence、Assessment、Suggestion 与 Notification 都以 SQL 为事实来源；Redis 只承载可重建的队列状态。具体恢复步骤见 `RUNBOOK_BACKUP_RESTORE.md`。
+
+Phase 1A 的暂定性能目标是：单个 30 候选 Mission 在 MiMo 正常时 15 分钟内进入可审核状态，手工 URL 单条在 60 秒内完成，Web 页面请求不等待后台研究。它们是 staging 采样门槛，不是当前本地 SQLite 测试已经证明的 SLA；真实 30 样本报告会记录 duration、coverage、接受率和每个候选成本。

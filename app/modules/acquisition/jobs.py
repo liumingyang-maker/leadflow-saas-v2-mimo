@@ -11,6 +11,7 @@ from typing import Any
 from urllib.parse import urlsplit
 
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.extensions import get_engine
@@ -23,6 +24,7 @@ from app.modules.acquisition.models import (
     CandidateAssessment,
     CandidateEvidence,
     Notification,
+    ProviderStatus,
 )
 from app.modules.acquisition.policies import canonical_json
 from app.modules.acquisition.repository import (
@@ -40,6 +42,7 @@ from app.modules.acquisition.scoring import (
     evaluate_gate,
     score_candidate,
 )
+from app.modules.audit.service import add_event
 from app.modules.jobs.models import Job
 from app.modules.jobs.service import create_and_enqueue
 
@@ -100,18 +103,57 @@ def _heartbeat(app, job: Job, progress: int, message: str) -> None:
 
 def _provider_success(app, tenant_id: str) -> None:
     with Session(get_engine(app)) as session:
-        ProviderStatusRepository(session).record_success(
-            "mimo", datetime.now(UTC), tenant_id=tenant_id
-        )
+        statuses = ProviderStatusRepository(session)
+        previous = statuses.get("mimo", tenant_id=tenant_id)
+        recovered = bool(previous and previous.consecutive_failures > 0)
+        statuses.record_success("mimo", datetime.now(UTC), tenant_id=tenant_id)
+        if recovered:
+            add_event(
+                session,
+                tenant_id=tenant_id,
+                actor_type="system",
+                action="provider.recovered",
+                target_type="provider",
+                target_id="mimo",
+                safe_summary="MiMo provider recovered",
+            )
         session.commit()
 
 
 def _provider_failure(app, tenant_id: str, error_code: str) -> None:
     with Session(get_engine(app)) as session:
-        ProviderStatusRepository(session).record_failure(
+        status = ProviderStatusRepository(session).record_failure(
             "mimo", error_code, datetime.now(UTC), tenant_id=tenant_id
         )
+        _ensure_provider_failure_notification(session, status)
         session.commit()
+
+
+def _ensure_provider_failure_notification(session: Session, status: ProviderStatus) -> None:
+    if status.consecutive_failures < 3:
+        return
+    incident_anchor = status.last_success_at.isoformat() if status.last_success_at else "initial"
+    dedupe_key = f"provider-failed:mimo:{incident_anchor}"
+    notifications = NotificationRepository(session)
+    if notifications.find_by_dedupe_key(dedupe_key, tenant_id=status.tenant_id) is None:
+        try:
+            with session.begin_nested():
+                notifications.add(
+                    Notification(
+                        kind="provider_failed",
+                        title="MiMo research is temporarily unavailable",
+                        body="Use manual URL research while the provider is recovering.",
+                        target_url="/settings",
+                        dedupe_key=dedupe_key,
+                    ),
+                    tenant_id=status.tenant_id,
+                )
+                session.flush()
+        except IntegrityError:
+            # Worker and reconciler can observe the same incident concurrently.
+            # The tenant-scoped unique key is authoritative; the savepoint keeps
+            # the surrounding provider status transaction usable.
+            pass
 
 
 def handle_acquisition_plan(app, job: Job, payload: dict[str, Any]) -> dict[str, Any]:
@@ -551,6 +593,16 @@ def reconcile_missions(app, *, tenant_id: str | None = None, now: datetime) -> i
     recover_stale_jobs(app)
     changed = 0
     with Session(get_engine(app)) as session:
+        provider_query = select(ProviderStatus).where(
+            ProviderStatus.provider == "mimo",
+            ProviderStatus.status == "failed",
+            ProviderStatus.consecutive_failures >= 3,
+        )
+        if tenant_id is not None:
+            provider_query = provider_query.where(ProviderStatus.tenant_id == tenant_id)
+        for provider_status in session.scalars(provider_query):
+            _ensure_provider_failure_notification(session, provider_status)
+
         mission_query = select(AcquisitionMission).where(
             AcquisitionMission.status.in_(["queued", "running"])
         )
