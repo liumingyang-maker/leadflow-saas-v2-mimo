@@ -50,6 +50,14 @@ Application notifications are the default Phase 1A alert channel. Check the work
 
 Web, Worker and reconciler use Docker JSON log rotation of 10 MB with five files. Logs must never contain API keys, cookies, prompts, page bodies or URL query strings.
 
+### Hosted access-log gate (open)
+
+`safe_event` only sanitizes structured application events. It does not sanitize access logs emitted by the reverse proxy or WSGI server. Before any hosted/public exposure, configure the selected deployment components to redact the path segment after `/verify-email/` and `/reset-password/`, then capture and inspect their actual emitted access-log lines. Keep this gate open until that deployment-level test passes; local unit tests do not prove the access logger is safe.
+
+### Hosted fetcher isolation gate (open)
+
+`StaticFetcher` retains a DNS-validation-to-connect TOCTOU residual risk even though it validates redirects and compares resolved addresses. Before public SaaS exposure, run fetching in an isolated Worker and enforce network-layer egress denial for private, loopback, link-local, reserved and metadata address ranges. Verify the denial in the real hosted network. Local fetcher unit tests do not satisfy this gate.
+
 ## Performance sampling
 
 Capture a 15-minute window before changing Worker count. Keep the output with the release evidence and record the database type, MiMo model, sample size and Mission ID.
@@ -75,7 +83,7 @@ For the selected tenant, export only safe Job fields (`id`, `job_type`, `status`
 
 ## PostgreSQL promotion gate
 
-Before changing `DATABASE_URL` and Worker count, run migration upgrade/downgrade against a disposable PostgreSQL database, execute the full suite, then perform concurrent inbound idempotency and two-Worker queue tests. Start with two Workers only when the oldest queue repeatedly exceeds five minutes and the failure rate remains below 20%. Record timings and database version in the release evidence.
+SQLite permits exactly one RQ Worker in the supported Solo deployment. Before changing `DATABASE_URL` or increasing the Worker count, migrate to PostgreSQL, run migration upgrade/downgrade against a disposable PostgreSQL database, execute the full suite, then perform concurrent inbound idempotency, candidate-promotion and two-Worker queue tests. Start with two Workers only when those gates pass, the oldest queue repeatedly exceeds five minutes and the failure rate remains below 20%. Record timings and database version in the release evidence. Local SQLite tests do not prove PostgreSQL concurrency or multi-Worker readiness.
 
 ## Rollback
 

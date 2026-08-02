@@ -29,6 +29,10 @@ RC1 is ready for staging rehearsal, not production launch. Complete every item b
 - [ ] Tenant isolation tests pass.
 - [ ] Admin routes require admin session.
 - [ ] Audit logs store safe summaries and hashed request metadata only.
+- [ ] The selected reverse proxy and WSGI access logger redact the path segment after `/verify-email/` and `/reset-password/`, verified against their actual emitted log lines.
+- [ ] Hosted logging review confirms `safe_event` protects structured application events only and is not treated as access-log sanitization.
+- [ ] Static fetching runs in an isolated Worker with network-layer private-range and metadata egress denial verified in the hosted environment.
+- [ ] StaticFetcher DNS/connect TOCTOU residual risk is accepted only with the hosted network control above; local unit tests are not used as proof of closure.
 
 ## Operations
 
@@ -37,6 +41,8 @@ RC1 is ready for staging rehearsal, not production launch. Complete every item b
 - [ ] Migration rollback plan tested.
 - [ ] Redis persistence expectations documented.
 - [ ] Worker recovery tested after restart.
+- [ ] SQLite deployment is limited to exactly one RQ Worker.
+- [ ] PostgreSQL migration, concurrent promotion and multi-Worker smoke pass before Worker scale-out.
 - [ ] Logs are collected without secrets.
 - [ ] Health checks monitored.
 - [ ] Alerting configured for web, worker, database, and Redis.
