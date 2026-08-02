@@ -194,7 +194,7 @@ def test_candidate_state_does_not_hide_unrelated_job_failure(
         candidate = AcquisitionCandidate(
             tenant_id="t1",
             mission_id=mission_id,
-            status="eligible",
+            status="needs_evidence",
             dedupe_key="domain:assessment-failure.example",
         )
         db_session.add(candidate)
@@ -213,6 +213,118 @@ def test_candidate_state_does_not_hide_unrelated_job_failure(
 
     assert view.jobs_failed == 1
     assert len(view.failed_jobs) == 1
+
+
+@pytest.mark.parametrize("candidate_status", ["accepted", "promoted", "rejected"])
+def test_terminal_review_state_hides_obsolete_candidate_assessment_failure(
+    acquisition_app, seed_acquisition_mission, candidate_status: str
+) -> None:
+    from app.extensions import get_engine
+    from app.modules.acquisition.models import AcquisitionCandidate
+    from app.modules.acquisition.workbench import load_workbench
+    from app.modules.jobs.models import Job
+
+    mission_id = seed_acquisition_mission(tenant_id="t1", suffix=f"terminal-{candidate_status}")
+    with Session(get_engine(acquisition_app)) as db_session:
+        candidate = AcquisitionCandidate(
+            tenant_id="t1",
+            mission_id=mission_id,
+            status=candidate_status,
+            dedupe_key=f"domain:{candidate_status}-assessment.example",
+        )
+        db_session.add(candidate)
+        db_session.flush()
+        db_session.add(
+            Job(
+                tenant_id="t1",
+                job_type="candidate_assess",
+                status="failed",
+                payload_json=json.dumps({"candidate_id": candidate.id}),
+            )
+        )
+        db_session.commit()
+
+    view = load_workbench(acquisition_app, tenant_id="t1")
+
+    assert view.jobs_failed == 0
+    assert view.failed_jobs == ()
+
+
+def test_accepted_candidate_keeps_failed_promotion_actionable(
+    acquisition_app, seed_acquisition_mission
+) -> None:
+    from app.extensions import get_engine
+    from app.modules.acquisition.models import AcquisitionCandidate
+    from app.modules.acquisition.workbench import load_workbench
+    from app.modules.jobs.models import Job
+
+    mission_id = seed_acquisition_mission(tenant_id="t1", suffix="accepted-promote")
+    with Session(get_engine(acquisition_app)) as db_session:
+        candidate = AcquisitionCandidate(
+            tenant_id="t1",
+            mission_id=mission_id,
+            status="accepted",
+            dedupe_key="domain:accepted-promotion.example",
+        )
+        db_session.add(candidate)
+        db_session.flush()
+        db_session.add(
+            Job(
+                tenant_id="t1",
+                job_type="candidate_promote",
+                status="failed",
+                payload_json=json.dumps({"candidate_id": candidate.id}),
+            )
+        )
+        db_session.commit()
+
+    view = load_workbench(acquisition_app, tenant_id="t1")
+
+    assert view.jobs_failed == 1
+    assert len(view.failed_jobs) == 1
+
+
+def test_oldest_needs_evidence_action_uses_mission_creation_time(
+    acquisition_app, seed_acquisition_mission
+) -> None:
+    from app.extensions import get_engine
+    from app.modules.acquisition.models import AcquisitionCandidate, AcquisitionMission
+    from app.modules.acquisition.workbench import load_workbench
+
+    older_mission_id = seed_acquisition_mission(tenant_id="t1", suffix="mission-older")
+    newer_mission_id = seed_acquisition_mission(tenant_id="t1", suffix="mission-newer")
+    now = datetime.now(UTC)
+    with Session(get_engine(acquisition_app)) as db_session:
+        older_mission = db_session.get(AcquisitionMission, older_mission_id)
+        newer_mission = db_session.get(AcquisitionMission, newer_mission_id)
+        assert older_mission is not None
+        assert newer_mission is not None
+        older_mission.created_at = now - timedelta(days=2)
+        newer_mission.created_at = now - timedelta(days=1)
+        db_session.add_all(
+            [
+                AcquisitionCandidate(
+                    tenant_id="t1",
+                    mission_id=older_mission_id,
+                    status="needs_evidence",
+                    dedupe_key="domain:older-mission-late-candidate.example",
+                    created_at=now,
+                ),
+                AcquisitionCandidate(
+                    tenant_id="t1",
+                    mission_id=newer_mission_id,
+                    status="needs_evidence",
+                    dedupe_key="domain:newer-mission-early-candidate.example",
+                    created_at=now - timedelta(hours=1),
+                ),
+            ]
+        )
+        db_session.commit()
+
+    view = load_workbench(acquisition_app, tenant_id="t1")
+
+    assert view.next_action_url == f"/acquisition/missions/{older_mission_id}"
+    assert view.attention_url == f"/acquisition/missions/{older_mission_id}"
 
 
 def test_later_success_supersedes_failure_for_same_logical_job(

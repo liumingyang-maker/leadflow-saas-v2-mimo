@@ -15,6 +15,7 @@ from sqlalchemy.orm import Session
 from app.extensions import get_engine
 from app.modules.acquisition.models import (
     AcquisitionCandidate,
+    AcquisitionMission,
     Notification,
     ProductKnowledgeSnapshot,
 )
@@ -31,7 +32,14 @@ ALLOWED_NOTIFICATION_KINDS = {
     "backup_stale",
 }
 ACTIVE_JOB_STATUSES = {"queued", "running", "retrying"}
-FAILURE_REPRESENTED_CANDIDATE_STATUSES = {"needs_evidence"}
+# Accepted candidates can still require promotion; rejected and promoted candidates have
+# ended that workflow, so their older candidate-scoped failures are no longer actionable.
+OBSOLETE_FAILURE_TYPES_BY_CANDIDATE_STATUS = {
+    "needs_evidence": frozenset({"website_verify"}),
+    "accepted": frozenset({"website_verify", "candidate_assess"}),
+    "rejected": frozenset({"website_verify", "candidate_assess", "candidate_promote"}),
+    "promoted": frozenset({"website_verify", "candidate_assess", "candidate_promote"}),
+}
 
 
 class WorkbenchError(ValueError):
@@ -161,12 +169,17 @@ def load_workbench(app, *, tenant_id: str, now: datetime | None = None) -> Workb
             .limit(1)
         )
         evidence_mission_id = db_session.scalar(
-            select(AcquisitionCandidate.mission_id)
+            select(AcquisitionMission.id)
+            .join(
+                AcquisitionCandidate,
+                AcquisitionCandidate.mission_id == AcquisitionMission.id,
+            )
             .where(
                 AcquisitionCandidate.tenant_id == tenant_id,
                 AcquisitionCandidate.status == "needs_evidence",
+                AcquisitionMission.tenant_id == tenant_id,
             )
-            .order_by(AcquisitionCandidate.created_at.asc())
+            .order_by(AcquisitionMission.created_at.asc(), AcquisitionMission.id.asc())
             .limit(1)
         )
         has_product_knowledge = (
@@ -374,7 +387,10 @@ def _unresolved_failures(
         for job in failures
         if not (
             (identity := _job_identity(job))[1] == "candidate"
-            and candidate_statuses.get(identity[2]) in FAILURE_REPRESENTED_CANDIDATE_STATUSES
+            and job.job_type
+            in OBSOLETE_FAILURE_TYPES_BY_CANDIDATE_STATUS.get(
+                candidate_statuses.get(identity[2], ""), frozenset()
+            )
         )
     ]
     unresolved.sort(key=lambda job: (job.created_at, job.updated_at, job.id), reverse=True)
