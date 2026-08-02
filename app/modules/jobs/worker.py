@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 from collections.abc import Callable
 from datetime import UTC, datetime, timedelta
 from typing import Any
@@ -315,14 +316,10 @@ def _handle_worker_error(app: Any, job_id: str, tenant_id: str, exc: Exception) 
         safe_summary = str(getattr(exc, "safe_summary", type(exc).__name__))[:500]
         retryable = bool(getattr(exc, "retryable", True))
 
-    attempt = 0
-    max_attempts = 0
     with Session(get_engine(app)) as session:
         job = _get_job_for_update(session, job_id, tenant_id)
         if job is None:
             return
-        attempt = job.attempt
-        max_attempts = job.max_attempts
         if retryable and job.attempt < job.max_attempts:
             status = "retrying"
             next_retry = now + timedelta(seconds=min(30 * (2**job.attempt), 600))
@@ -340,17 +337,37 @@ def _handle_worker_error(app: Any, job_id: str, tenant_id: str, exc: Exception) 
             finished_at=now if status == "failed" else None,
         )
 
-    # Log the full traceback server-side (secrets still sanitized)
-    import logging
-
-    logging.getLogger("worker").error(
-        "Job %s failed (attempt %d/%d): %s",
-        job_id,
-        attempt,
-        max_attempts,
-        safe_summary,
-        exc_info=(type(exc), exc, exc.__traceback__),
+    app.logger.error(
+        "job.failed",
+        extra={
+            "safe_fields": {
+                "tenant_id": tenant_id,
+                "job_id": job_id,
+                "error_code": error_code,
+                "stage": _safe_exception_stage(exc),
+            }
+        },
     )
+
+
+def _safe_exception_stage(exc: Exception) -> str:
+    """Return bounded type/frame metadata without values, source, locals, or message."""
+
+    frames: list[str] = []
+    traceback = exc.__traceback__
+    while traceback is not None:
+        code = traceback.tb_frame.f_code
+        filename = _safe_metadata_token(os.path.basename(code.co_filename), limit=60)
+        function = _safe_metadata_token(code.co_name, limit=80)
+        frames.append(f"{filename}:{max(0, int(traceback.tb_lineno))}:{function}")
+        traceback = traceback.tb_next
+    exception_type = _safe_metadata_token(type(exc).__name__, limit=60)
+    detail = "|".join(frames[-2:]) or "no_frame"
+    return f"{exception_type}@{detail}"[:200]
+
+
+def _safe_metadata_token(value: object, *, limit: int) -> str:
+    return re.sub(r"[^A-Za-z0-9_.-]", "_", str(value))[:limit] or "unknown"
 
 
 # ---------------------------------------------------------------------------

@@ -19,15 +19,15 @@
 
 - [ ] **Step 1: Write failing reconciliation tests**
 
-Add tests that create a `verifying` candidate plus a terminal failed `website_verify` Job, run `reconcile_missions`, and assert the candidate becomes `needs_evidence`, the Mission has zero usable candidates, and the terminal notification does not claim the candidate is usable. Add a logging test that asserts `_handle_worker_error` logs with `exc_info`.
+Add tests that create a `verifying` candidate plus a terminal failed `website_verify` Job, run `reconcile_missions`, and assert the candidate becomes `needs_evidence`, the Mission has zero usable candidates, and the terminal notification does not claim the candidate is usable. Add a logging test that asserts `_handle_worker_error` emits only a static event with allowlisted identifiers and bounded exception type/frame metadata, without `exc_info` or raw exception text.
 
 - [ ] **Step 2: Verify RED**
 
-Run `python -m pytest tests/acquisition/test_jobs.py -q`. Expected: the new assertions fail because candidates remain `verifying`, non-rejected candidates are counted as usable, and traceback metadata is absent.
+Run `python -m pytest tests/acquisition/test_jobs.py -q`. Expected: the new assertions fail because candidates remain `verifying`, non-rejected candidates are counted as usable, and safe frame metadata is absent.
 
 - [ ] **Step 3: Implement the state transition**
 
-Add an acquisition-owned helper that parses a failed Job payload, finds a tenant-owned candidate for `website_verify`, and changes only `discovered`/`verifying` candidates to `needs_evidence`. Invoke it from reconciliation before Mission derivation. Replace the broad non-rejected usable test with the explicit set `{"eligible", "accepted", "promoted"}`. Pass `(type(exc), exc, exc.__traceback__)` to the worker logger through `exc_info`.
+Add an acquisition-owned helper that parses a failed Job payload, finds a tenant-owned candidate for `website_verify`, and changes only `discovered`/`verifying` candidates to `needs_evidence`. Invoke it from reconciliation before Mission derivation. Replace the broad non-rejected usable test with the explicit set `{"eligible", "accepted", "promoted"}`. Emit worker failures through the application's safe JSON logger using a static event and allowlisted identifiers plus bounded exception type/frame metadata only.
 
 - [ ] **Step 4: Verify GREEN**
 

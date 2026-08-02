@@ -990,7 +990,8 @@ def test_worker_does_not_retry_invalid_acquisition_payload(acquisition_app, monk
         assert job.error_code == "schema"
 
 
-def test_worker_error_logs_traceback_but_persists_safe_summary(acquisition_app, caplog):
+def test_worker_error_logs_only_safe_bounded_frame_metadata(acquisition_app, caplog):
+    from app.core.logging import SafeJsonFormatter
     from app.extensions import get_engine
     from app.modules.jobs.models import Job
     from app.modules.jobs.worker import _handle_worker_error
@@ -1007,18 +1008,32 @@ def test_worker_error_logs_traceback_but_persists_safe_summary(acquisition_app, 
         session.commit()
         job_id = job.id
 
-    caplog.set_level(logging.ERROR, logger="worker")
-    caught_exc = None
-    caught_traceback = None
+    caplog.set_level(logging.ERROR, logger=acquisition_app.logger.name)
+    acquisition_app.logger.addHandler(caplog.handler)
     try:
-        raise RuntimeError("private provider response")
+        raise RuntimeError("private provider response sk-secret-value")
     except RuntimeError as exc:
-        caught_exc = exc
-        caught_traceback = exc.__traceback__
         _handle_worker_error(acquisition_app, job_id, "t1", exc)
+    finally:
+        acquisition_app.logger.removeHandler(caplog.handler)
 
-    record = next(record for record in caplog.records if record.name == "worker")
-    assert record.exc_info == (RuntimeError, caught_exc, caught_traceback)
+    record = next(
+        record
+        for record in caplog.records
+        if record.name == acquisition_app.logger.name and record.getMessage() == "job.failed"
+    )
+    assert record.exc_info is None
+    assert record.args == ()
+    assert record.safe_fields["job_id"] == job_id
+    assert record.safe_fields["error_code"] == "worker_error"
+    assert "RuntimeError" in record.safe_fields["stage"]
+    assert "test_jobs.py" in record.safe_fields["stage"]
+    assert "test_worker_error_logs_only_safe_bounded_frame_metadata" in record.safe_fields["stage"]
+    serialized = SafeJsonFormatter().format(record)
+    assert "private provider response" not in serialized
+    assert "sk-secret-value" not in serialized
+    assert job_id in serialized
+    assert "worker_error" in serialized
     with Session(get_engine(acquisition_app)) as session:
         job = session.get(Job, job_id)
         assert job is not None

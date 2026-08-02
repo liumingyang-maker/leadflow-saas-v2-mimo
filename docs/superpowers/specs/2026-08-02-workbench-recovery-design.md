@@ -12,7 +12,7 @@ The first real MX acquisition Mission completed with an inconsistent terminal st
 4. Active Jobs and unresolved system failures are separate workbench concepts. Candidate verification failures represented by `needs_evidence`, and failures superseded by a later success for the same entity and Job type, do not remain system errors.
 5. The workbench gives `needs_evidence` priority over creating another Mission and refreshes its live summary without reloading the entire page.
 6. A candidate in `needs_evidence` can be explicitly re-queued for website verification. The route remains tenant scoped, actor initiated, CSRF protected, and idempotently rejects an already-active verification.
-7. Worker logs retain the safe user-facing summary while also recording a server-side traceback.
+7. Worker logs retain the safe user-facing summary and bounded exception type/frame metadata, but never raw exception messages, source lines, locals, or traceback objects.
 
 ## Architecture
 
@@ -30,4 +30,4 @@ The HTML shell remains server rendered. A tenant-guarded `/workbench/live` route
 
 ## Verification
 
-Regression tests cover self-healing, explicit usable-state counting, unresolved failure projection, live workbench rendering, retry idempotency, tenant isolation, and traceback logging. Existing acquisition tests, the non-browser suite, Ruff checks, formatter checks, and migration smoke must pass. The local runtime is then restarted and one reconciler pass repairs the current MX Mission without ad-hoc SQL edits.
+Regression tests cover self-healing, explicit usable-state counting, unresolved failure projection, live workbench rendering, retry idempotency, tenant isolation, and secret-safe frame-metadata logging. Existing acquisition tests, the non-browser suite, Ruff checks, formatter checks, and migration smoke must pass. The local runtime is then restarted and one reconciler pass repairs the current MX Mission without ad-hoc SQL edits.
