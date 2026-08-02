@@ -76,7 +76,7 @@ Run `python -m pytest tests/acquisition/test_routes.py -q`. Expected: POST retur
 
 - [ ] **Step 3: Implement the command**
 
-Add a POST-only tenant-guarded route. Load by tenant, require `needs_evidence`, check for an active `website_verify` Job for the candidate, enqueue a new Job with only `candidate_id`, update status after successful enqueue, and redirect to the candidate detail with a safe result banner.
+Add a POST-only tenant-guarded route that delegates to an acquisition service command and maps typed not-found, state, and queue errors. In the service, load by tenant, require `needs_evidence`, check for an active `website_verify` Job for the candidate, enqueue a new Job with only `candidate_id`, atomically update status after successful enqueue, reopen only a failed Mission, archive its stale failure notification, and return a fixed safe result. Compensate a lost state race by cancelling the newly queued SQL Job when possible.
 
 - [ ] **Step 4: Verify GREEN**
 

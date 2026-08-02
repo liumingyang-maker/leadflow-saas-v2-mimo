@@ -18,6 +18,8 @@ The first real MX acquisition Mission completed with an inconsistent terminal st
 
 The acquisition module owns the mapping between Job failures and candidate state. `reconcile_missions` applies the mapping both for newly failed Jobs and for old inconsistent rows, then derives terminal Mission status from explicit usable states. The workbench builds a tenant-scoped projection: active Jobs are shown as progress, unresolved infrastructure failures are shown separately, and candidate evidence gaps are routed to the oldest affected Mission.
 
+Candidate re-verification is an acquisition service command; the HTTP route only supplies identity and maps typed outcomes. A successful retry atomically claims the candidate, reopens only a failed Mission, and archives its stale failure notification. Completed Missions are never demoted by retry. Queue/state compensation remains inside the service boundary.
+
 The HTML shell remains server rendered. A tenant-guarded `/workbench/live` route renders one partial containing metrics, active progress, and unresolved errors; HTMX polls it every five seconds. This avoids a new client state store and fits the single-user local deployment.
 
 ## Error handling and safety

@@ -51,6 +51,7 @@ from app.modules.acquisition.repository import (
     CandidateRepository,
     EvidenceRepository,
     MissionRepository,
+    NotificationRepository,
     ProductKnowledgeRepository,
     SuggestionRepository,
 )
@@ -72,6 +73,8 @@ from app.modules.acquisition.versions import (
     PRIORITY_SCORE_VERSION,
 )
 from app.modules.audit.service import add_event
+from app.modules.jobs.repository import JobRepository
+from app.modules.jobs.service import JobServiceError, create_and_enqueue
 from app.modules.leads.models import Activity, Company, Lead
 from app.modules.leads.repository import CompanyRepository, LeadRepository
 
@@ -81,6 +84,22 @@ class AcquisitionError(ValueError):
 
 
 class AcquisitionStateError(AcquisitionError):
+    pass
+
+
+class AcquisitionNotFoundError(AcquisitionError):
+    pass
+
+
+class AcquisitionQueueError(AcquisitionError):
+    pass
+
+
+class AcquisitionActiveJobError(AcquisitionStateError):
+    pass
+
+
+class AcquisitionRetryConflictError(AcquisitionStateError):
     pass
 
 
@@ -98,6 +117,12 @@ class AssessmentProvenance:
     provider: str
     model_id: str
     prompt_version: str
+
+
+@dataclass(frozen=True)
+class VerificationRetryResult:
+    candidate_id: str
+    mission_id: str
 
 
 MIMO_PROVENANCE = AssessmentProvenance("mimo", "", MIMO_EXTRACT_PROMPT_VERSION)
@@ -541,6 +566,87 @@ def review_candidate(
         candidate.decided_at = now
         session.commit()
         return candidate
+
+
+def retry_candidate_verification(
+    app,
+    *,
+    tenant_id: str,
+    actor_id: str,
+    candidate_id: str,
+) -> VerificationRetryResult:
+    """Queue one candidate retry and atomically claim its workflow state.
+
+    The queue commit necessarily precedes the candidate transaction. If a concurrent
+    decision wins, the newly created SQL Job is cancelled while still queued. If a
+    worker already claimed it, the candidate transition still fails and human terminal
+    state guards prevent later assessment from replacing that decision.
+    """
+
+    tenant_id, actor_id = _require_identity(tenant_id, actor_id)
+    with _session(app) as session:
+        candidate = CandidateRepository(session).get(candidate_id, tenant_id=tenant_id)
+        if candidate is None:
+            raise AcquisitionNotFoundError("candidate was not found")
+        if candidate.status != "needs_evidence":
+            raise AcquisitionStateError("candidate cannot be retried from its current status")
+        if JobRepository(session).has_active_for_candidate(
+            candidate_id,
+            job_type="website_verify",
+            tenant_id=tenant_id,
+        ):
+            raise AcquisitionActiveJobError("candidate verification is already active")
+        mission_id = candidate.mission_id
+
+    try:
+        queued_job = create_and_enqueue(
+            app,
+            tenant_id=tenant_id,
+            job_type="website_verify",
+            payload={"candidate_id": candidate_id},
+        )
+    except JobServiceError as exc:
+        raise AcquisitionQueueError("candidate verification could not be queued") from exc
+
+    with _session(app) as session:
+        jobs = JobRepository(session)
+        mission = MissionRepository(session).get(mission_id, tenant_id=tenant_id)
+        if mission is None:
+            jobs.cancel_queued_for_tenant(queued_job.id, tenant_id=tenant_id)
+            session.commit()
+            raise AcquisitionNotFoundError("candidate mission was not found")
+        transitioned = CandidateRepository(session).mark_verifying_if_needs_evidence(
+            candidate_id,
+            tenant_id=tenant_id,
+        )
+        if not transitioned:
+            jobs.cancel_queued_for_tenant(queued_job.id, tenant_id=tenant_id)
+            session.commit()
+            raise AcquisitionRetryConflictError("candidate status changed before retry claim")
+
+        now = datetime.now(UTC)
+        if mission.status == "failed":
+            mission.status = "running"
+            mission.finished_at = None
+            failed_notification = NotificationRepository(session).find_by_dedupe_key(
+                f"mission-terminal:{mission.id}:failed",
+                tenant_id=tenant_id,
+            )
+            if failed_notification is not None:
+                failed_notification.status = "archived"
+                failed_notification.read_at = now
+
+        add_event(
+            session,
+            tenant_id=tenant_id,
+            actor_user_id=actor_id,
+            action="acquisition_candidate.verification_retried",
+            target_type="acquisition_candidate",
+            target_id=candidate_id,
+            safe_summary="Candidate website verification retried",
+        )
+        session.commit()
+    return VerificationRetryResult(candidate_id=candidate_id, mission_id=mission_id)
 
 
 def bulk_review_candidates(

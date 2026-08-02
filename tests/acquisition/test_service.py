@@ -1985,3 +1985,201 @@ def test_unknown_provider_cost_is_not_recorded_as_zero(acquisition_app):
     assert mimo["requests"] == 1
     assert mimo["duration_ms"] == 120
     assert mimo["estimated_cost"] is None
+
+
+def test_retry_reopens_failed_mission_and_reconcile_can_complete_it(
+    acquisition_app, monkeypatch
+) -> None:
+    from app.extensions import get_engine
+    from app.modules.acquisition.jobs import reconcile_missions
+    from app.modules.acquisition.models import (
+        AcquisitionCandidate,
+        AcquisitionMission,
+        Notification,
+    )
+    from app.modules.acquisition.service import retry_candidate_verification
+    from app.modules.audit.models import AuditEvent
+    from app.modules.jobs.models import Job
+
+    candidate_id = _seed_mission_and_candidate(
+        acquisition_app,
+        status="needs_evidence",
+        eligibility_code="missing_contact_path",
+        suffix="retry-reopen",
+    )
+    failed_finished_at = datetime(2026, 8, 2, 12, 0, tzinfo=UTC)
+    with Session(get_engine(acquisition_app)) as session:
+        mission = session.get(AcquisitionMission, "m1")
+        assert mission is not None
+        mission.status = "failed"
+        mission.finished_at = failed_finished_at
+        session.add(
+            Notification(
+                id="retry-failed-notification",
+                tenant_id="t1",
+                kind="mission_failed",
+                title="Acquisition mission failed",
+                body="Mexico dealers: 0 usable candidates",
+                target_url="/acquisition/missions/m1",
+                status="unread",
+                dedupe_key="mission-terminal:m1:failed",
+            )
+        )
+        assert session.scalar(select(func.count()).select_from(Job)) == 0
+        session.commit()
+
+    def persist_retry_job(_app, **kwargs):
+        with Session(get_engine(acquisition_app)) as session:
+            job = Job(
+                tenant_id=kwargs["tenant_id"],
+                job_type=kwargs["job_type"],
+                status="queued",
+                payload_json=json.dumps(kwargs["payload"], sort_keys=True),
+            )
+            session.add(job)
+            session.commit()
+            return type("QueuedJob", (), {"id": job.id})()
+
+    monkeypatch.setattr(
+        "app.modules.acquisition.service.create_and_enqueue",
+        persist_retry_job,
+    )
+
+    result = retry_candidate_verification(
+        acquisition_app,
+        tenant_id="t1",
+        actor_id="u1",
+        candidate_id=candidate_id,
+    )
+
+    assert result.candidate_id == candidate_id
+    with Session(get_engine(acquisition_app)) as session:
+        candidate = session.get(AcquisitionCandidate, candidate_id)
+        mission = session.get(AcquisitionMission, "m1")
+        failed_notification = session.get(Notification, "retry-failed-notification")
+        retry_job = session.scalar(
+            select(Job).where(Job.job_type == "website_verify", Job.tenant_id == "t1")
+        )
+        audit = session.scalar(
+            select(AuditEvent).where(
+                AuditEvent.action == "acquisition_candidate.verification_retried"
+            )
+        )
+        assert candidate is not None
+        assert candidate.status == "verifying"
+        assert mission is not None
+        assert mission.status == "running"
+        assert mission.finished_at is None
+        assert failed_notification is not None
+        assert failed_notification.status == "archived"
+        assert failed_notification.read_at is not None
+        assert retry_job is not None
+        assert json.loads(retry_job.payload_json) == {"candidate_id": candidate_id}
+        assert audit is not None
+        assert audit.actor_user_id == "u1"
+
+        retry_job.status = "succeeded"
+        retry_job.finished_at = datetime.now(UTC)
+        candidate.status = "eligible"
+        candidate.eligibility_code = "eligible"
+        session.add(
+            Job(
+                tenant_id="t1",
+                job_type="candidate_assess",
+                status="succeeded",
+                payload_json=json.dumps({"candidate_id": candidate_id}),
+                finished_at=datetime.now(UTC),
+            )
+        )
+        session.commit()
+
+    assert (
+        reconcile_missions(
+            acquisition_app,
+            tenant_id="t1",
+            now=datetime(2026, 8, 3, 12, 0, tzinfo=UTC),
+        )
+        == 1
+    )
+
+    with Session(get_engine(acquisition_app)) as session:
+        mission = session.get(AcquisitionMission, "m1")
+        failed_notification = session.get(Notification, "retry-failed-notification")
+        completion = session.scalar(
+            select(Notification).where(
+                Notification.tenant_id == "t1",
+                Notification.dedupe_key == "mission-terminal:m1:completed",
+            )
+        )
+        assert mission is not None
+        assert mission.status == "completed"
+        assert failed_notification is not None
+        assert failed_notification.status == "archived"
+        assert completion is not None
+        assert completion.kind == "mission_completed"
+        assert completion.status == "unread"
+        assert completion.body == "Mexico dealers: 1 usable candidates"
+
+
+def test_retry_does_not_demote_completed_mission_with_usable_candidate(
+    acquisition_app, monkeypatch
+) -> None:
+    from app.extensions import get_engine
+    from app.modules.acquisition.models import AcquisitionCandidate, AcquisitionMission
+    from app.modules.acquisition.service import retry_candidate_verification
+    from app.modules.jobs.models import Job
+
+    retry_candidate_id = _seed_mission_and_candidate(
+        acquisition_app,
+        status="needs_evidence",
+        eligibility_code="missing_contact_path",
+        suffix="retry-completed",
+    )
+    completed_at = datetime(2026, 8, 1, 8, 0, tzinfo=UTC)
+    with Session(get_engine(acquisition_app)) as session:
+        mission = session.get(AcquisitionMission, "m1")
+        assert mission is not None
+        mission.status = "completed"
+        mission.finished_at = completed_at
+        session.add(
+            AcquisitionCandidate(
+                tenant_id="t1",
+                mission_id="m1",
+                status="eligible",
+                eligibility_code="eligible",
+                dedupe_key="domain:retry-completed-usable.example",
+            )
+        )
+        session.commit()
+
+    def persist_retry_job(_app, **kwargs):
+        with Session(get_engine(acquisition_app)) as session:
+            job = Job(
+                tenant_id=kwargs["tenant_id"],
+                job_type=kwargs["job_type"],
+                payload_json=json.dumps(kwargs["payload"]),
+            )
+            session.add(job)
+            session.commit()
+            return type("QueuedJob", (), {"id": job.id})()
+
+    monkeypatch.setattr(
+        "app.modules.acquisition.service.create_and_enqueue",
+        persist_retry_job,
+    )
+
+    retry_candidate_verification(
+        acquisition_app,
+        tenant_id="t1",
+        actor_id="u1",
+        candidate_id=retry_candidate_id,
+    )
+
+    with Session(get_engine(acquisition_app)) as session:
+        mission = session.get(AcquisitionMission, "m1")
+        retry_candidate = session.get(AcquisitionCandidate, retry_candidate_id)
+        assert mission is not None
+        assert mission.status == "completed"
+        assert mission.finished_at == completed_at.replace(tzinfo=None)
+        assert retry_candidate is not None
+        assert retry_candidate.status == "verifying"

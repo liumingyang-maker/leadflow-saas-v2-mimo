@@ -299,7 +299,7 @@ def test_start_queues_exact_mission_and_changes_status(
         calls.append(kwargs)
         return SimpleNamespace(id="job-1")
 
-    monkeypatch.setattr("app.modules.acquisition.routes.create_and_enqueue", fake_enqueue)
+    monkeypatch.setattr("app.modules.jobs.service.create_and_enqueue", fake_enqueue)
 
     response = client.post(f"/acquisition/missions/{mission.id}/start")
 
@@ -467,7 +467,7 @@ def test_retry_verification_enqueues_exact_payload_then_updates_state_and_audits
         captured.update(kwargs)
         return SimpleNamespace(id="retry-job")
 
-    monkeypatch.setattr("app.modules.acquisition.routes.create_and_enqueue", fake_enqueue)
+    monkeypatch.setattr("app.modules.acquisition.service.create_and_enqueue", fake_enqueue)
 
     response = client.post(
         f"/acquisition/candidates/{candidate.id}/retry-verification",
@@ -499,6 +499,36 @@ def test_retry_verification_enqueues_exact_payload_then_updates_state_and_audits
     assert event.safe_summary == "Candidate website verification retried"
 
 
+def test_retry_verification_route_delegates_identity_and_candidate_to_service_only(
+    acquisition_app, logged_in_client, monkeypatch
+) -> None:
+    from app.modules.acquisition import routes
+
+    client, tenant_id = logged_in_client
+    actor_id = _actor_id(client)
+    captured: dict[str, object] = {}
+
+    def fake_retry(app, **kwargs):
+        captured.update(kwargs)
+        return SimpleNamespace(candidate_id="delegated-candidate", mission_id="mission-1")
+
+    monkeypatch.setattr(routes, "retry_candidate_verification", fake_retry)
+    monkeypatch.setattr(
+        routes,
+        "CandidateRepository",
+        lambda *_args, **_kwargs: pytest.fail("retry route must not access repositories"),
+    )
+
+    response = client.post("/acquisition/candidates/delegated-candidate/retry-verification")
+
+    assert response.status_code == 302
+    assert captured == {
+        "tenant_id": tenant_id,
+        "actor_id": actor_id,
+        "candidate_id": "delegated-candidate",
+    }
+
+
 def test_retry_verification_redirect_shows_fixed_safe_success_banner(
     acquisition_app, logged_in_client, monkeypatch
 ) -> None:
@@ -512,7 +542,7 @@ def test_retry_verification_redirect_shows_fixed_safe_success_banner(
         status="needs_evidence",
     )
     monkeypatch.setattr(
-        "app.modules.acquisition.routes.create_and_enqueue",
+        "app.modules.acquisition.service.create_and_enqueue",
         lambda *_args, **_kwargs: SimpleNamespace(id="retry-job"),
     )
 
@@ -569,7 +599,7 @@ def test_retry_verification_rejects_candidate_outside_needs_evidence(
         status="eligible",
     )
     monkeypatch.setattr(
-        "app.modules.acquisition.routes.create_and_enqueue",
+        "app.modules.acquisition.service.create_and_enqueue",
         lambda *_args, **_kwargs: pytest.fail("ineligible candidate must not enqueue"),
     )
 
@@ -605,7 +635,7 @@ def test_retry_verification_rejects_exact_candidate_with_active_verification_job
         )
         db_session.commit()
     monkeypatch.setattr(
-        "app.modules.acquisition.routes.create_and_enqueue",
+        "app.modules.acquisition.service.create_and_enqueue",
         lambda *_args, **_kwargs: pytest.fail("duplicate verification must not enqueue"),
     )
 
@@ -654,7 +684,7 @@ def test_retry_verification_ignores_nonblocking_jobs(
         enqueued.append(kwargs)
         return SimpleNamespace(id="retry-job")
 
-    monkeypatch.setattr("app.modules.acquisition.routes.create_and_enqueue", fake_enqueue)
+    monkeypatch.setattr("app.modules.acquisition.service.create_and_enqueue", fake_enqueue)
 
     response = client.post(f"/acquisition/candidates/{candidate.id}/retry-verification")
 
@@ -689,7 +719,7 @@ def test_retry_verification_enqueue_failure_preserves_candidate_and_hides_detail
     def fail_enqueue(*_args, **_kwargs):
         raise JobServiceError("redis password sk-sensitive-detail")
 
-    monkeypatch.setattr("app.modules.acquisition.routes.create_and_enqueue", fail_enqueue)
+    monkeypatch.setattr("app.modules.acquisition.service.create_and_enqueue", fail_enqueue)
 
     response = client.post(f"/acquisition/candidates/{candidate.id}/retry-verification")
 
@@ -753,7 +783,7 @@ def test_retry_verification_does_not_overwrite_concurrent_human_decision(
         return SimpleNamespace(id=queued_job_id)
 
     monkeypatch.setattr(
-        "app.modules.acquisition.routes.create_and_enqueue",
+        "app.modules.acquisition.service.create_and_enqueue",
         enqueue_after_human_decision,
     )
 
@@ -846,7 +876,7 @@ def test_retry_verification_htmx_returns_updated_candidate_card(
         status="needs_evidence",
     )
     monkeypatch.setattr(
-        "app.modules.acquisition.routes.create_and_enqueue",
+        "app.modules.acquisition.service.create_and_enqueue",
         lambda *_args, **_kwargs: SimpleNamespace(id="retry-job"),
     )
 
@@ -1354,7 +1384,7 @@ def test_enqueue_failure_restores_draft_status(
     def fail_enqueue(_app, **_kwargs):
         raise JobServiceError("queue unavailable")
 
-    monkeypatch.setattr("app.modules.acquisition.routes.create_and_enqueue", fail_enqueue)
+    monkeypatch.setattr("app.modules.jobs.service.create_and_enqueue", fail_enqueue)
 
     response = client.post(f"/acquisition/missions/{mission.id}/start")
 
