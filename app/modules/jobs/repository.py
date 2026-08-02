@@ -3,13 +3,24 @@
 from __future__ import annotations
 
 from collections.abc import Sequence
+from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
-from sqlalchemy import or_, select, update
+from sqlalchemy import func, or_, select, update
 from sqlalchemy.orm import Session
 
 from app.modules.jobs.models import Job
+
+WORKBENCH_ACTIVE_JOB_STATUSES = ("queued", "running", "retrying")
+WORKBENCH_TERMINAL_JOB_STATUSES = ("failed", "succeeded")
+MAX_WORKBENCH_TERMINAL_JOBS = 1000
+
+
+@dataclass(frozen=True)
+class TerminalJobProjection:
+    jobs: tuple[Job, ...]
+    truncated: bool
 
 
 def _require_tenant(tenant_id: str) -> str:
@@ -48,6 +59,62 @@ class JobRepository:
             .offset(offset)
         )
         return list(self.session.scalars(query))
+
+    def count_active_for_workbench(self, *, tenant_id: str) -> int:
+        tenant_id = _require_tenant(tenant_id)
+        return int(
+            self.session.scalar(
+                select(func.count())
+                .select_from(Job)
+                .where(
+                    Job.tenant_id == tenant_id,
+                    Job.status.in_(WORKBENCH_ACTIVE_JOB_STATUSES),
+                )
+            )
+            or 0
+        )
+
+    def list_active_for_workbench(self, *, tenant_id: str, limit: int = 8) -> Sequence[Job]:
+        tenant_id = _require_tenant(tenant_id)
+        bounded_limit = max(1, min(int(limit), 100))
+        query = (
+            select(Job)
+            .where(
+                Job.tenant_id == tenant_id,
+                Job.status.in_(WORKBENCH_ACTIVE_JOB_STATUSES),
+            )
+            .order_by(Job.created_at.desc(), Job.id.desc())
+            .limit(bounded_limit)
+        )
+        return list(self.session.scalars(query))
+
+    def list_recent_terminal_for_workbench(
+        self, *, tenant_id: str, limit: int = MAX_WORKBENCH_TERMINAL_JOBS
+    ) -> TerminalJobProjection:
+        """Return a bounded terminal history and expose when older rows were omitted."""
+
+        tenant_id = _require_tenant(tenant_id)
+        bounded_limit = max(1, min(int(limit), MAX_WORKBENCH_TERMINAL_JOBS))
+        outcome_at = func.coalesce(Job.finished_at, Job.updated_at, Job.created_at)
+        query = (
+            select(Job)
+            .where(
+                Job.tenant_id == tenant_id,
+                Job.status.in_(WORKBENCH_TERMINAL_JOB_STATUSES),
+            )
+            .order_by(
+                outcome_at.desc(),
+                Job.updated_at.desc(),
+                Job.created_at.desc(),
+                Job.id.desc(),
+            )
+            .limit(bounded_limit + 1)
+        )
+        rows = list(self.session.scalars(query))
+        return TerminalJobProjection(
+            jobs=tuple(rows[:bounded_limit]),
+            truncated=len(rows) > bounded_limit,
+        )
 
     def update_for_tenant(self, job: Job, *, tenant_id: str, **fields: Any) -> Job:
         tenant_id = _require_tenant(tenant_id)

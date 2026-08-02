@@ -63,6 +63,33 @@ def test_workbench_requires_login(monkeypatch) -> None:
     assert response.headers["Location"].endswith("/login")
 
 
+def test_htmx_workbench_auth_failure_redirects_without_swapping(monkeypatch) -> None:
+    client, _engine = _client(monkeypatch)
+
+    response = client.get("/workbench/live", headers={"HX-Request": "true"})
+
+    assert response.status_code == 204
+    assert response.headers["HX-Redirect"] == "/login"
+    assert response.headers["HX-Reswap"] == "none"
+    assert "Location" not in response.headers
+    assert response.get_data() == b""
+
+
+def test_htmx_invalid_membership_redirects_to_login_without_swapping(monkeypatch) -> None:
+    client, engine = _client(monkeypatch)
+    _login(client, engine)
+    with client.session_transaction() as sess:
+        sess["tenant_id"] = "missing-tenant"
+
+    response = client.get("/workbench/live", headers={"HX-Request": "true"})
+
+    assert response.status_code == 204
+    assert response.headers["HX-Redirect"] == "/login"
+    assert response.headers["HX-Reswap"] == "none"
+    with client.session_transaction() as sess:
+        assert "tenant_id" not in sess
+
+
 def test_suspended_tenant_is_logged_out(monkeypatch) -> None:
     client, engine = _client(monkeypatch)
     tenant_id = _login(client, engine)
@@ -92,6 +119,24 @@ def test_expired_trial_redirects_to_upgrade_without_loop(monkeypatch) -> None:
     assert blocked.status_code in {302, 303}
     assert blocked.headers["Location"].endswith("/upgrade")
     assert allowed.status_code == 200
+
+
+def test_htmx_expired_trial_redirects_to_upgrade_without_swapping(monkeypatch) -> None:
+    client, engine = _client(monkeypatch)
+    tenant_id = _login(client, engine)
+    _set_tenant(
+        engine,
+        tenant_id,
+        status="trial",
+        trial_ends_at=datetime.now(UTC) - timedelta(days=1),
+    )
+
+    response = client.get("/workbench/live", headers={"HX-Request": "true"})
+
+    assert response.status_code == 204
+    assert response.headers["HX-Redirect"] == "/upgrade"
+    assert response.headers["HX-Reswap"] == "none"
+    assert "Location" not in response.headers
 
 
 def test_expired_paid_plan_redirects_to_upgrade(monkeypatch) -> None:

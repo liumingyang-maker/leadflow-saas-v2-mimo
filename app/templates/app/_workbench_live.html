@@ -1,8 +1,7 @@
 <section id="workbench-live"
   hx-get="/workbench/live"
-  hx-trigger="load, every 5s"
+  hx-trigger="every 5s"
   hx-swap="outerHTML"
-  aria-live="polite"
 >
   <div class="lf-workbench-metrics" aria-label="今日重点">
     <a class="lf-stat-card" href="{{ view.review_url }}"><span>待审核候选</span><strong>{{ view.candidates_to_review }}</strong><small>查看推荐理由后决定是否加入 CRM</small></a>
@@ -37,7 +36,7 @@
       {% for job in view.failed_jobs %}
       <article class="lf-panel lf-workbench-job lf-workbench-job-failed">
         <div class="lf-status-row"><strong>{{ {'acquisition_plan':'制定研究计划','web_discovery':'联网寻找公司','website_verify':'验证公司网站','candidate_assess':'评估候选客户'}.get(job.job_type, job.job_type) }}</strong><span class="lf-badge">失败</span></div>
-        <p class="lf-muted">{{ job.progress_message or '任务执行失败，请检查后重试。' }}</p>
+        <p class="lf-muted">{{ job.error_summary or job.progress_message or '任务执行失败，请检查后重试。' }}</p>
         <a class="lf-button" href="{{ job.target_url }}">查看任务</a>
       </article>
       {% endfor %}
@@ -45,5 +44,6 @@
     {% else %}
     <p class="lf-muted">当前没有未解决的后台失败。已转为待补证或后来成功的任务不会重复显示。</p>
     {% endif %}
+    {% if view.terminal_history_truncated %}<p class="lf-muted">仅检查最近 1000 条终态任务；更早的失败未计入此处。</p>{% endif %}
   </section>
 </section>

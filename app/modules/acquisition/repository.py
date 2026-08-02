@@ -102,6 +102,23 @@ class MissionRepository:
         )
         return list(self.session.scalars(query))
 
+    def oldest_id_with_candidate_status(self, status: str, *, tenant_id: str) -> str | None:
+        tenant_id = _require_tenant(tenant_id)
+        return self.session.scalar(
+            select(AcquisitionMission.id)
+            .join(
+                AcquisitionCandidate,
+                AcquisitionCandidate.mission_id == AcquisitionMission.id,
+            )
+            .where(
+                AcquisitionMission.tenant_id == tenant_id,
+                AcquisitionCandidate.tenant_id == tenant_id,
+                AcquisitionCandidate.status == status,
+            )
+            .order_by(AcquisitionMission.created_at.asc(), AcquisitionMission.id.asc())
+            .limit(1)
+        )
+
     def add(self, mission: AcquisitionMission, *, tenant_id: str) -> AcquisitionMission:
         return _add_tenant_owned(self.session, mission, tenant_id=tenant_id)
 
@@ -156,6 +173,18 @@ class CandidateRepository:
             .order_by(AcquisitionCandidate.created_at.desc())
         )
         return list(self.session.scalars(query))
+
+    def statuses_by_ids(self, candidate_ids: Sequence[str], *, tenant_id: str) -> dict[str, str]:
+        tenant_id = _require_tenant(tenant_id)
+        if not candidate_ids:
+            return {}
+        rows = self.session.execute(
+            select(AcquisitionCandidate.id, AcquisitionCandidate.status).where(
+                AcquisitionCandidate.tenant_id == tenant_id,
+                AcquisitionCandidate.id.in_(candidate_ids),
+            )
+        ).all()
+        return dict(rows)
 
     def find_by_dedupe_key(
         self, mission_id: str, dedupe_key: str, *, tenant_id: str

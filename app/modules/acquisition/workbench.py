@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import re
+from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from urllib.parse import urlsplit
@@ -15,12 +16,16 @@ from sqlalchemy.orm import Session
 from app.extensions import get_engine
 from app.modules.acquisition.models import (
     AcquisitionCandidate,
-    AcquisitionMission,
     Notification,
     ProductKnowledgeSnapshot,
 )
-from app.modules.acquisition.repository import NotificationRepository
+from app.modules.acquisition.repository import (
+    CandidateRepository,
+    MissionRepository,
+    NotificationRepository,
+)
 from app.modules.jobs.models import Job
+from app.modules.jobs.repository import JobRepository
 from app.modules.leads.models import Activity, Lead
 
 ALLOWED_NOTIFICATION_KINDS = {
@@ -31,7 +36,6 @@ ALLOWED_NOTIFICATION_KINDS = {
     "job_stuck",
     "backup_stale",
 }
-ACTIVE_JOB_STATUSES = {"queued", "running", "retrying"}
 # Accepted candidates can still require promotion; rejected and promoted candidates have
 # ended that workflow, so their older candidate-scoped failures are no longer actionable.
 OBSOLETE_FAILURE_TYPES_BY_CANDIDATE_STATUS = {
@@ -53,6 +57,7 @@ class JobSummary:
     status: str
     progress: int
     progress_message: str
+    error_summary: str
     target_url: str
 
 
@@ -82,6 +87,7 @@ class WorkbenchView:
     review_url: str
     attention_url: str
     has_product_knowledge: bool
+    terminal_history_truncated: bool
 
 
 def _session(app) -> Session:
@@ -101,6 +107,9 @@ def load_workbench(app, *, tenant_id: str, now: datetime | None = None) -> Workb
     tenant_id = _require_tenant(tenant_id)
     due_at = now or datetime.now(UTC)
     with _session(app) as db_session:
+        job_repo = JobRepository(db_session)
+        candidate_repo = CandidateRepository(db_session)
+        mission_repo = MissionRepository(db_session)
         candidates_to_review = _count(
             db_session,
             AcquisitionCandidate,
@@ -113,12 +122,7 @@ def load_workbench(app, *, tenant_id: str, now: datetime | None = None) -> Workb
             AcquisitionCandidate.tenant_id == tenant_id,
             AcquisitionCandidate.status == "needs_evidence",
         )
-        jobs_running = _count(
-            db_session,
-            Job,
-            Job.tenant_id == tenant_id,
-            Job.status.in_(ACTIVE_JOB_STATUSES),
-        )
+        jobs_running = job_repo.count_active_for_workbench(tenant_id=tenant_id)
         notifications_unread = _count(
             db_session,
             Notification,
@@ -143,19 +147,14 @@ def load_workbench(app, *, tenant_id: str, now: datetime | None = None) -> Workb
             Lead.stage.not_in({"won", "lost"}),
         )
 
-        active_jobs = list(
-            db_session.scalars(
-                select(Job)
-                .where(
-                    Job.tenant_id == tenant_id,
-                    Job.status.in_(ACTIVE_JOB_STATUSES),
-                )
-                .order_by(Job.created_at.desc())
-                .limit(8)
-            )
-        )
+        active_jobs = job_repo.list_active_for_workbench(tenant_id=tenant_id, limit=8)
         current_jobs = tuple(_job_summary(job) for job in active_jobs)
-        jobs_failed, failed_jobs = _unresolved_failures(db_session, tenant_id=tenant_id)
+        terminal_projection = job_repo.list_recent_terminal_for_workbench(tenant_id=tenant_id)
+        jobs_failed, failed_jobs = _unresolved_failures(
+            candidate_repo,
+            terminal_jobs=terminal_projection.jobs,
+            tenant_id=tenant_id,
+        )
         review_candidate_id = db_session.scalar(
             select(AcquisitionCandidate.id)
             .where(
@@ -168,19 +167,8 @@ def load_workbench(app, *, tenant_id: str, now: datetime | None = None) -> Workb
             )
             .limit(1)
         )
-        evidence_mission_id = db_session.scalar(
-            select(AcquisitionMission.id)
-            .join(
-                AcquisitionCandidate,
-                AcquisitionCandidate.mission_id == AcquisitionMission.id,
-            )
-            .where(
-                AcquisitionCandidate.tenant_id == tenant_id,
-                AcquisitionCandidate.status == "needs_evidence",
-                AcquisitionMission.tenant_id == tenant_id,
-            )
-            .order_by(AcquisitionMission.created_at.asc(), AcquisitionMission.id.asc())
-            .limit(1)
+        evidence_mission_id = mission_repo.oldest_id_with_candidate_status(
+            "needs_evidence", tenant_id=tenant_id
         )
         has_product_knowledge = (
             db_session.scalar(
@@ -233,6 +221,7 @@ def load_workbench(app, *, tenant_id: str, now: datetime | None = None) -> Workb
         review_url=review_url,
         attention_url=attention_url,
         has_product_knowledge=has_product_knowledge,
+        terminal_history_truncated=terminal_projection.truncated,
     )
 
 
@@ -346,19 +335,12 @@ def _count(db_session: Session, model, *conditions) -> int:
 
 
 def _unresolved_failures(
-    db_session: Session, *, tenant_id: str
+    candidate_repo: CandidateRepository,
+    *,
+    terminal_jobs: Sequence[Job],
+    tenant_id: str,
 ) -> tuple[int, tuple[JobSummary, ...]]:
-    terminal_jobs = list(
-        db_session.scalars(
-            select(Job)
-            .where(
-                Job.tenant_id == tenant_id,
-                Job.status.in_({"failed", "succeeded"}),
-            )
-            .order_by(Job.created_at.desc(), Job.updated_at.desc(), Job.id.desc())
-        )
-    )
-    latest_by_identity: dict[tuple[str, str, str], Job] = {}
+    latest_by_identity: dict[tuple[str, ...], Job] = {}
     for job in terminal_jobs:
         identity = _job_identity(job)
         if identity not in latest_by_identity:
@@ -370,18 +352,7 @@ def _unresolved_failures(
         for identity, job in latest_by_identity.items()
         if job.status == "failed" and identity[1] == "candidate"
     }
-    candidate_statuses = (
-        dict(
-            db_session.execute(
-                select(AcquisitionCandidate.id, AcquisitionCandidate.status).where(
-                    AcquisitionCandidate.tenant_id == tenant_id,
-                    AcquisitionCandidate.id.in_(candidate_ids),
-                )
-            ).all()
-        )
-        if candidate_ids
-        else {}
-    )
+    candidate_statuses = candidate_repo.statuses_by_ids(tuple(candidate_ids), tenant_id=tenant_id)
     unresolved = [
         job
         for job in failures
@@ -393,7 +364,6 @@ def _unresolved_failures(
             )
         )
     ]
-    unresolved.sort(key=lambda job: (job.created_at, job.updated_at, job.id), reverse=True)
     return len(unresolved), tuple(_job_summary(job) for job in unresolved[:8])
 
 
@@ -404,16 +374,30 @@ def _job_summary(job: Job) -> JobSummary:
         status=job.status,
         progress=job.progress,
         progress_message=job.progress_message,
+        error_summary=job.error_summary,
         target_url=_job_target(job),
     )
 
 
-def _job_identity(job: Job) -> tuple[str, str, str]:
+def _job_identity(job: Job) -> tuple[str, ...]:
     payload = _job_payload(job)
+    mission_id = payload.get("mission_id")
+    if job.job_type == "web_discovery":
+        if isinstance(mission_id, str) and re.fullmatch(r"[A-Za-z0-9_-]{1,64}", mission_id):
+            country_code = payload.get("country_code")
+            if isinstance(country_code, str):
+                normalized_country = country_code.strip().upper()
+                if re.fullmatch(r"[A-Z]{2}", normalized_country):
+                    return (
+                        job.job_type,
+                        "mission_country",
+                        mission_id,
+                        normalized_country,
+                    )
+        return (job.job_type, "job", job.id)
     candidate_id = payload.get("candidate_id")
     if isinstance(candidate_id, str) and re.fullmatch(r"[A-Za-z0-9_-]{1,64}", candidate_id):
         return (job.job_type, "candidate", candidate_id)
-    mission_id = payload.get("mission_id")
     if isinstance(mission_id, str) and re.fullmatch(r"[A-Za-z0-9_-]{1,64}", mission_id):
         return (job.job_type, "mission", mission_id)
     return (job.job_type, "job", job.id)

@@ -5,7 +5,7 @@ from datetime import UTC, datetime
 from functools import wraps
 from typing import Any
 
-from flask import Flask, redirect, session
+from flask import Flask, make_response, redirect, request, session
 from sqlalchemy import select
 
 from app.modules.accounts.models import Tenant, TenantMembership, User
@@ -23,7 +23,7 @@ def tenant_required(
             # Both tenant_id and user_id are required
             if not tenant_id or not user_id:
                 session.clear()
-                return redirect("/login")
+                return _guard_redirect("/login")
 
             with session_scope(app) as db_session:
                 # Single join query: verify membership + user + tenant
@@ -38,7 +38,7 @@ def tenant_required(
                 )
                 if membership is None:
                     session.clear()
-                    return redirect("/login")
+                    return _guard_redirect("/login")
 
                 user = membership.user
                 tenant = membership.tenant
@@ -46,27 +46,36 @@ def tenant_required(
                 # User must be active (not invited, not disabled)
                 if not user.is_active or user.status != "active":
                     session.clear()
-                    return redirect("/login")
+                    return _guard_redirect("/login")
 
                 # Verify auth_version (session revocation)
                 session_version = session.get("auth_version")
                 if session_version is None or session_version != user.auth_version:
                     session.clear()
-                    return redirect("/login")
+                    return _guard_redirect("/login")
 
                 # Tenant must not be suspended
                 if tenant.status == "suspended":
                     session.clear()
-                    return redirect("/login")
+                    return _guard_redirect("/login")
 
                 if not allow_expired and tenant_is_expired(tenant):
-                    return redirect("/upgrade")
+                    return _guard_redirect("/upgrade")
 
             return view(*args, **kwargs)
 
         return wrapped
 
     return decorator
+
+
+def _guard_redirect(target: str):
+    if request.headers.get("HX-Request", "").lower() == "true":
+        response = make_response("", 204)
+        response.headers["HX-Redirect"] = target
+        response.headers["HX-Reswap"] = "none"
+        return response
+    return redirect(target)
 
 
 def tenant_is_expired(tenant: Tenant) -> bool:

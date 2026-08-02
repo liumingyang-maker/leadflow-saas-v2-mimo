@@ -336,6 +336,84 @@ def test_later_success_supersedes_failure_for_same_logical_job(
 
     mission_id = seed_acquisition_mission(tenant_id="t1", suffix="superseded")
     now = datetime.now(UTC)
+    with Session(get_engine(acquisition_app)) as db_session:
+        db_session.add_all(
+            [
+                Job(
+                    tenant_id="t1",
+                    job_type="web_discovery",
+                    status="failed",
+                    payload_json=json.dumps({"mission_id": mission_id, "country_code": "mx"}),
+                    created_at=now - timedelta(minutes=2),
+                    updated_at=now - timedelta(minutes=2),
+                ),
+                Job(
+                    tenant_id="t1",
+                    job_type="web_discovery",
+                    status="succeeded",
+                    payload_json=json.dumps({"mission_id": mission_id, "country_code": " MX "}),
+                    created_at=now - timedelta(minutes=1),
+                    updated_at=now - timedelta(minutes=1),
+                ),
+            ]
+        )
+        db_session.commit()
+
+    view = load_workbench(acquisition_app, tenant_id="t1")
+
+    assert view.jobs_failed == 0
+    assert view.failed_jobs == ()
+
+
+def test_web_discovery_success_for_other_country_does_not_supersede_failure(
+    acquisition_app, seed_acquisition_mission
+) -> None:
+    from app.extensions import get_engine
+    from app.modules.acquisition.workbench import load_workbench
+    from app.modules.jobs.models import Job
+
+    mission_id = seed_acquisition_mission(tenant_id="t1", suffix="country-identity")
+    now = datetime.now(UTC)
+    with Session(get_engine(acquisition_app)) as db_session:
+        db_session.add_all(
+            [
+                Job(
+                    tenant_id="t1",
+                    job_type="web_discovery",
+                    status="failed",
+                    payload_json=json.dumps({"mission_id": mission_id, "country_code": "MX"}),
+                    created_at=now - timedelta(minutes=2),
+                    updated_at=now - timedelta(minutes=2),
+                    finished_at=now - timedelta(minutes=2),
+                ),
+                Job(
+                    tenant_id="t1",
+                    job_type="web_discovery",
+                    status="succeeded",
+                    payload_json=json.dumps({"mission_id": mission_id, "country_code": "BR"}),
+                    created_at=now - timedelta(minutes=1),
+                    updated_at=now - timedelta(minutes=1),
+                    finished_at=now - timedelta(minutes=1),
+                ),
+            ]
+        )
+        db_session.commit()
+
+    view = load_workbench(acquisition_app, tenant_id="t1")
+
+    assert view.jobs_failed == 1
+    assert len(view.failed_jobs) == 1
+
+
+def test_web_discovery_without_country_cannot_supersede_another_job(
+    acquisition_app, seed_acquisition_mission
+) -> None:
+    from app.extensions import get_engine
+    from app.modules.acquisition.workbench import load_workbench
+    from app.modules.jobs.models import Job
+
+    mission_id = seed_acquisition_mission(tenant_id="t1", suffix="missing-country")
+    now = datetime.now(UTC)
     payload = json.dumps({"mission_id": mission_id})
     with Session(get_engine(acquisition_app)) as db_session:
         db_session.add_all(
@@ -346,7 +424,7 @@ def test_later_success_supersedes_failure_for_same_logical_job(
                     status="failed",
                     payload_json=payload,
                     created_at=now - timedelta(minutes=2),
-                    updated_at=now - timedelta(minutes=2),
+                    finished_at=now - timedelta(minutes=2),
                 ),
                 Job(
                     tenant_id="t1",
@@ -354,7 +432,48 @@ def test_later_success_supersedes_failure_for_same_logical_job(
                     status="succeeded",
                     payload_json=payload,
                     created_at=now - timedelta(minutes=1),
+                    finished_at=now - timedelta(minutes=1),
+                ),
+            ]
+        )
+        db_session.commit()
+
+    view = load_workbench(acquisition_app, tenant_id="t1")
+
+    assert view.jobs_failed == 1
+    assert len(view.failed_jobs) == 1
+
+
+def test_latest_terminal_outcome_uses_completion_time_not_creation_time(
+    acquisition_app, seed_acquisition_mission
+) -> None:
+    from app.extensions import get_engine
+    from app.modules.acquisition.workbench import load_workbench
+    from app.modules.jobs.models import Job
+
+    mission_id = seed_acquisition_mission(tenant_id="t1", suffix="completion-order")
+    now = datetime.now(UTC)
+    payload = json.dumps({"mission_id": mission_id})
+    with Session(get_engine(acquisition_app)) as db_session:
+        db_session.add_all(
+            [
+                Job(
+                    tenant_id="t1",
+                    job_type="acquisition_plan",
+                    status="failed",
+                    payload_json=payload,
+                    created_at=now - timedelta(minutes=2),
+                    updated_at=now - timedelta(minutes=10),
+                    finished_at=now - timedelta(minutes=10),
+                ),
+                Job(
+                    tenant_id="t1",
+                    job_type="acquisition_plan",
+                    status="succeeded",
+                    payload_json=payload,
+                    created_at=now - timedelta(days=1),
                     updated_at=now - timedelta(minutes=1),
+                    finished_at=now - timedelta(minutes=1),
                 ),
             ]
         )
@@ -403,13 +522,37 @@ def test_workbench_live_is_tenant_guarded_polling_partial(
     assert response.status_code == 200
     assert '<section id="workbench-live"' in html
     assert 'hx-get="/workbench/live"' in html
-    assert 'hx-trigger="load, every 5s"' in html
+    assert 'hx-trigger="every 5s"' in html
+    assert 'hx-trigger="load, every 5s"' not in html
     assert 'hx-swap="outerHTML"' in html
+    assert "aria-live" not in html
     assert 'id="active-jobs"' in html
     assert 'id="unresolved-job-failures"' in html
     assert "<!doctype html>" not in html.lower()
     assert anonymous.status_code in {302, 303}
     assert anonymous.headers["Location"].endswith("/login")
+
+
+def test_failed_job_card_displays_safe_error_summary(logged_in_client) -> None:
+    from app.extensions import get_engine
+    from app.modules.jobs.models import Job
+
+    client, tenant_id = logged_in_client
+    with Session(get_engine(client.application)) as db_session:
+        db_session.add(
+            Job(
+                tenant_id=tenant_id,
+                job_type="acquisition_plan",
+                status="failed",
+                error_summary="Provider timed out safely",
+            )
+        )
+        db_session.commit()
+
+    response = client.get("/workbench/live")
+
+    assert response.status_code == 200
+    assert "Provider timed out safely" in response.get_data(as_text=True)
 
 
 def test_main_workbench_includes_live_polling_projection(logged_in_client) -> None:

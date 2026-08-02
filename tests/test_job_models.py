@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from datetime import UTC, datetime, timedelta
+
 import pytest
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -69,6 +71,47 @@ def test_job_repository_tenant_isolation(monkeypatch) -> None:
         t1_id = t1_jobs[0].id
         assert repo.get_for_tenant(t1_id, tenant_id="t1") is not None
         assert repo.get_for_tenant(t1_id, tenant_id="t2") is None
+
+
+def test_workbench_terminal_projection_has_hard_bound_and_reports_truncation(
+    monkeypatch,
+) -> None:
+    engine = _engine(monkeypatch)
+    from app.modules.jobs.models import Job
+    from app.modules.jobs.repository import (
+        MAX_WORKBENCH_TERMINAL_JOBS,
+        JobRepository,
+    )
+
+    now = datetime.now(UTC)
+    with Session(engine) as session:
+        session.add_all(
+            [
+                Job(
+                    tenant_id="t1",
+                    job_type="acquisition_plan",
+                    status="failed",
+                    finished_at=now - timedelta(seconds=index),
+                )
+                for index in range(MAX_WORKBENCH_TERMINAL_JOBS + 1)
+            ]
+        )
+        session.add(
+            Job(
+                tenant_id="t2",
+                job_type="acquisition_plan",
+                status="failed",
+                finished_at=now + timedelta(days=1),
+            )
+        )
+        session.commit()
+
+        projection = JobRepository(session).list_recent_terminal_for_workbench(tenant_id="t1")
+
+    assert len(projection.jobs) == MAX_WORKBENCH_TERMINAL_JOBS
+    assert projection.truncated is True
+    assert {job.tenant_id for job in projection.jobs} == {"t1"}
+    assert projection.jobs[0].finished_at == now.replace(tzinfo=None)
 
 
 def test_job_status_constraints(monkeypatch) -> None:
