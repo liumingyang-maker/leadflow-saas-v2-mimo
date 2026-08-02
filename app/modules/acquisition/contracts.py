@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
@@ -43,12 +44,82 @@ _ISO_ALPHA2_CODES = frozenset(
     TO TR TT TV TW TZ UA UG UM US UY UZ VA VC VE VG VI VN VU WF WS YE YT ZA ZM ZW
     """.split()
 )
+_ASCII_COUNTRY_CODE = re.compile(r"[A-Za-z]{2}", flags=re.ASCII)
 
 
 def _is_country_code(value: str) -> bool:
     if pycountry is not None:
         return pycountry.countries.get(alpha_2=value) is not None
     return value in _ISO_ALPHA2_CODES
+
+
+def _normalize_country_code(value: object) -> str:
+    if not isinstance(value, str):
+        raise ValueError("invalid ISO alpha-2 country code")
+    clean = value.strip()
+    if _ASCII_COUNTRY_CODE.fullmatch(clean) is None:
+        raise ValueError("invalid ISO alpha-2 country code")
+    normalized = clean.upper()
+    if not _is_country_code(normalized):
+        raise ValueError("invalid ISO alpha-2 country code")
+    return normalized
+
+
+class ManualCompanyFactsInput(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    url: str = Field(min_length=8, max_length=1000)
+    company_name: str = Field(min_length=1, max_length=300)
+    opportunity_country_code: str = Field(pattern=r"^[A-Z]{2}$")
+    buyer_type: str = Field(min_length=1, max_length=120)
+    evidence_text: str = Field(min_length=3, max_length=1000)
+    contact_path: str = Field(min_length=3, max_length=1000)
+
+    @field_validator("company_name", mode="before")
+    @classmethod
+    def normalize_company_name(cls, value: object) -> str:
+        if not isinstance(value, str):
+            raise ValueError("company_name must be a string")
+        if len(value) > 300:
+            raise ValueError("company_name exceeds maximum length")
+        normalized = value.strip()
+        if not normalized:
+            raise ValueError("company_name is required")
+        if len(normalized) > 300:
+            raise ValueError("company_name exceeds maximum length")
+        return normalized
+
+    @field_validator("opportunity_country_code", mode="before")
+    @classmethod
+    def validate_country(cls, value: object) -> str:
+        return _normalize_country_code(value)
+
+    @field_validator("buyer_type")
+    @classmethod
+    def validate_buyer_type(cls, value: str) -> str:
+        normalized = value.strip().lower()
+        if normalized not in ALLOWED_BUYER_TYPES:
+            raise ValueError("unsupported buyer type")
+        return normalized
+
+
+class CountryEvidenceInput(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    country_code: str = Field(pattern=r"^[A-Z]{2}$")
+    source_url: str = Field(min_length=8, max_length=1000)
+    evidence_text: str = Field(min_length=3, max_length=1000)
+    reason_code: Literal[
+        "official_contact_page",
+        "registry_record",
+        "manual_verification",
+        "other",
+    ]
+
+    @field_validator("country_code", mode="before")
+    @classmethod
+    def validate_country(cls, value: object) -> str:
+        return _normalize_country_code(value)
 
 
 class MissionCreateInput(BaseModel):
