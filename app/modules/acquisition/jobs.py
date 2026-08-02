@@ -691,29 +691,40 @@ def reconcile_missions(app, *, tenant_id: str | None = None, now: datetime) -> i
             )
             if stale_notification is not None:
                 stale_notification.status = "archived"
-            if (
-                notifications.find_by_dedupe_key(notification_key, tenant_id=mission.tenant_id)
-                is None
-            ):
-                kind = (
-                    "mission_partial"
-                    if partial
-                    else ("mission_completed" if next_status == "completed" else "mission_failed")
-                )
+            kind = (
+                "mission_partial"
+                if partial
+                else ("mission_completed" if next_status == "completed" else "mission_failed")
+            )
+            title = (
+                "Acquisition mission completed"
+                if next_status == "completed"
+                else "Acquisition mission failed"
+            )
+            body = f"{mission.name}: {len(usable)} usable candidates"
+            target_url = f"/acquisition/missions/{mission.id}"
+            current_notification = notifications.find_by_dedupe_key(
+                notification_key,
+                tenant_id=mission.tenant_id,
+            )
+            if current_notification is None:
                 notifications.add(
                     Notification(
                         kind=kind,
-                        title=(
-                            "Acquisition mission completed"
-                            if next_status == "completed"
-                            else "Acquisition mission failed"
-                        ),
-                        body=f"{mission.name}: {len(usable)} usable candidates",
-                        target_url=f"/acquisition/missions/{mission.id}",
+                        title=title,
+                        body=body,
+                        target_url=target_url,
                         dedupe_key=notification_key,
                     ),
                     tenant_id=mission.tenant_id,
                 )
+            else:
+                current_notification.kind = kind
+                current_notification.title = title
+                current_notification.body = body
+                current_notification.target_url = target_url
+                current_notification.status = "unread"
+                current_notification.read_at = None
         session.commit()
     return changed
 

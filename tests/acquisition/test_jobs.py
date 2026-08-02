@@ -280,6 +280,86 @@ def test_reconciler_repairs_inconsistent_completed_mission_and_notification(
         assert current[0].body == "Mission stale: 0 usable candidates"
 
 
+def test_reconciler_refreshes_existing_current_terminal_notification(
+    acquisition_app, seed_acquisition_mission
+):
+    from app.extensions import get_engine
+    from app.modules.acquisition.jobs import reconcile_missions
+    from app.modules.acquisition.models import (
+        AcquisitionCandidate,
+        AcquisitionMission,
+        Notification,
+    )
+    from app.modules.jobs.models import Job
+
+    mission_id = seed_acquisition_mission(suffix="same-status")
+    verifying_id = "candidate-same-status-verifying"
+    notification_id = "notification-stale-same-status"
+    completed_key = f"mission-terminal:{mission_id}:completed"
+    with Session(get_engine(acquisition_app)) as session:
+        mission = session.get(AcquisitionMission, mission_id)
+        assert mission is not None
+        mission.status = "completed"
+        session.add_all(
+            [
+                AcquisitionCandidate(
+                    id="candidate-same-status-eligible",
+                    tenant_id="t1",
+                    mission_id=mission_id,
+                    status="eligible",
+                    dedupe_key="domain:same-status-eligible.example",
+                ),
+                AcquisitionCandidate(
+                    id=verifying_id,
+                    tenant_id="t1",
+                    mission_id=mission_id,
+                    status="verifying",
+                    dedupe_key="domain:same-status-verifying.example",
+                ),
+                Job(
+                    tenant_id="t1",
+                    job_type="website_verify",
+                    status="failed",
+                    error_code="source_unreachable",
+                    payload_json=json.dumps({"candidate_id": verifying_id}),
+                ),
+                Notification(
+                    id=notification_id,
+                    tenant_id="t1",
+                    kind="mission_completed",
+                    title="Stale completed title",
+                    body="Mission same-status: 2 usable candidates",
+                    target_url="/workbench",
+                    status="unread",
+                    dedupe_key=completed_key,
+                ),
+            ]
+        )
+        session.commit()
+
+    assert reconcile_missions(acquisition_app, tenant_id="t1", now=datetime.now(UTC)) == 1
+
+    with Session(get_engine(acquisition_app)) as session:
+        repaired = session.get(AcquisitionCandidate, verifying_id)
+        mission = session.get(AcquisitionMission, mission_id)
+        notifications = list(
+            session.scalars(select(Notification).where(Notification.tenant_id == "t1"))
+        )
+        assert repaired is not None
+        assert repaired.status == "needs_evidence"
+        assert mission is not None
+        assert mission.status == "completed"
+        assert len(notifications) == 1
+        current = notifications[0]
+        assert current.id == notification_id
+        assert current.status == "unread"
+        assert current.kind == "mission_partial"
+        assert current.title == "Acquisition mission completed"
+        assert current.body == "Mission same-status: 1 usable candidates"
+        assert current.target_url == f"/acquisition/missions/{mission_id}"
+        assert current.dedupe_key == completed_key
+
+
 @pytest.mark.parametrize(
     ("mission_status", "candidate_status"),
     [("completed", "eligible"), ("failed", "needs_evidence")],
