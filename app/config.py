@@ -33,6 +33,7 @@ class BaseConfig:
     REDIS_URL: ClassVar[str] = os.environ.get("REDIS_URL", "redis://localhost:6379/0")
     MIMO_BASE_URL: ClassVar[str] = os.environ.get("MIMO_BASE_URL", "")
     MIMO_MODEL: ClassVar[str] = os.environ.get("MIMO_MODEL", "mimo-v2.5")
+    LOCAL_EMAIL_VERIFICATION: ClassVar[bool] = False
     ACQUISITION_MAX_CANDIDATES: ClassVar[int] = 30
     ACQUISITION_MAX_VERIFY: ClassVar[int] = 10
     ACQUISITION_MAX_SEARCH_ACTIONS: ClassVar[int] = 5
@@ -43,6 +44,7 @@ class BaseConfig:
 
 class DevelopmentConfig(BaseConfig):
     DEBUG: ClassVar[bool] = True
+    LOCAL_EMAIL_VERIFICATION: ClassVar[bool] = True
 
 
 class TestingConfig(BaseConfig):

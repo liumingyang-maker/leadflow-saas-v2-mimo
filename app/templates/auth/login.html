@@ -12,9 +12,19 @@
   <form class="lf-panel lf-form-stack" method="post" action="/login">
     {{ csrf_input() }}
     {% if request.args.get("registered") %}
-      <div class="lf-alert lf-alert-success" role="status">Account created. Check your email for the verification link.</div>
+      {% if local_verification_available %}
+        <div class="lf-alert lf-alert-success" role="status">Account created. Complete local verification below.</div>
+      {% else %}
+        <div class="lf-alert lf-alert-success" role="status">Account created. Check your email for the verification link.</div>
+      {% endif %}
+    {% endif %}
+    {% if request.args.get("verified") %}
+      <div class="lf-alert lf-alert-success" role="status">Email verified. You can sign in now.</div>
     {% endif %}
     {% if error %}<div class="lf-alert lf-alert-error" role="alert">{{ error }}</div>{% endif %}
+    {% if local_verification_available %}
+      <button class="lf-button lf-button-secondary" type="submit" formaction="/verify-email/local" formmethod="post">Verify this local account</button>
+    {% endif %}
     {{ field("email", "Email", "email") }}
     {{ field("password", "Password", "password") }}
     {{ button("Continue", "primary", "submit") }}

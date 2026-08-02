@@ -52,6 +52,52 @@ def test_register_creates_unverified_owner_tenant_and_token(monkeypatch) -> None
         assert token.used_at is None
 
 
+def test_local_registration_offers_session_bound_verification(monkeypatch) -> None:
+    client, engine = _client(monkeypatch)
+    client.application.config["LOCAL_EMAIL_VERIFICATION"] = True
+
+    registered = client.post(
+        "/register",
+        data={
+            "email": "local@example.com",
+            "password": "safe-password-123",
+            "company_name": "Local Solo",
+        },
+    )
+
+    from app.modules.accounts.models import EmailToken, User
+
+    with Session(engine) as session:
+        token = session.scalars(select(EmailToken)).one()
+
+    assert token.token not in registered.headers["Location"]
+    login_page = client.get(registered.headers["Location"])
+    login_html = login_page.get_data(as_text=True)
+    assert "Complete local verification below" in login_html
+    assert "Check your email" not in login_html
+    assert "Verify this local account" in login_html
+    assert token.token not in login_html
+
+    verified = client.post("/verify-email/local")
+
+    assert verified.status_code in {302, 303}
+    assert verified.headers["Location"].endswith("/login?verified=1")
+    with Session(engine) as session:
+        user = session.scalars(select(User)).one()
+        stored_token = session.get(EmailToken, token.token)
+        assert user.email_verified_at is not None
+        assert stored_token is not None
+        assert stored_token.used_at is not None
+
+
+def test_local_verification_endpoint_is_closed_by_default(monkeypatch) -> None:
+    client, _engine = _client(monkeypatch)
+
+    response = client.post("/verify-email/local")
+
+    assert response.status_code == 404
+
+
 def test_login_requires_verified_email_and_rotates_session(monkeypatch) -> None:
     client, engine = _client(monkeypatch)
     client.post(

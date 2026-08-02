@@ -27,7 +27,7 @@ def register_account_routes(app: Flask) -> None:
         if not is_enabled(app, Capability.PUBLIC_REGISTRATION):
             abort(404)
         try:
-            register_account(
+            verification_token = register_account(
                 app,
                 email=request.form.get("email", ""),
                 password=request.form.get("password", ""),
@@ -35,12 +35,18 @@ def register_account_routes(app: Flask) -> None:
             )
         except AccountError as error:
             return render_template("auth/register.html", error=error.message), 400
+        if app.config.get("LOCAL_EMAIL_VERIFICATION", False):
+            session["local_verification_token"] = verification_token.token
         return redirect("/login?registered=1")
 
     @app.route("/login", methods=["GET", "POST"])
     def login():
         if request.method == "GET":
-            return render_template("auth/login.html", error="")
+            return render_template(
+                "auth/login.html",
+                error="",
+                local_verification_available=_local_verification_available(app),
+            )
         try:
             identity = authenticate(
                 app,
@@ -48,7 +54,14 @@ def register_account_routes(app: Flask) -> None:
                 password=request.form.get("password", ""),
             )
         except AccountError as error:
-            return render_template("auth/login.html", error=error.message), 200
+            return (
+                render_template(
+                    "auth/login.html",
+                    error=error.message,
+                    local_verification_available=_local_verification_available(app),
+                ),
+                200,
+            )
 
         session.clear()
         session.permanent = True
@@ -66,6 +79,20 @@ def register_account_routes(app: Flask) -> None:
         except AccountError as error:
             return render_template("auth/verification_error.html", error=error.message), 400
         return redirect("/login")
+
+    @app.post("/verify-email/local")
+    def verify_email_local_route():
+        if not app.config.get("LOCAL_EMAIL_VERIFICATION", False):
+            abort(404)
+        token = session.get("local_verification_token", "")
+        if not token:
+            abort(404)
+        try:
+            verify_email(app, token)
+        except AccountError as error:
+            return render_template("auth/verification_error.html", error=error.message), 400
+        session.pop("local_verification_token", None)
+        return redirect("/login?verified=1")
 
     @app.post("/logout")
     def logout():
@@ -96,3 +123,10 @@ def register_account_routes(app: Flask) -> None:
             )
         session.clear()
         return redirect("/login")
+
+
+def _local_verification_available(app: Flask) -> bool:
+    return bool(
+        app.config.get("LOCAL_EMAIL_VERIFICATION", False)
+        and session.get("local_verification_token")
+    )
