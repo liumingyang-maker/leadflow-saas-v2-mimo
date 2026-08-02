@@ -5,7 +5,7 @@ from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
 
 import pytest
-from sqlalchemy import func, select
+from sqlalchemy import func, select, update
 from sqlalchemy.orm import Session
 
 
@@ -216,6 +216,7 @@ def test_discovery_verify_and_assess_handlers_preserve_evidence_boundary(
         CandidateAssessment,
         CandidateEvidence,
     )
+    from app.modules.acquisition.repository import CandidateRepository
     from app.modules.jobs.models import Job
 
     mission_id = seed_acquisition_mission()
@@ -328,6 +329,101 @@ def test_discovery_verify_and_assess_handlers_preserve_evidence_boundary(
         assert costs["mimo"]["requests"] == 2
         assert costs["mimo"]["estimated_cost"] is None
         assert costs["static_fetcher"]["pages"] == 1
+
+    original_get = CandidateRepository.get
+    raced_decided_at = datetime(2026, 1, 10, tzinfo=UTC)
+
+    def get_then_commit_human_decision(repository, value, *, tenant_id):
+        candidate = original_get(repository, value, tenant_id=tenant_id)
+        assert candidate is not None
+        repository.session.expire_on_commit = False
+        repository.session.execute(
+            update(AcquisitionCandidate)
+            .where(
+                AcquisitionCandidate.id == value,
+                AcquisitionCandidate.tenant_id == tenant_id,
+            )
+            .values(
+                status="accepted",
+                eligibility_code="human-terminal",
+                decision_reason_code="human-race-won",
+                decided_by="race-reviewer",
+                decided_at=raced_decided_at,
+            ),
+            execution_options={"synchronize_session": False},
+        )
+        repository.session.commit()
+        assert candidate.status == "eligible"
+        return candidate
+
+    monkeypatch.setattr(CandidateRepository, "get", get_then_commit_human_decision)
+    raced = handle_candidate_assess(acquisition_app, assess_job, {"candidate_id": candidate_id})
+    monkeypatch.setattr(CandidateRepository, "get", original_get)
+    assert raced["disposition"] == "eligible"
+    assert raced["candidate_status"] == "accepted"
+    with Session(get_engine(acquisition_app)) as session:
+        candidate = session.get(AcquisitionCandidate, candidate_id)
+        assert candidate is not None
+        assert (
+            candidate.status,
+            candidate.eligibility_code,
+            candidate.decision_reason_code,
+            candidate.decided_by,
+            candidate.decided_at,
+        ) == (
+            "accepted",
+            "human-terminal",
+            "human-race-won",
+            "race-reviewer",
+            raced_decided_at.replace(tzinfo=None),
+        )
+        assert session.scalar(select(func.count()).select_from(CandidateAssessment)) == 1
+
+    for index, status in enumerate(("accepted", "promoted", "rejected"), start=1):
+        with Session(get_engine(acquisition_app)) as session:
+            candidate = session.get(AcquisitionCandidate, candidate_id)
+            assert candidate is not None
+            candidate.status = status
+            candidate.eligibility_code = "human-terminal"
+            candidate.decision_reason_code = f"human-reason-{index}"
+            candidate.decided_by = f"human-{index}"
+            candidate.decided_at = datetime(2026, 1, index, tzinfo=UTC)
+            candidate.priority_score = None
+            candidate.priority_band = ""
+            candidate.signal_coverage = 0
+            session.commit()
+
+        with Session(get_engine(acquisition_app)) as session:
+            candidate = session.get(AcquisitionCandidate, candidate_id)
+            assert candidate is not None
+            expected_decision = (
+                candidate.status,
+                candidate.eligibility_code,
+                candidate.decision_reason_code,
+                candidate.decided_by,
+                candidate.decided_at,
+            )
+
+        reassessed = handle_candidate_assess(
+            acquisition_app, assess_job, {"candidate_id": candidate_id}
+        )
+        assert reassessed["disposition"] == "eligible"
+        assert reassessed["candidate_status"] == status
+
+        with Session(get_engine(acquisition_app)) as session:
+            candidate = session.get(AcquisitionCandidate, candidate_id)
+            assert candidate is not None
+            assert (
+                candidate.status,
+                candidate.eligibility_code,
+                candidate.decision_reason_code,
+                candidate.decided_by,
+                candidate.decided_at,
+            ) == expected_decision
+            assert candidate.priority_score is not None
+            assert candidate.priority_band
+            assert candidate.signal_coverage > 0
+            assert session.scalar(select(func.count()).select_from(CandidateAssessment)) == 1
 
 
 def test_worker_does_not_retry_invalid_acquisition_payload(acquisition_app, monkeypatch):

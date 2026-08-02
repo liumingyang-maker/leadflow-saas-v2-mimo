@@ -12,7 +12,7 @@ from typing import Any
 from urllib.parse import urlsplit
 
 from pydantic import ValidationError
-from sqlalchemy import select
+from sqlalchemy import select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -48,6 +48,7 @@ from app.modules.acquisition.scoring import (
     evaluate_gate,
     score_candidate,
 )
+from app.modules.acquisition.states import update_assessment_state_if_mutable
 from app.modules.audit.service import add_event
 from app.modules.jobs.service import create_and_enqueue
 from app.modules.leads.models import Activity, Company, Lead
@@ -484,11 +485,34 @@ def override_candidate_country(
         candidate = CandidateRepository(session).get(candidate_id, tenant_id=tenant_id)
         if candidate is None:
             raise AcquisitionError("candidate was not found")
-        candidate.opportunity_country_code = country
-        candidate.country_resolution_status = "confirmed"
-        candidate.eligibility_code = "country_confirmed"
-        candidate.status = "verifying"
-        candidate.decision_reason_code = ""
+        result = session.execute(
+            update(AcquisitionCandidate)
+            .where(
+                AcquisitionCandidate.id == candidate_id,
+                AcquisitionCandidate.tenant_id == tenant_id,
+                AcquisitionCandidate.status == "needs_evidence",
+            )
+            .values(
+                opportunity_country_code=country,
+                country_resolution_status="confirmed",
+                eligibility_code="country_confirmed",
+                status="verifying",
+                decision_reason_code="",
+            ),
+            execution_options={"synchronize_session": False},
+        )
+        if result.rowcount != 1:
+            raise AcquisitionError("only candidates that need evidence can override country")
+        session.refresh(
+            candidate,
+            attribute_names=[
+                "opportunity_country_code",
+                "country_resolution_status",
+                "eligibility_code",
+                "status",
+                "decision_reason_code",
+            ],
+        )
         add_event(
             session,
             tenant_id=tenant_id,
@@ -953,13 +977,17 @@ def _assess_candidate_in_session(
             ),
             tenant_id=tenant_id,
         )
-    if candidate.status not in {"accepted", "promoted", "rejected"}:
-        candidate.status = gate.disposition
-        candidate.eligibility_code = gate.reason_codes[0] if gate.reason_codes else "eligible"
     candidate.priority_score = score.priority_score
     candidate.priority_band = score.priority_band
     candidate.signal_coverage = score.signal_coverage
     candidate.ai_confidence = score.data_quality_score or 0
+    update_assessment_state_if_mutable(
+        session,
+        candidate,
+        tenant_id=tenant_id,
+        status=gate.disposition,
+        eligibility_code=gate.reason_codes[0] if gate.reason_codes else "eligible",
+    )
 
 
 def _apply_extracted_facts(

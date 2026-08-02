@@ -4,7 +4,7 @@ import json
 from datetime import UTC, datetime
 
 import pytest
-from sqlalchemy import func, select
+from sqlalchemy import func, select, update
 from sqlalchemy.orm import Session
 
 
@@ -67,6 +67,41 @@ def _seed_mission_and_candidate(
         session.add(candidate)
         session.commit()
         return candidate.id
+
+
+def _manual_url_inputs():
+    from app.integrations.ai.contracts import ExtractedCompanyFacts
+    from app.integrations.web.fetcher import FetchResult
+
+    snapshot = FetchResult(
+        requested_url="https://manual.example/products",
+        final_url="https://manual.example/products",
+        status_code=200,
+        content_type="text/html",
+        title="Manual Co",
+        text="Engine distributor. Contact sales@manual.example",
+        content_hash="c" * 64,
+        retrieved_at=datetime.now(UTC),
+        redirect_chain=(),
+    )
+    facts = ExtractedCompanyFacts(
+        company_name="Manual Co",
+        canonical_domain="manual.example",
+        opportunity_country_code="MX",
+        buyer_type="distributor",
+        product_terms=["engine"],
+        contact_paths=["mailto:sales@manual.example"],
+        observed_claims=[
+            {
+                "claim_id": "claim-1",
+                "text": "Engine distributor",
+                "source_url": "https://manual.example/products",
+            }
+        ],
+    )
+    fetcher = type("Fetcher", (), {"fetch": lambda self, url: snapshot})()
+    extractor = type("Extractor", (), {"extract": lambda self, value: facts})()
+    return snapshot.requested_url, fetcher, extractor
 
 
 def test_country_unknown_cannot_be_accepted(acquisition_app):
@@ -206,52 +241,156 @@ def test_create_mission_uses_validated_defaults(acquisition_app):
 
 
 def test_manual_url_still_fetches_extracts_and_assesses(acquisition_app):
-    from app.integrations.ai.contracts import ExtractedCompanyFacts
-    from app.integrations.web.fetcher import FetchResult
     from app.modules.acquisition.service import process_manual_url
 
     _seed_mission_and_candidate(
         acquisition_app, status="eligible", eligibility_code="eligible", suffix="seed"
     )
-    snapshot = FetchResult(
-        requested_url="https://manual.example/products",
-        final_url="https://manual.example/products",
-        status_code=200,
-        content_type="text/html",
-        title="Manual Co",
-        text="Engine distributor. Contact sales@manual.example",
-        content_hash="c" * 64,
-        retrieved_at=datetime.now(UTC),
-        redirect_chain=(),
-    )
-    facts = ExtractedCompanyFacts(
-        company_name="Manual Co",
-        canonical_domain="manual.example",
-        opportunity_country_code="MX",
-        buyer_type="distributor",
-        product_terms=["engine"],
-        contact_paths=["mailto:sales@manual.example"],
-        observed_claims=[
-            {
-                "claim_id": "claim-1",
-                "text": "Engine distributor",
-                "source_url": "https://manual.example/products",
-            }
-        ],
-    )
-    fetcher = type("Fetcher", (), {"fetch": lambda self, url: snapshot})()
-    extractor = type("Extractor", (), {"extract": lambda self, value: facts})()
+    url, fetcher, extractor = _manual_url_inputs()
     candidate = process_manual_url(
         acquisition_app,
         tenant_id="t1",
         mission_id="m1",
-        url="https://manual.example/products",
+        url=url,
         fetcher=fetcher,
         extractor=extractor,
     )
     assert candidate.source_channel == "manual_url"
     assert candidate.status == "eligible"
     assert candidate.priority_score is not None
+
+
+@pytest.mark.parametrize("status", ["accepted", "promoted", "rejected"])
+def test_manual_url_reassessment_preserves_human_decision_and_refreshes_score(
+    acquisition_app, status
+):
+    from app.extensions import get_engine
+    from app.modules.acquisition.models import AcquisitionCandidate
+    from app.modules.acquisition.service import process_manual_url
+
+    _seed_mission_and_candidate(
+        acquisition_app,
+        status="eligible",
+        eligibility_code="eligible",
+        suffix=f"sync-seed-{status}",
+    )
+    url, fetcher, extractor = _manual_url_inputs()
+    candidate = process_manual_url(
+        acquisition_app,
+        tenant_id="t1",
+        mission_id="m1",
+        url=url,
+        fetcher=fetcher,
+        extractor=extractor,
+    )
+    candidate_id = candidate.id
+
+    with Session(get_engine(acquisition_app)) as session:
+        candidate = session.get(AcquisitionCandidate, candidate_id)
+        assert candidate is not None
+        candidate.status = status
+        candidate.eligibility_code = "human-terminal"
+        candidate.decision_reason_code = f"human-{status}"
+        candidate.decided_by = f"reviewer-{status}"
+        candidate.decided_at = datetime(2026, 3, 1, tzinfo=UTC)
+        candidate.priority_score = None
+        candidate.priority_band = ""
+        candidate.signal_coverage = 0
+        session.commit()
+
+    with Session(get_engine(acquisition_app)) as session:
+        candidate = session.get(AcquisitionCandidate, candidate_id)
+        assert candidate is not None
+        expected_decision = (
+            candidate.status,
+            candidate.eligibility_code,
+            candidate.decision_reason_code,
+            candidate.decided_by,
+            candidate.decided_at,
+        )
+
+    reassessed = process_manual_url(
+        acquisition_app,
+        tenant_id="t1",
+        mission_id="m1",
+        url=url,
+        fetcher=fetcher,
+        extractor=extractor,
+    )
+
+    assert reassessed.id == candidate_id
+    assert (
+        reassessed.status,
+        reassessed.eligibility_code,
+        reassessed.decision_reason_code,
+        reassessed.decided_by,
+        reassessed.decided_at,
+    ) == expected_decision
+    assert reassessed.priority_score is not None
+    assert reassessed.priority_band
+    assert reassessed.signal_coverage > 0
+
+
+def test_assessment_cas_preserves_human_decision_when_orm_state_is_stale(acquisition_app):
+    from app.extensions import get_engine
+    from app.modules.acquisition.models import AcquisitionCandidate, AcquisitionMission
+    from app.modules.acquisition.service import _assess_candidate_in_session
+
+    candidate_id = _seed_mission_and_candidate(
+        acquisition_app,
+        status="eligible",
+        eligibility_code="eligible",
+        suffix="assessment-cas",
+    )
+    decided_at = datetime(2026, 2, 1, tzinfo=UTC)
+
+    with Session(get_engine(acquisition_app)) as session:
+        candidate = session.get(AcquisitionCandidate, candidate_id)
+        mission = session.get(AcquisitionMission, "m1")
+        assert candidate is not None
+        assert mission is not None
+        session.execute(
+            update(AcquisitionCandidate)
+            .where(
+                AcquisitionCandidate.id == candidate_id,
+                AcquisitionCandidate.tenant_id == "t1",
+            )
+            .values(
+                status="accepted",
+                eligibility_code="human-terminal",
+                decision_reason_code="human-accepted",
+                decided_by="human-reviewer",
+                decided_at=decided_at,
+            ),
+            execution_options={"synchronize_session": False},
+        )
+        assert candidate.status == "eligible"
+
+        _assess_candidate_in_session(
+            session,
+            app=acquisition_app,
+            candidate=candidate,
+            mission=mission,
+            tenant_id="t1",
+        )
+        session.commit()
+
+    with Session(get_engine(acquisition_app)) as session:
+        candidate = session.get(AcquisitionCandidate, candidate_id)
+        assert candidate is not None
+        assert (
+            candidate.status,
+            candidate.eligibility_code,
+            candidate.decision_reason_code,
+            candidate.decided_by,
+            candidate.decided_at,
+        ) == (
+            "accepted",
+            "human-terminal",
+            "human-accepted",
+            "human-reviewer",
+            decided_at.replace(tzinfo=None),
+        )
 
 
 def test_apply_suggestion_does_not_mutate_historical_mission(acquisition_app):
@@ -332,6 +471,112 @@ def test_country_override_is_audited_and_requeues_assessment(acquisition_app, mo
             select(AuditEvent).where(AuditEvent.action == "candidate.country_overridden")
         )
         assert event is not None
+
+
+@pytest.mark.parametrize("status", ["eligible", "accepted", "promoted", "rejected"])
+def test_country_override_requires_candidate_that_needs_evidence(acquisition_app, status):
+    from app.modules.acquisition.service import AcquisitionError, override_candidate_country
+
+    candidate_id = _seed_mission_and_candidate(
+        acquisition_app,
+        status=status,
+        eligibility_code="country_unknown",
+    )
+
+    with pytest.raises(AcquisitionError, match="need evidence"):
+        override_candidate_country(
+            acquisition_app,
+            tenant_id="t1",
+            actor_id="u1",
+            candidate_id=candidate_id,
+            country_code="MX",
+            source_url="https://moto1.example/contact",
+            reason_code="official_contact_page",
+        )
+
+
+def test_country_override_cas_rejects_stale_needs_evidence_state(
+    acquisition_app, monkeypatch
+):
+    from app.extensions import get_engine
+    from app.modules.acquisition.models import AcquisitionCandidate
+    from app.modules.acquisition.repository import CandidateRepository
+    from app.modules.acquisition.service import AcquisitionError, override_candidate_country
+    from app.modules.audit.models import AuditEvent
+
+    candidate_id = _seed_mission_and_candidate(
+        acquisition_app,
+        status="needs_evidence",
+        eligibility_code="country_unknown",
+        suffix="override-cas",
+    )
+    decided_at = datetime(2026, 2, 2, tzinfo=UTC)
+    original_get = CandidateRepository.get
+
+    def get_then_commit_human_decision(repository, value, *, tenant_id):
+        candidate = original_get(repository, value, tenant_id=tenant_id)
+        assert candidate is not None
+        repository.session.execute(
+            update(AcquisitionCandidate)
+            .where(
+                AcquisitionCandidate.id == value,
+                AcquisitionCandidate.tenant_id == tenant_id,
+            )
+            .values(
+                status="accepted",
+                eligibility_code="human-terminal",
+                opportunity_country_code="CA",
+                country_resolution_status="confirmed",
+                decision_reason_code="human-accepted",
+                decided_by="human-reviewer",
+                decided_at=decided_at,
+            ),
+            execution_options={"synchronize_session": False},
+        )
+        repository.session.commit()
+        assert candidate.status == "needs_evidence"
+        return candidate
+
+    monkeypatch.setattr(CandidateRepository, "get", get_then_commit_human_decision)
+    queued: list[dict] = []
+    monkeypatch.setattr(
+        "app.modules.acquisition.service.create_and_enqueue",
+        lambda _app, **kwargs: queued.append(kwargs),
+    )
+
+    with pytest.raises(AcquisitionError, match="need evidence"):
+        override_candidate_country(
+            acquisition_app,
+            tenant_id="t1",
+            actor_id="u1",
+            candidate_id=candidate_id,
+            country_code="MX",
+            source_url="https://moto-override-cas.example/contact",
+            reason_code="official_contact_page",
+        )
+
+    assert queued == []
+    with Session(get_engine(acquisition_app)) as session:
+        candidate = session.get(AcquisitionCandidate, candidate_id)
+        assert candidate is not None
+        assert (
+            candidate.status,
+            candidate.eligibility_code,
+            candidate.opportunity_country_code,
+            candidate.country_resolution_status,
+            candidate.decision_reason_code,
+            candidate.decided_by,
+            candidate.decided_at,
+        ) == (
+            "accepted",
+            "human-terminal",
+            "CA",
+            "confirmed",
+            "human-accepted",
+            "human-reviewer",
+            decided_at.replace(tzinfo=None),
+        )
+        assert session.scalar(select(func.count()).select_from(AuditEvent)) == 0
 
 
 def test_unknown_provider_cost_is_not_recorded_as_zero(acquisition_app):

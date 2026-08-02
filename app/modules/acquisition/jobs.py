@@ -42,6 +42,7 @@ from app.modules.acquisition.scoring import (
     evaluate_gate,
     score_candidate,
 )
+from app.modules.acquisition.states import update_assessment_state_if_mutable
 from app.modules.audit.service import add_event
 from app.modules.jobs.models import Job
 from app.modules.jobs.service import create_and_enqueue
@@ -561,16 +562,22 @@ def handle_candidate_assess(app, job: Job, payload: dict[str, Any]) -> dict[str,
                 ),
                 tenant_id=tenant_id,
             )
-        candidate.status = gate.disposition
-        candidate.eligibility_code = gate.reason_codes[0] if gate.reason_codes else "eligible"
         candidate.priority_score = score.priority_score
         candidate.priority_band = score.priority_band
         candidate.signal_coverage = score.signal_coverage
+        candidate_status = update_assessment_state_if_mutable(
+            session,
+            candidate,
+            tenant_id=tenant_id,
+            status=gate.disposition,
+            eligibility_code=gate.reason_codes[0] if gate.reason_codes else "eligible",
+        )
         session.commit()
 
     return {
         "candidate_id": candidate_id,
         "disposition": gate.disposition,
+        "candidate_status": candidate_status,
         "priority": score.priority_score,
         "coverage": score.signal_coverage,
         "stage": "assessed",
