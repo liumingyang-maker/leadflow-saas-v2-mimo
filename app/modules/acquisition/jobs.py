@@ -42,7 +42,10 @@ from app.modules.acquisition.scoring import (
     evaluate_gate,
     score_candidate,
 )
-from app.modules.acquisition.states import update_assessment_state_if_mutable
+from app.modules.acquisition.states import (
+    USABLE_CANDIDATE_STATUSES,
+    update_assessment_state_if_mutable,
+)
 from app.modules.acquisition.versions import (
     ELIGIBILITY_POLICY_VERSION,
     MIMO_EXTRACT_PROMPT_VERSION,
@@ -54,7 +57,6 @@ from app.modules.jobs.service import create_and_enqueue
 
 _ACTIVE_JOB_STATUSES = {"queued", "running", "retrying"}
 _TERMINAL_JOB_STATUSES = {"succeeded", "failed", "cancelled"}
-_USABLE_CANDIDATE_STATUSES = {"eligible", "accepted", "promoted"}
 _ACQUISITION_JOB_TYPES = {
     "acquisition_plan",
     "web_discovery",
@@ -623,9 +625,14 @@ def reconcile_missions(app, *, tenant_id: str | None = None, now: datetime) -> i
             candidate_query = candidate_query.where(AcquisitionCandidate.tenant_id == tenant_id)
         all_jobs = list(session.scalars(job_query))
         candidates = list(session.scalars(candidate_query))
+        candidate_by_id = {item.id: item for item in candidates}
+        failed_verification_candidates = _failed_verification_candidates(
+            all_jobs,
+            candidate_by_id=candidate_by_id,
+        )
         repairable_terminal_ids = {
             candidate.mission_id
-            for candidate in _failed_verification_candidates(session, all_jobs)
+            for candidate in failed_verification_candidates
             if candidate.status in {"discovered", "verifying"}
         }
         mission_filter = AcquisitionMission.status.in_(["queued", "running"])
@@ -638,7 +645,7 @@ def reconcile_missions(app, *, tenant_id: str | None = None, now: datetime) -> i
         if tenant_id is not None:
             mission_query = mission_query.where(AcquisitionMission.tenant_id == tenant_id)
         missions = list(session.scalars(mission_query))
-        candidate_missions = {item.id: item.mission_id for item in candidates}
+        candidate_missions = {item.id: item.mission_id for item in candidate_by_id.values()}
 
         for mission in missions:
             mission_jobs = [
@@ -656,9 +663,9 @@ def reconcile_missions(app, *, tenant_id: str | None = None, now: datetime) -> i
                 continue
 
             _reconcile_failed_verification_candidates(
-                session,
-                mission_jobs,
+                failed_verification_candidates,
                 mission_id=mission.id,
+                tenant_id=mission.tenant_id,
             )
             mission_candidates = [
                 item
@@ -666,7 +673,7 @@ def reconcile_missions(app, *, tenant_id: str | None = None, now: datetime) -> i
                 if item.tenant_id == mission.tenant_id and item.mission_id == mission.id
             ]
             usable = [
-                item for item in mission_candidates if item.status in _USABLE_CANDIDATE_STATUSES
+                item for item in mission_candidates if item.status in USABLE_CANDIDATE_STATUSES
             ]
             failed_count = sum(item.status in {"failed", "cancelled"} for item in mission_jobs)
             next_status = "completed" if usable else "failed"
@@ -730,31 +737,35 @@ def reconcile_missions(app, *, tenant_id: str | None = None, now: datetime) -> i
 
 
 def _failed_verification_candidates(
-    session: Session,
     jobs: list[Job],
+    *,
+    candidate_by_id: dict[str, AcquisitionCandidate],
 ) -> list[AcquisitionCandidate]:
-    candidates = CandidateRepository(session)
-    failed_candidates = []
+    failed_candidates: dict[str, AcquisitionCandidate] = {}
     for job in jobs:
         if job.job_type != "website_verify" or job.status != "failed":
             continue
         candidate_id = _json_object(job.payload_json).get("candidate_id")
         if not isinstance(candidate_id, str):
             continue
-        candidate = candidates.get(candidate_id, tenant_id=job.tenant_id)
-        if candidate is not None:
-            failed_candidates.append(candidate)
-    return failed_candidates
+        candidate = candidate_by_id.get(candidate_id)
+        if candidate is not None and candidate.tenant_id == job.tenant_id:
+            failed_candidates[candidate.id] = candidate
+    return list(failed_candidates.values())
 
 
 def _reconcile_failed_verification_candidates(
-    session: Session,
-    jobs: list[Job],
+    candidates: list[AcquisitionCandidate],
     *,
     mission_id: str,
+    tenant_id: str,
 ) -> None:
-    for candidate in _failed_verification_candidates(session, jobs):
-        if candidate.mission_id == mission_id and candidate.status in {"discovered", "verifying"}:
+    for candidate in candidates:
+        if (
+            candidate.tenant_id == tenant_id
+            and candidate.mission_id == mission_id
+            and candidate.status in {"discovered", "verifying"}
+        ):
             candidate.status = "needs_evidence"
 
 

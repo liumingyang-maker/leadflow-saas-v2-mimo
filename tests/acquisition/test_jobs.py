@@ -198,9 +198,57 @@ def test_reconciler_failed_verification_marks_candidate_unusable(
         assert candidate.status == "needs_evidence"
         assert mission is not None
         assert mission.status == "failed"
+        assert json.loads(mission.retrospective_json)["partial_success"] is False
         assert notification is not None
         assert notification.kind == "mission_failed"
         assert notification.body == "Mission 1: 0 usable candidates"
+
+
+def test_reconciler_resolves_failed_verification_from_loaded_candidates(
+    acquisition_app, seed_acquisition_mission, monkeypatch
+):
+    from app.extensions import get_engine
+    from app.modules.acquisition.jobs import reconcile_missions
+    from app.modules.acquisition.models import AcquisitionCandidate, AcquisitionMission
+    from app.modules.jobs.models import Job
+
+    mission_id = seed_acquisition_mission(suffix="in-memory")
+    candidate_id = "candidate-in-memory"
+    with Session(get_engine(acquisition_app)) as session:
+        mission = session.get(AcquisitionMission, mission_id)
+        assert mission is not None
+        mission.status = "running"
+        session.add(
+            AcquisitionCandidate(
+                id=candidate_id,
+                tenant_id="t1",
+                mission_id=mission_id,
+                status="verifying",
+                dedupe_key="domain:in-memory.example",
+            )
+        )
+        session.add(
+            Job(
+                tenant_id="t1",
+                job_type="website_verify",
+                status="failed",
+                error_code="source_unreachable",
+                payload_json=json.dumps({"candidate_id": candidate_id}),
+            )
+        )
+        session.commit()
+
+    monkeypatch.setattr(
+        "app.modules.acquisition.jobs.CandidateRepository",
+        lambda _session: pytest.fail("reconcile must use its loaded candidate mapping"),
+    )
+
+    assert reconcile_missions(acquisition_app, tenant_id="t1", now=datetime.now(UTC)) == 1
+
+    with Session(get_engine(acquisition_app)) as session:
+        candidate = session.get(AcquisitionCandidate, candidate_id)
+        assert candidate is not None
+        assert candidate.status == "needs_evidence"
 
 
 def test_reconciler_repairs_inconsistent_completed_mission_and_notification(

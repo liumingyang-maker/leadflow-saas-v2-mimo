@@ -8,6 +8,7 @@ from sqlalchemy.orm import Session
 from app.modules.acquisition.models import AcquisitionCandidate
 
 HUMAN_TERMINAL_STATUSES = frozenset({"accepted", "promoted", "rejected"})
+USABLE_CANDIDATE_STATUSES = frozenset({"eligible", "accepted", "promoted"})
 _HUMAN_DECISION_FIELDS = (
     "status",
     "eligibility_code",

@@ -60,7 +60,10 @@ from app.modules.acquisition.scoring import (
     evaluate_gate,
     score_candidate,
 )
-from app.modules.acquisition.states import update_assessment_state_if_mutable
+from app.modules.acquisition.states import (
+    USABLE_CANDIDATE_STATUSES,
+    update_assessment_state_if_mutable,
+)
 from app.modules.acquisition.versions import (
     COUNTRY_EVIDENCE_PROMPT_VERSION,
     ELIGIBILITY_POLICY_VERSION,
@@ -1123,7 +1126,8 @@ def mission_retrospective_payload(
         "contactable": sum(bool(_candidate_email(item)) for item in candidates),
         "partial_failures": failed_job_count,
         "partial_success": bool(
-            failed_job_count and any(item.status != "rejected" for item in candidates)
+            failed_job_count
+            and any(item.status in USABLE_CANDIDATE_STATUSES for item in candidates)
         ),
         "candidate_count": len(candidates),
     }
