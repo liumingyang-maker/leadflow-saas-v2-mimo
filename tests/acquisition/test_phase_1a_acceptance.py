@@ -106,12 +106,27 @@ def test_settings_explains_provider_status(acquisition_app, logged_in_client):
 
 
 def test_manual_url_pipeline_works_when_mimo_is_disabled(acquisition_app, seed_acquisition_mission):
+    from app.extensions import get_engine
     from app.integrations.ai.contracts import ExtractedCompanyFacts
     from app.integrations.web.fetcher import FetchResult
+    from app.modules.acquisition.models import AcquisitionMission
+    from app.modules.acquisition.policies import canonical_json
     from app.modules.acquisition.service import process_manual_url
 
     acquisition_app.config["MIMO_BASE_URL"] = ""
     mission_id = seed_acquisition_mission()
+    with Session(get_engine(acquisition_app)) as session:
+        mission = session.scalar(
+            select(AcquisitionMission).where(
+                AcquisitionMission.id == mission_id,
+                AcquisitionMission.tenant_id == "t1",
+            )
+        )
+        assert mission is not None
+        mission.channel_policy_json = canonical_json(
+            {"allowed_channels": ["manual_url"], "browser_research": False}
+        )
+        session.commit()
     source_url = "https://manual.example/products"
     snapshot = FetchResult(
         requested_url=source_url,
@@ -126,7 +141,7 @@ def test_manual_url_pipeline_works_when_mimo_is_disabled(acquisition_app, seed_a
     )
     facts = ExtractedCompanyFacts(
         company_name="Manual Co",
-        canonical_domain="manual.example",
+        canonical_domain="hallucinated.example",
         opportunity_country_code="MX",
         buyer_type="distributor",
         product_terms=["motorcycle engine"],
@@ -152,6 +167,7 @@ def test_manual_url_pipeline_works_when_mimo_is_disabled(acquisition_app, seed_a
     )
 
     assert candidate.source_channel == "manual_url"
+    assert candidate.domain == "manual.example"
     assert candidate.status == "eligible"
     assert candidate.priority_score is not None
 

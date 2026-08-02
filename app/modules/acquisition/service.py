@@ -18,8 +18,18 @@ from sqlalchemy.orm import Session
 
 from app.extensions import get_engine
 from app.integrations.ai.contracts import CompanyExtractor, ExtractedCompanyFacts
-from app.integrations.web.fetcher import StaticFetcher
-from app.modules.acquisition.contracts import CandidateDecisionInput, MissionCreateInput
+from app.integrations.web.fetcher import FetchResult, StaticFetcher
+from app.modules.acquisition.contracts import (
+    CandidateDecisionInput,
+    ManualCompanyFactsInput,
+    MissionCreateInput,
+)
+from app.modules.acquisition.manual_evidence import (
+    ManualEvidenceError,
+    build_manual_company_facts,
+    contact_url,
+    normalise_domain,
+)
 from app.modules.acquisition.models import (
     AcquisitionCandidate,
     AcquisitionMission,
@@ -51,6 +61,7 @@ from app.modules.acquisition.scoring import (
 from app.modules.acquisition.states import update_assessment_state_if_mutable
 from app.modules.acquisition.versions import (
     ELIGIBILITY_POLICY_VERSION,
+    MANUAL_FACTS_PROMPT_VERSION,
     MIMO_EXTRACT_PROMPT_VERSION,
     PRIORITY_SCORE_VERSION,
 )
@@ -71,6 +82,16 @@ class PromotionResult:
     lead_id: str
     created_company: bool
     created_lead: bool
+
+
+@dataclass(frozen=True)
+class AssessmentProvenance:
+    provider: str
+    model_id: str
+    prompt_version: str
+
+
+MIMO_PROVENANCE = AssessmentProvenance("mimo", "", MIMO_EXTRACT_PROMPT_VERSION)
 
 
 def _session(app) -> Session:
@@ -204,76 +225,244 @@ def process_manual_url(
         mission = MissionRepository(session).get(mission_id, tenant_id=tenant_id)
         if mission is None:
             raise AcquisitionError("mission was not found")
+        _require_manual_url_channel(mission)
 
     snapshot = fetcher.fetch(url)
     if snapshot.detected_prompt_injection:
         raise AcquisitionError("prompt injection detected in website evidence")
     facts = extractor.extract(snapshot)
-    if any(
-        str(claim.source_url).rstrip("/") != snapshot.final_url.rstrip("/")
-        for claim in facts.observed_claims
-    ):
-        raise AcquisitionError("observed claim cites an unsupplied source URL")
-    domain = _normalise_domain(facts.canonical_domain or snapshot.final_url)
-    if not domain:
-        raise AcquisitionError("company domain is required")
+    snapshots = (snapshot,)
+    _validate_claim_sources(facts, snapshots)
 
     with _session(app) as session:
         mission = MissionRepository(session).get(mission_id, tenant_id=tenant_id)
         if mission is None:
             raise AcquisitionError("mission was not found")
-        candidates = CandidateRepository(session)
-        candidate = candidates.find_by_dedupe_key(
-            mission_id, f"domain:{domain}", tenant_id=tenant_id
-        )
-        if candidate is None:
-            candidate = candidates.add(
-                AcquisitionCandidate(
-                    mission_id=mission_id,
-                    status="verifying",
-                    source_channel="manual_url",
-                    source_provider="manual",
-                    dedupe_key=f"domain:{domain}",
-                ),
-                tenant_id=tenant_id,
-            )
-            session.flush()
-        _apply_extracted_facts(candidate, facts, snapshot.final_url)
-        evidence = EvidenceRepository(session)
-        if (
-            evidence.find_content(
-                candidate.id,
-                snapshot.final_url,
-                snapshot.content_hash,
-                tenant_id=tenant_id,
-            )
-            is None
-        ):
-            evidence.add(
-                CandidateEvidence(
-                    candidate_id=candidate.id,
-                    provider="manual",
-                    source_type="manual_url",
-                    trust_tier="A",
-                    source_url=snapshot.requested_url,
-                    canonical_url=snapshot.final_url,
-                    title=snapshot.title[:500],
-                    excerpt=snapshot.text[:4000],
-                    retrieved_at=snapshot.retrieved_at,
-                    content_hash=snapshot.content_hash,
-                    supports_json=canonical_json(
-                        [claim.claim_id for claim in facts.observed_claims]
-                    ),
-                    validation_status="valid",
-                ),
-                tenant_id=tenant_id,
-            )
-            session.flush()
-        _assess_candidate_in_session(
-            session, app=app, candidate=candidate, mission=mission, tenant_id=tenant_id
+        _require_manual_url_channel(mission)
+        candidate = _persist_url_candidate(
+            session,
+            app=app,
+            tenant_id=tenant_id,
+            mission=mission,
+            facts=facts,
+            snapshots=snapshots,
+            provenance=MIMO_PROVENANCE,
         )
         session.commit()
         return candidate
+
+
+def process_manual_facts(
+    app,
+    *,
+    tenant_id: str,
+    mission_id: str,
+    value: ManualCompanyFactsInput,
+    fetcher: StaticFetcher,
+) -> AcquisitionCandidate:
+    tenant_id = (tenant_id or "").strip()
+    if not tenant_id:
+        raise AcquisitionError("tenant_id is required")
+    with _session(app) as session:
+        mission = MissionRepository(session).get(mission_id, tenant_id=tenant_id)
+        if mission is None:
+            raise AcquisitionError("mission was not found")
+        _require_manual_url_channel(mission)
+
+    primary = fetcher.fetch(value.url)
+    if primary.detected_prompt_injection:
+        raise AcquisitionError("prompt injection detected in website evidence")
+
+    contact_snapshot = None
+    try:
+        primary_domain = normalise_domain(primary.final_url)
+        submitted_contact_url = contact_url(value.contact_path)
+    except ManualEvidenceError as exc:
+        raise AcquisitionError(
+            "manual company facts are not supported by website evidence"
+        ) from exc
+    if not primary_domain:
+        raise AcquisitionError("manual company facts are not supported by website evidence")
+    if submitted_contact_url is not None:
+        try:
+            submitted_contact_domain = normalise_domain(submitted_contact_url)
+            if not submitted_contact_domain or submitted_contact_domain != primary_domain:
+                raise ManualEvidenceError("Contact URL must use the company domain")
+        except ManualEvidenceError as exc:
+            raise AcquisitionError(
+                "manual company facts are not supported by website evidence"
+            ) from exc
+        contact_snapshot = fetcher.fetch(submitted_contact_url)
+        if contact_snapshot.detected_prompt_injection:
+            raise AcquisitionError("prompt injection detected in website evidence")
+        try:
+            if normalise_domain(contact_snapshot.final_url) != primary_domain:
+                raise ManualEvidenceError("Contact URL redirected off the company domain")
+        except ManualEvidenceError as exc:
+            raise AcquisitionError(
+                "manual company facts are not supported by website evidence"
+            ) from exc
+
+    try:
+        facts = build_manual_company_facts(
+            value,
+            primary=primary,
+            contact_snapshot=contact_snapshot,
+        )
+    except ManualEvidenceError as exc:
+        raise AcquisitionError(
+            "manual company facts are not supported by website evidence"
+        ) from exc
+
+    snapshots = (primary, contact_snapshot) if contact_snapshot is not None else (primary,)
+    _validate_claim_sources(facts, snapshots)
+    provenance = AssessmentProvenance(
+        provider="manual",
+        model_id="human-confirmed-v1",
+        prompt_version=MANUAL_FACTS_PROMPT_VERSION,
+    )
+    with _session(app) as session:
+        mission = MissionRepository(session).get(mission_id, tenant_id=tenant_id)
+        if mission is None:
+            raise AcquisitionError("mission was not found")
+        _require_manual_url_channel(mission)
+        candidate = _persist_url_candidate(
+            session,
+            app=app,
+            tenant_id=tenant_id,
+            mission=mission,
+            facts=facts,
+            snapshots=snapshots,
+            provenance=provenance,
+        )
+        session.commit()
+        return candidate
+
+
+def _persist_url_candidate(
+    session: Session,
+    *,
+    app,
+    tenant_id: str,
+    mission: AcquisitionMission,
+    facts: ExtractedCompanyFacts,
+    snapshots: tuple[FetchResult, ...],
+    provenance: AssessmentProvenance,
+) -> AcquisitionCandidate:
+    if not snapshots:
+        raise AcquisitionError("website evidence is required")
+    primary = snapshots[0]
+    try:
+        domain = normalise_domain(primary.final_url)
+    except ManualEvidenceError as exc:
+        raise AcquisitionError("company domain is required") from exc
+    if not domain:
+        raise AcquisitionError("company domain is required")
+    _validate_claim_sources(facts, snapshots)
+
+    candidates = CandidateRepository(session)
+    candidate = candidates.find_by_dedupe_key(mission.id, f"domain:{domain}", tenant_id=tenant_id)
+    if candidate is None:
+        candidate = candidates.add(
+            AcquisitionCandidate(
+                mission_id=mission.id,
+                status="verifying",
+                source_channel="manual_url",
+                source_provider="manual",
+                dedupe_key=f"domain:{domain}",
+            ),
+            tenant_id=tenant_id,
+        )
+        session.flush()
+    _apply_extracted_facts(
+        candidate,
+        facts,
+        primary.final_url,
+        domain=domain,
+    )
+    evidence = EvidenceRepository(session)
+    for snapshot in snapshots:
+        supported_claims = sorted(
+            {
+                claim.claim_id
+                for claim in facts.observed_claims
+                if _canonical_evidence_url(str(claim.source_url))
+                == _canonical_evidence_url(snapshot.final_url)
+            }
+        )
+        existing_evidence = evidence.find_content(
+            candidate.id,
+            snapshot.final_url,
+            snapshot.content_hash,
+            tenant_id=tenant_id,
+        )
+        if existing_evidence is not None:
+            existing_supports = _validated_support_ids(existing_evidence.supports_json)
+            existing_evidence.supports_json = canonical_json(
+                sorted(existing_supports | set(supported_claims))
+            )
+            continue
+        evidence.add(
+            CandidateEvidence(
+                candidate_id=candidate.id,
+                provider="manual",
+                source_type="manual_url",
+                trust_tier="A",
+                source_url=snapshot.requested_url,
+                canonical_url=snapshot.final_url,
+                title=snapshot.title[:500],
+                excerpt=snapshot.text[:4000],
+                retrieved_at=snapshot.retrieved_at,
+                content_hash=snapshot.content_hash,
+                supports_json=canonical_json(supported_claims),
+                validation_status="valid",
+            ),
+            tenant_id=tenant_id,
+        )
+        session.flush()
+    _assess_candidate_in_session(
+        session,
+        app=app,
+        candidate=candidate,
+        mission=mission,
+        tenant_id=tenant_id,
+        provenance=provenance,
+    )
+    return candidate
+
+
+def _validate_claim_sources(
+    facts: ExtractedCompanyFacts, snapshots: tuple[FetchResult, ...]
+) -> None:
+    supplied_urls = {_canonical_evidence_url(snapshot.final_url) for snapshot in snapshots}
+    if any(
+        _canonical_evidence_url(str(claim.source_url)) not in supplied_urls
+        for claim in facts.observed_claims
+    ):
+        raise AcquisitionError("observed claim cites an unsupplied source URL")
+
+
+def _canonical_evidence_url(value: str) -> str:
+    return value.rstrip("/")
+
+
+def _validated_support_ids(value: str) -> set[str]:
+    try:
+        supports = json.loads(value)
+    except (TypeError, json.JSONDecodeError):
+        raise AcquisitionError("stored evidence support provenance is invalid") from None
+    if not isinstance(supports, list) or any(
+        not isinstance(item, str) or not item for item in supports
+    ):
+        raise AcquisitionError("stored evidence support provenance is invalid")
+    return set(supports)
+
+
+def _require_manual_url_channel(mission: AcquisitionMission) -> None:
+    policy = _json_object(mission.channel_policy_json)
+    allowed_channels = policy.get("allowed_channels", [])
+    if not isinstance(allowed_channels, list) or "manual_url" not in allowed_channels:
+        raise AcquisitionError("manual URL acquisition channel is not allowed")
 
 
 def review_candidate(
@@ -604,9 +793,7 @@ def _promote_candidate_in_session(
                 data_quality_score=breakdown.get("data_quality_score"),
                 priority_score=candidate.priority_score,
                 priority_band=candidate.priority_band,
-                score_version=(
-                    assessment.score_version if assessment else PRIORITY_SCORE_VERSION
-                ),
+                score_version=(assessment.score_version if assessment else PRIORITY_SCORE_VERSION),
                 score_explanation_json=(
                     canonical_json(
                         {
@@ -886,6 +1073,7 @@ def _assess_candidate_in_session(
     candidate: AcquisitionCandidate,
     mission: AcquisitionMission,
     tenant_id: str,
+    provenance: AssessmentProvenance = MIMO_PROVENANCE,
 ) -> None:
     observed = _json_object(candidate.observed_facts_json)
     contact = _json_object(candidate.contact_json)
@@ -952,38 +1140,47 @@ def _assess_candidate_in_session(
             )
         ).encode("utf-8")
     ).hexdigest()
-    model_id = str(app.config.get("MIMO_MODEL", "mimo-v2.5"))
+    model_id = provenance.model_id or str(app.config.get("MIMO_MODEL", "mimo-v2.5"))
+    input_json = canonical_json(score_input.__dict__)
+    hard_gate_json = canonical_json(gate.__dict__)
+    score_breakdown_json = canonical_json(score.__dict__)
     assessments = AssessmentRepository(session)
-    if (
-        assessments.find_input_version(
-            candidate.id,
-            bundle_hash,
-            ELIGIBILITY_POLICY_VERSION,
-            PRIORITY_SCORE_VERSION,
-            MIMO_EXTRACT_PROMPT_VERSION,
-            model_id,
-            tenant_id=tenant_id,
-        )
-        is None
-    ):
+    existing_assessment = assessments.find_input_version(
+        candidate.id,
+        bundle_hash,
+        ELIGIBILITY_POLICY_VERSION,
+        PRIORITY_SCORE_VERSION,
+        provenance.prompt_version,
+        model_id,
+        tenant_id=tenant_id,
+    )
+    if existing_assessment is None:
         assessments.add(
             CandidateAssessment(
                 candidate_id=candidate.id,
                 evidence_bundle_hash=bundle_hash,
                 policy_version=ELIGIBILITY_POLICY_VERSION,
                 score_version=PRIORITY_SCORE_VERSION,
-                prompt_version=MIMO_EXTRACT_PROMPT_VERSION,
-                model_provider="mimo",
+                prompt_version=provenance.prompt_version,
+                model_provider=provenance.provider,
                 model_id=model_id,
-                input_json=canonical_json(score_input.__dict__),
-                hard_gate_json=canonical_json(gate.__dict__),
-                score_breakdown_json=canonical_json(score.__dict__),
+                input_json=input_json,
+                hard_gate_json=hard_gate_json,
+                score_breakdown_json=score_breakdown_json,
                 signal_coverage=score.signal_coverage,
                 priority_mode=score.priority_mode,
                 explanation="Deterministic evidence-aware assessment",
             ),
             tenant_id=tenant_id,
         )
+    elif (
+        existing_assessment.input_json != input_json
+        or existing_assessment.hard_gate_json != hard_gate_json
+        or existing_assessment.score_breakdown_json != score_breakdown_json
+        or existing_assessment.signal_coverage != score.signal_coverage
+        or existing_assessment.priority_mode != score.priority_mode
+    ):
+        raise AcquisitionError("assessment conflicts with existing evidence version")
     candidate.priority_score = score.priority_score
     candidate.priority_band = score.priority_band
     candidate.signal_coverage = score.signal_coverage
@@ -1001,9 +1198,11 @@ def _apply_extracted_facts(
     candidate: AcquisitionCandidate,
     facts: ExtractedCompanyFacts,
     final_url: str,
+    *,
+    domain: str,
 ) -> None:
     candidate.company_name = facts.company_name
-    candidate.domain = _normalise_domain(facts.canonical_domain)
+    candidate.domain = domain
     candidate.website = final_url
     candidate.hq_country_code = facts.hq_country_code
     candidate.opportunity_country_code = facts.opportunity_country_code
