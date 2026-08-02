@@ -28,7 +28,7 @@ The HTML shell remains server rendered. A tenant-guarded `/workbench/live` route
 - Only a candidate owned by the active tenant can be re-queued.
 - Accepted/promoted/rejected candidates are not mutated by failure recovery.
 - A terminal retry failure returns to `needs_evidence`; a successful retry continues through assessment.
-- Provider and fetch failures retain safe summaries in the database; full exception details stay in local server logs.
+- Provider and fetch failures retain safe summaries in the database; local server logs keep only bounded, allowlisted exception type and frame metadata.
 
 ## Verification
 
