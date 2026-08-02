@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from datetime import UTC, datetime, timedelta
 
 import pytest
@@ -115,12 +116,201 @@ def test_workbench_uses_tenant_scoped_real_counts(
     assert view.notifications_unread == 1
     assert view.replies_to_handle == 1
     assert view.follow_ups_due == 1
-    assert view.next_action_url == "/workbench?focus=failed"
+    assert view.next_action_url == "/workbench#unresolved-job-failures"
     assert view.review_url.startswith("/acquisition/candidates/")
-    assert view.attention_url == "/workbench?focus=failed"
-    assert len(view.current_jobs) == 2
+    assert view.attention_url == "/workbench#unresolved-job-failures"
+    assert len(view.current_jobs) == 1
+    assert {job.status for job in view.current_jobs} == {"running"}
+    assert len(view.failed_jobs) == 1
+    assert {job.status for job in view.failed_jobs} == {"failed"}
     assert private_view.candidates_to_review == 1
     assert private_view.needs_evidence == 0
+
+
+def test_needs_evidence_resolves_verification_failure_and_becomes_next_action(
+    acquisition_app, seed_acquisition_mission
+) -> None:
+    from app.extensions import get_engine
+    from app.modules.acquisition.models import AcquisitionCandidate
+    from app.modules.acquisition.workbench import load_workbench
+    from app.modules.jobs.models import Job
+
+    oldest_mission = seed_acquisition_mission(tenant_id="t1", suffix="needs-oldest")
+    newer_mission = seed_acquisition_mission(tenant_id="t1", suffix="needs-newer")
+    now = datetime.now(UTC)
+    with Session(get_engine(acquisition_app)) as db_session:
+        resolved_candidate = AcquisitionCandidate(
+            tenant_id="t1",
+            mission_id=oldest_mission,
+            status="needs_evidence",
+            dedupe_key="domain:resolved-failure.example",
+            created_at=now - timedelta(hours=2),
+        )
+        newer_candidate = AcquisitionCandidate(
+            tenant_id="t1",
+            mission_id=newer_mission,
+            status="needs_evidence",
+            dedupe_key="domain:newer-failure.example",
+            created_at=now - timedelta(hours=1),
+        )
+        review_candidate = AcquisitionCandidate(
+            tenant_id="t1",
+            mission_id=newer_mission,
+            status="eligible",
+            dedupe_key="domain:review.example",
+        )
+        db_session.add_all([resolved_candidate, newer_candidate, review_candidate])
+        db_session.flush()
+        db_session.add(
+            Job(
+                tenant_id="t1",
+                job_type="website_verify",
+                status="failed",
+                payload_json=json.dumps({"candidate_id": resolved_candidate.id}),
+            )
+        )
+        db_session.commit()
+
+    view = load_workbench(acquisition_app, tenant_id="t1")
+
+    assert view.jobs_failed == 0
+    assert view.failed_jobs == ()
+    assert view.current_jobs == ()
+    assert view.needs_evidence == 2
+    assert view.next_action_url == f"/acquisition/missions/{oldest_mission}"
+    assert view.attention_url == f"/acquisition/missions/{oldest_mission}"
+
+
+def test_candidate_state_does_not_hide_unrelated_job_failure(
+    acquisition_app, seed_acquisition_mission
+) -> None:
+    from app.extensions import get_engine
+    from app.modules.acquisition.models import AcquisitionCandidate
+    from app.modules.acquisition.workbench import load_workbench
+    from app.modules.jobs.models import Job
+
+    mission_id = seed_acquisition_mission(tenant_id="t1", suffix="assess-failure")
+    with Session(get_engine(acquisition_app)) as db_session:
+        candidate = AcquisitionCandidate(
+            tenant_id="t1",
+            mission_id=mission_id,
+            status="eligible",
+            dedupe_key="domain:assessment-failure.example",
+        )
+        db_session.add(candidate)
+        db_session.flush()
+        db_session.add(
+            Job(
+                tenant_id="t1",
+                job_type="candidate_assess",
+                status="failed",
+                payload_json=json.dumps({"candidate_id": candidate.id}),
+            )
+        )
+        db_session.commit()
+
+    view = load_workbench(acquisition_app, tenant_id="t1")
+
+    assert view.jobs_failed == 1
+    assert len(view.failed_jobs) == 1
+
+
+def test_later_success_supersedes_failure_for_same_logical_job(
+    acquisition_app, seed_acquisition_mission
+) -> None:
+    from app.extensions import get_engine
+    from app.modules.acquisition.workbench import load_workbench
+    from app.modules.jobs.models import Job
+
+    mission_id = seed_acquisition_mission(tenant_id="t1", suffix="superseded")
+    now = datetime.now(UTC)
+    payload = json.dumps({"mission_id": mission_id})
+    with Session(get_engine(acquisition_app)) as db_session:
+        db_session.add_all(
+            [
+                Job(
+                    tenant_id="t1",
+                    job_type="web_discovery",
+                    status="failed",
+                    payload_json=payload,
+                    created_at=now - timedelta(minutes=2),
+                    updated_at=now - timedelta(minutes=2),
+                ),
+                Job(
+                    tenant_id="t1",
+                    job_type="web_discovery",
+                    status="succeeded",
+                    payload_json=payload,
+                    created_at=now - timedelta(minutes=1),
+                    updated_at=now - timedelta(minutes=1),
+                ),
+            ]
+        )
+        db_session.commit()
+
+    view = load_workbench(acquisition_app, tenant_id="t1")
+
+    assert view.jobs_failed == 0
+    assert view.failed_jobs == ()
+
+
+def test_unresolved_failure_count_is_not_truncated_with_display_list(acquisition_app) -> None:
+    from app.extensions import get_engine
+    from app.modules.acquisition.workbench import load_workbench
+    from app.modules.jobs.models import Job
+
+    with Session(get_engine(acquisition_app)) as db_session:
+        db_session.add_all(
+            [
+                Job(
+                    tenant_id="t1",
+                    job_type="web_discovery",
+                    status="failed",
+                    payload_json=json.dumps({"mission_id": f"mission-{index}"}),
+                )
+                for index in range(10)
+            ]
+        )
+        db_session.commit()
+
+    view = load_workbench(acquisition_app, tenant_id="t1")
+
+    assert view.jobs_failed == 10
+    assert len(view.failed_jobs) == 8
+
+
+def test_workbench_live_is_tenant_guarded_polling_partial(
+    acquisition_app, logged_in_client
+) -> None:
+    client, _tenant_id = logged_in_client
+
+    response = client.get("/workbench/live")
+    html = response.get_data(as_text=True)
+    anonymous = acquisition_app.test_client().get("/workbench/live")
+
+    assert response.status_code == 200
+    assert '<section id="workbench-live"' in html
+    assert 'hx-get="/workbench/live"' in html
+    assert 'hx-trigger="load, every 5s"' in html
+    assert 'hx-swap="outerHTML"' in html
+    assert 'id="active-jobs"' in html
+    assert 'id="unresolved-job-failures"' in html
+    assert "<!doctype html>" not in html.lower()
+    assert anonymous.status_code in {302, 303}
+    assert anonymous.headers["Location"].endswith("/login")
+
+
+def test_main_workbench_includes_live_polling_projection(logged_in_client) -> None:
+    client, _tenant_id = logged_in_client
+
+    response = client.get("/workbench")
+    html = response.get_data(as_text=True)
+
+    assert response.status_code == 200
+    assert html.count('id="workbench-live"') == 1
+    assert 'hx-get="/workbench/live"' in html
+    assert 'id="active-jobs"' in html
+    assert 'id="unresolved-job-failures"' in html
 
 
 def test_empty_workbench_without_product_points_to_product_knowledge(acquisition_app) -> None:
@@ -131,7 +321,7 @@ def test_empty_workbench_without_product_points_to_product_knowledge(acquisition
     assert view.next_action_url == "/acquisition/products"
     assert view.review_url == "/acquisition/products"
     assert view.has_product_knowledge is False
-    assert view.attention_url == "/workbench#current-jobs"
+    assert view.attention_url == "/workbench#active-jobs"
     assert view.current_jobs == ()
 
 

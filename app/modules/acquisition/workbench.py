@@ -31,6 +31,7 @@ ALLOWED_NOTIFICATION_KINDS = {
     "backup_stale",
 }
 ACTIVE_JOB_STATUSES = {"queued", "running", "retrying"}
+FAILURE_REPRESENTED_CANDIDATE_STATUSES = {"needs_evidence"}
 
 
 class WorkbenchError(ValueError):
@@ -68,6 +69,7 @@ class WorkbenchView:
     follow_ups_due: int
     notifications_unread: int
     current_jobs: tuple[JobSummary, ...]
+    failed_jobs: tuple[JobSummary, ...]
     next_action_url: str
     review_url: str
     attention_url: str
@@ -109,12 +111,6 @@ def load_workbench(app, *, tenant_id: str, now: datetime | None = None) -> Workb
             Job.tenant_id == tenant_id,
             Job.status.in_(ACTIVE_JOB_STATUSES),
         )
-        jobs_failed = _count(
-            db_session,
-            Job,
-            Job.tenant_id == tenant_id,
-            Job.status == "failed",
-        )
         notifications_unread = _count(
             db_session,
             Notification,
@@ -139,28 +135,19 @@ def load_workbench(app, *, tenant_id: str, now: datetime | None = None) -> Workb
             Lead.stage.not_in({"won", "lost"}),
         )
 
-        jobs = list(
+        active_jobs = list(
             db_session.scalars(
                 select(Job)
                 .where(
                     Job.tenant_id == tenant_id,
-                    Job.status.in_((*ACTIVE_JOB_STATUSES, "failed")),
+                    Job.status.in_(ACTIVE_JOB_STATUSES),
                 )
                 .order_by(Job.created_at.desc())
                 .limit(8)
             )
         )
-        current_jobs = tuple(
-            JobSummary(
-                id=job.id,
-                job_type=job.job_type,
-                status=job.status,
-                progress=job.progress,
-                progress_message=job.progress_message,
-                target_url=_job_target(job),
-            )
-            for job in jobs
-        )
+        current_jobs = tuple(_job_summary(job) for job in active_jobs)
+        jobs_failed, failed_jobs = _unresolved_failures(db_session, tenant_id=tenant_id)
         review_candidate_id = db_session.scalar(
             select(AcquisitionCandidate.id)
             .where(
@@ -200,16 +187,19 @@ def load_workbench(app, *, tenant_id: str, now: datetime | None = None) -> Workb
         else acquisition_start_url
     )
     attention_url = (
-        "/workbench?focus=failed"
+        "/workbench#unresolved-job-failures"
         if jobs_failed
         else (
             f"/acquisition/missions/{evidence_mission_id}"
             if evidence_mission_id
-            else "/workbench#current-jobs"
+            else "/workbench#active-jobs"
         )
     )
+    evidence_url = f"/acquisition/missions/{evidence_mission_id}" if evidence_mission_id else ""
     if jobs_failed:
-        next_action_url = "/workbench?focus=failed"
+        next_action_url = "/workbench#unresolved-job-failures"
+    elif evidence_url:
+        next_action_url = evidence_url
     elif review_candidate_id:
         next_action_url = review_url
     elif replies_to_handle or follow_ups_due:
@@ -225,6 +215,7 @@ def load_workbench(app, *, tenant_id: str, now: datetime | None = None) -> Workb
         follow_ups_due=follow_ups_due,
         notifications_unread=notifications_unread,
         current_jobs=current_jobs,
+        failed_jobs=failed_jobs,
         next_action_url=next_action_url,
         review_url=review_url,
         attention_url=attention_url,
@@ -341,18 +332,93 @@ def _count(db_session: Session, model, *conditions) -> int:
     return int(db_session.scalar(select(func.count()).select_from(model).where(*conditions)) or 0)
 
 
-def _job_target(job: Job) -> str:
+def _unresolved_failures(
+    db_session: Session, *, tenant_id: str
+) -> tuple[int, tuple[JobSummary, ...]]:
+    terminal_jobs = list(
+        db_session.scalars(
+            select(Job)
+            .where(
+                Job.tenant_id == tenant_id,
+                Job.status.in_({"failed", "succeeded"}),
+            )
+            .order_by(Job.created_at.desc(), Job.updated_at.desc(), Job.id.desc())
+        )
+    )
+    latest_by_identity: dict[tuple[str, str, str], Job] = {}
+    for job in terminal_jobs:
+        identity = _job_identity(job)
+        if identity not in latest_by_identity:
+            latest_by_identity[identity] = job
+
+    failures = [job for job in latest_by_identity.values() if job.status == "failed"]
+    candidate_ids = {
+        identity[2]
+        for identity, job in latest_by_identity.items()
+        if job.status == "failed" and identity[1] == "candidate"
+    }
+    candidate_statuses = (
+        dict(
+            db_session.execute(
+                select(AcquisitionCandidate.id, AcquisitionCandidate.status).where(
+                    AcquisitionCandidate.tenant_id == tenant_id,
+                    AcquisitionCandidate.id.in_(candidate_ids),
+                )
+            ).all()
+        )
+        if candidate_ids
+        else {}
+    )
+    unresolved = [
+        job
+        for job in failures
+        if not (
+            (identity := _job_identity(job))[1] == "candidate"
+            and candidate_statuses.get(identity[2]) in FAILURE_REPRESENTED_CANDIDATE_STATUSES
+        )
+    ]
+    unresolved.sort(key=lambda job: (job.created_at, job.updated_at, job.id), reverse=True)
+    return len(unresolved), tuple(_job_summary(job) for job in unresolved[:8])
+
+
+def _job_summary(job: Job) -> JobSummary:
+    return JobSummary(
+        id=job.id,
+        job_type=job.job_type,
+        status=job.status,
+        progress=job.progress,
+        progress_message=job.progress_message,
+        target_url=_job_target(job),
+    )
+
+
+def _job_identity(job: Job) -> tuple[str, str, str]:
+    payload = _job_payload(job)
+    candidate_id = payload.get("candidate_id")
+    if isinstance(candidate_id, str) and re.fullmatch(r"[A-Za-z0-9_-]{1,64}", candidate_id):
+        return (job.job_type, "candidate", candidate_id)
+    mission_id = payload.get("mission_id")
+    if isinstance(mission_id, str) and re.fullmatch(r"[A-Za-z0-9_-]{1,64}", mission_id):
+        return (job.job_type, "mission", mission_id)
+    return (job.job_type, "job", job.id)
+
+
+def _job_payload(job: Job) -> dict:
     try:
         payload = json.loads(job.payload_json or "{}")
     except (TypeError, ValueError):
-        payload = {}
-    if isinstance(payload, dict):
-        mission_id = payload.get("mission_id")
-        if isinstance(mission_id, str) and re.fullmatch(r"[A-Za-z0-9_-]{1,64}", mission_id):
-            return f"/acquisition/missions/{mission_id}"
-        candidate_id = payload.get("candidate_id")
-        if isinstance(candidate_id, str) and re.fullmatch(r"[A-Za-z0-9_-]{1,64}", candidate_id):
-            return f"/acquisition/candidates/{candidate_id}"
+        return {}
+    return payload if isinstance(payload, dict) else {}
+
+
+def _job_target(job: Job) -> str:
+    payload = _job_payload(job)
+    mission_id = payload.get("mission_id")
+    if isinstance(mission_id, str) and re.fullmatch(r"[A-Za-z0-9_-]{1,64}", mission_id):
+        return f"/acquisition/missions/{mission_id}"
+    candidate_id = payload.get("candidate_id")
+    if isinstance(candidate_id, str) and re.fullmatch(r"[A-Za-z0-9_-]{1,64}", candidate_id):
+        return f"/acquisition/candidates/{candidate_id}"
     return "/workbench"
 
 

@@ -16,33 +16,9 @@
     <p class="lf-muted">只看现在需要处理的客户、回复和后台任务。</p>
   </div>
   <a class="lf-button lf-button-primary" href="{{ view.next_action_url }}">
-    {% if view.jobs_failed %}处理失败任务{% elif view.candidates_to_review %}审核下一个候选{% elif view.replies_to_handle or view.follow_ups_due %}处理客户事项{% elif not view.has_product_knowledge %}先添加产品知识{% else %}创建找客户任务{% endif %}
+    {% if view.jobs_failed %}处理失败任务{% elif view.needs_evidence %}补充候选证据{% elif view.candidates_to_review %}审核下一个候选{% elif view.replies_to_handle or view.follow_ups_due %}处理客户事项{% elif not view.has_product_knowledge %}先添加产品知识{% else %}创建找客户任务{% endif %}
   </a>
 </header>
 
-<section class="lf-workbench-metrics" aria-label="今日重点">
-  <a class="lf-stat-card" href="{{ view.review_url }}"><span>待审核候选</span><strong>{{ view.candidates_to_review }}</strong><small>查看推荐理由后决定是否加入 CRM</small></a>
-  <a class="lf-stat-card" href="/leads?has_reply=1"><span>待处理回复</span><strong>{{ view.replies_to_handle }}</strong><small>按有入站回复的客户去重统计</small></a>
-  <a class="lf-stat-card" href="#current-jobs"><span>运行中任务</span><strong>{{ view.jobs_running }}</strong><small>排队、运行或等待重试</small></a>
-  <a class="lf-stat-card{% if view.jobs_failed or view.needs_evidence %} lf-stat-card-warning{% endif %}" href="{{ view.attention_url }}"><span>失败 / 待补证</span><strong>{{ view.jobs_failed + view.needs_evidence }}</strong><small>{{ view.jobs_failed }} 个失败，{{ view.needs_evidence }} 个待补证</small></a>
-  <a class="lf-stat-card" href="/leads?follow_up_due=1"><span>今日跟进</span><strong>{{ view.follow_ups_due }}</strong><small>到期且尚未结束的客户</small></a>
-</section>
-
-<section class="lf-section" id="current-jobs" aria-labelledby="current-jobs-title">
-  <div class="lf-page-header"><div><span class="lf-eyebrow">后台进度</span><h2 id="current-jobs-title">当前任务</h2></div></div>
-  {% if view.current_jobs %}
-  <div class="lf-card-list">
-    {% for job in view.current_jobs %}
-    <article class="lf-panel lf-workbench-job{% if job.status == 'failed' %} lf-workbench-job-failed{% endif %}">
-      <div class="lf-status-row"><strong>{{ {'acquisition_plan':'制定研究计划','web_discovery':'联网寻找公司','website_verify':'验证公司网站','candidate_assess':'评估候选客户'}.get(job.job_type, job.job_type) }}</strong><span class="lf-badge{% if job.status in ['running', 'succeeded'] %} lf-badge-success{% endif %}">{{ {'queued':'排队中','running':'运行中','retrying':'等待重试','failed':'失败'}.get(job.status, job.status) }}</span></div>
-      {% if job.status != 'failed' %}<progress value="{{ job.progress }}" max="100" aria-label="任务进度 {{ job.progress }}%"></progress>{% endif %}
-      <p class="lf-muted">{{ job.progress_message or ('任务执行失败，请检查后重试。' if job.status == 'failed' else '等待 Worker 更新进度。') }}</p>
-      <a class="lf-button" href="{{ job.target_url }}">查看任务</a>
-    </article>
-    {% endfor %}
-  </div>
-  {% else %}
-  <div class="lf-empty-state"><strong>现在没有后台任务</strong><span>创建找客户任务后，搜索和验证进度会显示在这里。</span><a class="lf-button lf-button-primary" href="{% if view.has_product_knowledge %}/acquisition/missions/new{% else %}/acquisition/products{% endif %}">{% if view.has_product_knowledge %}创建找客户任务{% else %}先添加产品知识{% endif %}</a></div>
-  {% endif %}
-</section>
+{% include "app/_workbench_live.html" %}
 {% endcall %}

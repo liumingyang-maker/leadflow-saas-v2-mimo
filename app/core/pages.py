@@ -21,6 +21,15 @@ def register_page_routes(app: Flask) -> None:
             view=load_workbench(app, tenant_id=tenant_id),
         )
 
+    @app.get("/workbench/live")
+    @tenant_required(app)
+    def workbench_live():
+        tenant_id = session.get("tenant_id", "")
+        return render_template(
+            "app/_workbench_live.html",
+            view=load_workbench(app, tenant_id=tenant_id),
+        )
+
     @app.route("/onboarding", methods=["GET", "POST"])
     @tenant_required(app, allow_expired=True)
     def onboarding():
