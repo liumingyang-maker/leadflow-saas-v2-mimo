@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
 from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
 
@@ -123,7 +124,7 @@ def test_reconciler_marks_partial_success_and_dedupes_notification(
             AcquisitionCandidate(
                 tenant_id="t1",
                 mission_id=mission_id,
-                status="needs_evidence",
+                status="eligible",
                 dedupe_key="domain:partial.example",
             )
         )
@@ -147,6 +148,131 @@ def test_reconciler_marks_partial_success_and_dedupes_notification(
         assert json.loads(mission.retrospective_json)["partial_success"] is True
         notices = list(session.scalars(select(Notification)))
         assert len(notices) == 1
+
+
+def test_reconciler_failed_verification_marks_candidate_unusable(
+    acquisition_app, seed_acquisition_mission
+):
+    from app.extensions import get_engine
+    from app.modules.acquisition.jobs import reconcile_missions
+    from app.modules.acquisition.models import (
+        AcquisitionCandidate,
+        AcquisitionMission,
+        Notification,
+    )
+    from app.modules.jobs.models import Job
+
+    mission_id = seed_acquisition_mission()
+    candidate_id = "candidate-verifying"
+    with Session(get_engine(acquisition_app)) as session:
+        mission = session.get(AcquisitionMission, mission_id)
+        assert mission is not None
+        mission.status = "running"
+        session.add(
+            AcquisitionCandidate(
+                id=candidate_id,
+                tenant_id="t1",
+                mission_id=mission_id,
+                status="verifying",
+                dedupe_key="domain:failed-verification.example",
+            )
+        )
+        session.add(
+            Job(
+                tenant_id="t1",
+                job_type="website_verify",
+                status="failed",
+                error_code="source_unreachable",
+                payload_json=json.dumps({"candidate_id": candidate_id}),
+            )
+        )
+        session.commit()
+
+    assert reconcile_missions(acquisition_app, tenant_id="t1", now=datetime.now(UTC)) == 1
+
+    with Session(get_engine(acquisition_app)) as session:
+        candidate = session.get(AcquisitionCandidate, candidate_id)
+        mission = session.get(AcquisitionMission, mission_id)
+        notification = session.scalar(
+            select(Notification).where(Notification.tenant_id == "t1")
+        )
+        assert candidate is not None
+        assert candidate.status == "needs_evidence"
+        assert mission is not None
+        assert mission.status == "failed"
+        assert notification is not None
+        assert notification.kind == "mission_failed"
+        assert notification.body == "Mission 1: 0 usable candidates"
+
+
+@pytest.mark.parametrize(
+    ("candidate_status", "expected_candidate_status", "expected_mission_status", "usable_count"),
+    [
+        ("discovered", "needs_evidence", "failed", 0),
+        ("needs_evidence", "needs_evidence", "failed", 0),
+        ("rejected", "rejected", "failed", 0),
+        ("eligible", "eligible", "completed", 1),
+        ("accepted", "accepted", "completed", 1),
+        ("promoted", "promoted", "completed", 1),
+    ],
+)
+def test_reconciler_uses_only_actionable_candidates_after_failed_verification(
+    acquisition_app,
+    seed_acquisition_mission,
+    candidate_status,
+    expected_candidate_status,
+    expected_mission_status,
+    usable_count,
+):
+    from app.extensions import get_engine
+    from app.modules.acquisition.jobs import reconcile_missions
+    from app.modules.acquisition.models import (
+        AcquisitionCandidate,
+        AcquisitionMission,
+        Notification,
+    )
+    from app.modules.jobs.models import Job
+
+    mission_id = seed_acquisition_mission(suffix=candidate_status)
+    candidate_id = f"candidate-{candidate_status}"
+    with Session(get_engine(acquisition_app)) as session:
+        mission = session.get(AcquisitionMission, mission_id)
+        assert mission is not None
+        mission.status = "running"
+        session.add(
+            AcquisitionCandidate(
+                id=candidate_id,
+                tenant_id="t1",
+                mission_id=mission_id,
+                status=candidate_status,
+                dedupe_key=f"domain:{candidate_status}.example",
+            )
+        )
+        session.add(
+            Job(
+                tenant_id="t1",
+                job_type="website_verify",
+                status="failed",
+                error_code="source_unreachable",
+                payload_json=json.dumps({"candidate_id": candidate_id}),
+            )
+        )
+        session.commit()
+
+    assert reconcile_missions(acquisition_app, tenant_id="t1", now=datetime.now(UTC)) == 1
+
+    with Session(get_engine(acquisition_app)) as session:
+        candidate = session.get(AcquisitionCandidate, candidate_id)
+        mission = session.get(AcquisitionMission, mission_id)
+        notification = session.scalar(
+            select(Notification).where(Notification.tenant_id == "t1")
+        )
+        assert candidate is not None
+        assert candidate.status == expected_candidate_status
+        assert mission is not None
+        assert mission.status == expected_mission_status
+        assert notification is not None
+        assert notification.body.endswith(f": {usable_count} usable candidates")
 
 
 def test_required_job_payload_rejects_extra_fields():
@@ -505,6 +631,44 @@ def test_worker_does_not_retry_invalid_acquisition_payload(acquisition_app, monk
         assert job is not None
         assert job.status == "failed"
         assert job.error_code == "schema"
+
+
+def test_worker_error_logs_traceback_but_persists_safe_summary(acquisition_app, caplog):
+    from app.extensions import get_engine
+    from app.modules.jobs.models import Job
+    from app.modules.jobs.worker import _handle_worker_error
+
+    with Session(get_engine(acquisition_app)) as session:
+        job = Job(
+            tenant_id="t1",
+            job_type="website_verify",
+            status="running",
+            attempt=1,
+            max_attempts=1,
+        )
+        session.add(job)
+        session.commit()
+        job_id = job.id
+
+    caplog.set_level(logging.ERROR, logger="worker")
+    caught_exc = None
+    caught_traceback = None
+    try:
+        raise RuntimeError("private provider response")
+    except RuntimeError as exc:
+        caught_exc = exc
+        caught_traceback = exc.__traceback__
+        _handle_worker_error(acquisition_app, job_id, "t1", exc)
+
+    record = next(record for record in caplog.records if record.name == "worker")
+    assert record.exc_info == (RuntimeError, caught_exc, caught_traceback)
+    with Session(get_engine(acquisition_app)) as session:
+        job = session.get(Job, job_id)
+        assert job is not None
+        assert job.status == "failed"
+        assert job.error_code == "worker_error"
+        assert job.error_summary == "RuntimeError"
+        assert "private provider response" not in job.error_summary
 
 
 def test_due_retry_is_requeued_with_incremented_attempt(acquisition_app, monkeypatch):

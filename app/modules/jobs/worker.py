@@ -349,6 +349,7 @@ def _handle_worker_error(app: Any, job_id: str, tenant_id: str, exc: Exception) 
         attempt,
         max_attempts,
         safe_summary,
+        exc_info=(type(exc), exc, exc.__traceback__),
     )
 
 

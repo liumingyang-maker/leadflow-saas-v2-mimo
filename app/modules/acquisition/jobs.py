@@ -54,6 +54,7 @@ from app.modules.jobs.service import create_and_enqueue
 
 _ACTIVE_JOB_STATUSES = {"queued", "running", "retrying"}
 _TERMINAL_JOB_STATUSES = {"succeeded", "failed", "cancelled"}
+_USABLE_CANDIDATE_STATUSES = {"eligible", "accepted", "promoted"}
 _ACQUISITION_JOB_TYPES = {
     "acquisition_plan",
     "web_discovery",
@@ -642,12 +643,19 @@ def reconcile_missions(app, *, tenant_id: str | None = None, now: datetime) -> i
             if any(item.status not in _TERMINAL_JOB_STATUSES for item in mission_jobs):
                 continue
 
+            _reconcile_failed_verification_candidates(
+                session,
+                mission_jobs,
+                mission_id=mission.id,
+            )
             mission_candidates = [
                 item
                 for item in candidates
                 if item.tenant_id == mission.tenant_id and item.mission_id == mission.id
             ]
-            usable = [item for item in mission_candidates if item.status != "rejected"]
+            usable = [
+                item for item in mission_candidates if item.status in _USABLE_CANDIDATE_STATUSES
+            ]
             failed_count = sum(item.status in {"failed", "cancelled"} for item in mission_jobs)
             next_status = "completed" if usable else "failed"
             partial = bool(usable and failed_count)
@@ -689,6 +697,28 @@ def reconcile_missions(app, *, tenant_id: str | None = None, now: datetime) -> i
                 )
         session.commit()
     return changed
+
+
+def _reconcile_failed_verification_candidates(
+    session: Session,
+    jobs: list[Job],
+    *,
+    mission_id: str,
+) -> None:
+    candidates = CandidateRepository(session)
+    for job in jobs:
+        if job.job_type != "website_verify" or job.status != "failed":
+            continue
+        candidate_id = _json_object(job.payload_json).get("candidate_id")
+        if not isinstance(candidate_id, str):
+            continue
+        candidate = candidates.get(candidate_id, tenant_id=job.tenant_id)
+        if (
+            candidate is not None
+            and candidate.mission_id == mission_id
+            and candidate.status in {"discovered", "verifying"}
+        ):
+            candidate.status = "needs_evidence"
 
 
 def _job_belongs_to_mission(job: Job, mission_id: str, candidate_missions: dict[str, str]) -> bool:
