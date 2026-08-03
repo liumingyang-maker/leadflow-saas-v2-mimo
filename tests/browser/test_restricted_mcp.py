@@ -143,3 +143,14 @@ def test_facade_normalizes_screenshot_and_rejects_unknown_tool(
         "browser_take_screenshot",
         "browser_snapshot",
     ]
+
+
+def test_facade_does_not_forward_action_notifications(facade: JsonRpcProcess) -> None:
+    facade.notify("tools/call", {"name": "browser_close", "arguments": {}})
+
+    snapshot = facade.request("tools/call", {"name": "browser_snapshot", "arguments": {}})
+
+    snapshot_content = snapshot["result"]
+    assert isinstance(snapshot_content, dict)
+    forwarded = json.loads(snapshot_content["content"][0]["text"])["receivedCalls"]
+    assert forwarded == [{"name": "browser_snapshot", "arguments": {}}]

@@ -204,7 +204,7 @@ input.on('line', (line) => {
     return;
   }
   if (request.method === 'initialize') {
-    if (!isPlainObject(request.params)) {
+    if (request.id === undefined || !isPlainObject(request.params)) {
       error(request.id, -32602);
       return;
     }
@@ -228,6 +228,9 @@ input.on('line', (line) => {
     return;
   }
   if (request.method === 'tools/call') {
+    if (request.id === undefined) {
+      return;
+    }
     const validated = validateCall(request.params);
     if (validated === undefined) {
       error(request.id, -32601);
