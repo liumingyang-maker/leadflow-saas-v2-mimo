@@ -22,6 +22,7 @@ COPY app/integrations/browser/contracts.py ./app/integrations/browser/contracts.
 COPY app/integrations/browser/gateway.py ./app/integrations/browser/gateway.py
 COPY app/integrations/browser/mcp_client.py ./app/integrations/browser/mcp_client.py
 COPY app/integrations/browser/policy.py ./app/integrations/browser/policy.py
+COPY app/integrations/browser/restricted_playwright_mcp.cjs ./
 COPY app/integrations/browser/sanitizer.py ./app/integrations/browser/sanitizer.py
 COPY app/integrations/browser/worker.py ./app/integrations/browser/worker.py
 COPY app/integrations/web/sanitizer.py app/integrations/web/url_safety.py ./app/integrations/web/

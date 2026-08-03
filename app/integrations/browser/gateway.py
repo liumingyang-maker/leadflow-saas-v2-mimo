@@ -313,6 +313,9 @@ def build_mcp_command(
     """Build a fixed argv list; no plan or model field can append CLI flags."""
 
     return [
+        "node",
+        "./restricted_playwright_mcp.cjs",
+        "--",
         "./node_modules/.bin/playwright-mcp",
         "--headless",
         "--isolated",

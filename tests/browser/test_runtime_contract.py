@@ -36,6 +36,7 @@ def test_browser_images_are_minimal_and_sandboxed() -> None:
     assert "models.py" not in worker
     assert "repository.py" not in worker
     assert "service.py" not in worker
+    assert "COPY app/integrations/browser/restricted_playwright_mcp.cjs ./" in worker
     assert 'CMD ["python", "run_browser_worker.py", "browser"]' in worker
     assert "USER browserproxy" in egress
     assert 'CMD ["python", "run_browser_egress.py"]' in egress

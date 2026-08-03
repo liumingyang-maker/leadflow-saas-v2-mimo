@@ -190,3 +190,38 @@ def test_gateway_rejects_mcp_result_without_a_verifiable_final_url() -> None:
     ).execute(plan)
 
     assert result.error_code == "mcp_protocol_error"
+
+
+def test_gateway_starts_restricted_facade_with_only_fixed_upstream_argv() -> None:
+    from app.integrations.browser.gateway import build_mcp_command
+
+    command = build_mcp_command(
+        artifact_dir=Path("artifacts"),
+        max_artifact_bytes=1024,
+        allowed_origins=("https://example.com",),
+        proxy_url="http://browser-egress:8080",
+    )
+
+    assert command[:3] == ["node", "./restricted_playwright_mcp.cjs", "--"]
+    assert command[3] == "./node_modules/.bin/playwright-mcp"
+    assert command[4:] == [
+        "--headless",
+        "--isolated",
+        "--block-service-workers",
+        "--image-responses",
+        "omit",
+        "--output-mode",
+        "file",
+        "--output-dir",
+        "artifacts",
+        "--output-max-size",
+        "1024",
+        "--timeout-action",
+        "5000",
+        "--timeout-navigation",
+        "30000",
+        "--allowed-origins",
+        "https://example.com",
+        "--proxy-server",
+        "http://browser-egress:8080",
+    ]

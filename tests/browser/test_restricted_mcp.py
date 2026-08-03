@@ -34,9 +34,7 @@ class JsonRpcProcess:
         request_id = self._next_id
         self._next_id += 1
         self._process.stdin.write(
-            json.dumps(
-                {"jsonrpc": "2.0", "id": request_id, "method": method, "params": params}
-            )
+            json.dumps({"jsonrpc": "2.0", "id": request_id, "method": method, "params": params})
             + "\n"
         )
         self._process.stdin.flush()
