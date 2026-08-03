@@ -4,9 +4,11 @@
 > Phase 2 competitor-radar core only. It does not authorize implementation or production
 > deployment until the audit findings are resolved and the user approves the written spec.
 
-**Date:** 2026-08-03  
-**Repository baseline:** `9125cc7` on `feat/acquisition-global-quality-p0`  
-**Product mode:** single-operator internal deployment with retained tenant boundaries  
+**Date:** 2026-08-03
+
+**Repository baseline:** `9125cc7` on `feat/acquisition-global-quality-p0`
+
+**Product mode:** single-operator internal deployment with retained tenant boundaries
 **Author review roles:** software engineer, product designer, security/release reviewer
 
 ---
