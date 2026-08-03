@@ -39,5 +39,7 @@ try {
     exit 2
 }
 finally {
-    docker compose down --remove-orphans | Out-Host
+    # Do not tear down the shared application Compose stack: this smoke owns only
+    # the three Browser-isolation services that it started above.
+    docker compose stop browser-worker browser-egress browser-redis | Out-Host
 }

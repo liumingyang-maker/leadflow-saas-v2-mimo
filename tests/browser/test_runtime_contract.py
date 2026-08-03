@@ -17,6 +17,7 @@ def test_browser_compose_contract_is_isolated() -> None:
     assert "BROWSER_REDIS_URL=redis://browser-redis:6379/0" in compose
     assert "HTTPS_PROXY=http://browser-egress:8080" in compose
     assert "browser-redis:\n    image: redis:7.4.2-alpine\n    ports:" not in compose
+    assert 'browser-redis:\n    image: redis:7.4.2-alpine\n    user: "999:1000"' in compose
     browser_worker_with_port = (
         "browser-worker:\n    build:\n      context: .\n"
         "      dockerfile: Dockerfile.browser\n    ports:"
