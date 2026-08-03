@@ -1,0 +1,25 @@
+{
+  "version": "acquisition-global-quality-v1",
+  "cases": [
+    {
+      "id": "mx-official-address",
+      "scenario": "Mexico ccTLD plus official address",
+      "source": "pages/mx_official.html",
+      "target_country_code": "MX",
+      "legacy_output": {
+        "hq_country_code": "",
+        "opportunity_country_code": "",
+        "country_resolution_status": "unknown",
+        "contact_kinds": [],
+        "entity_kind": "unknown"
+      },
+      "expected": {
+        "hq_country_code": "MX",
+        "opportunity_country_code": "MX",
+        "country_resolution_status": "confirmed",
+        "contact_kinds": ["email"],
+        "entity_kind": "buyer_or_distributor"
+      }
+    }
+  ]
+}
