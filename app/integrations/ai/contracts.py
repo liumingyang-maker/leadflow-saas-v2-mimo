@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Annotated, Protocol
 
-from pydantic import BaseModel, ConfigDict, Field, HttpUrl
+from pydantic import BaseModel, ConfigDict, Field, HttpUrl, field_validator
 
 if TYPE_CHECKING:
     from app.integrations.web.fetcher import FetchResult
@@ -48,6 +48,13 @@ class CompetitorEvidenceProposal(BaseModel):
     source_url: HttpUrl
     excerpt: str = Field(min_length=1, max_length=1000)
 
+    @field_validator("source_url")
+    @classmethod
+    def source_url_is_storable(cls, value: HttpUrl) -> HttpUrl:
+        if len(str(value)) > 1000:
+            raise ValueError("source_url must not exceed 1000 characters")
+        return value
+
 
 class CompetitorSuggestionProposal(BaseModel):
     model_config = ConfigDict(extra="forbid")
@@ -59,6 +66,13 @@ class CompetitorSuggestionProposal(BaseModel):
         max_length=10,
     )
     evidence: list[CompetitorEvidenceProposal] = Field(min_length=1, max_length=2)
+
+    @field_validator("official_url")
+    @classmethod
+    def official_url_is_storable(cls, value: HttpUrl) -> HttpUrl:
+        if len(str(value)) > 1000:
+            raise ValueError("official_url must not exceed 1000 characters")
+        return value
 
 
 class CompetitorSuggestionResults(BaseModel):

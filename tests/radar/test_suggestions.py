@@ -76,6 +76,22 @@ def test_competitor_contract_rejects_confidence_and_uncited_proposals() -> None:
     with pytest.raises(ValidationError):
         CompetitorSuggestionResults.model_validate(payload)
 
+
+def test_competitor_contract_bounds_all_persisted_urls() -> None:
+    from app.integrations.ai.contracts import CompetitorSuggestionResults
+
+    payload = _valid_payload()
+    payload["suggestions"][0]["official_url"] = "https://rival.example/" + ("a" * 1000)
+    with pytest.raises(ValidationError):
+        CompetitorSuggestionResults.model_validate(payload)
+
+    payload = _valid_payload()
+    payload["suggestions"][0]["evidence"][0]["source_url"] = "https://source.example/" + (
+        "a" * 1000
+    )
+    with pytest.raises(ValidationError):
+        CompetitorSuggestionResults.model_validate(payload)
+
     payload = _valid_payload()
     payload["suggestions"][0]["evidence"] = []
     with pytest.raises(ValidationError):
