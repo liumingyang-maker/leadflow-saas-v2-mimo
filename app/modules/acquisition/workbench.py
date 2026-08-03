@@ -292,7 +292,10 @@ def list_notifications(app, *, tenant_id: str, limit: int = 100) -> tuple[Notifi
         rows = list(
             db_session.scalars(
                 select(Notification)
-                .where(Notification.tenant_id == tenant_id)
+                .where(
+                    Notification.tenant_id == tenant_id,
+                    Notification.status != "archived",
+                )
                 .order_by(Notification.created_at.desc())
                 .limit(bounded_limit)
             )

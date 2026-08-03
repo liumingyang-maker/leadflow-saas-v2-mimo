@@ -842,6 +842,37 @@ def test_mark_all_notifications_read_and_sanitize_stored_targets(acquisition_app
     )
 
 
+def test_list_notifications_excludes_archived_notifications(acquisition_app) -> None:
+    from app.extensions import get_engine
+    from app.modules.acquisition.models import Notification
+    from app.modules.acquisition.workbench import list_notifications, notify_once
+
+    visible = notify_once(
+        acquisition_app,
+        tenant_id="t1",
+        kind="mission_failed",
+        dedupe_key="mission:m1:failed",
+        title="Mission needs review",
+        target_url="/workbench",
+    )
+    with Session(get_engine(acquisition_app)) as db_session:
+        db_session.add(
+            Notification(
+                tenant_id="t1",
+                kind="mission_completed",
+                title="Stale mission completion",
+                target_url="/workbench",
+                dedupe_key="mission:m1:completed",
+                status="archived",
+            )
+        )
+        db_session.commit()
+
+    notifications = list_notifications(acquisition_app, tenant_id="t1")
+
+    assert [item.id for item in notifications] == [visible.id]
+
+
 def test_workbench_route_renders_real_counts(
     acquisition_app, logged_in_client, seed_acquisition_mission
 ) -> None:
