@@ -60,7 +60,7 @@ class BaseConfig:
     ACQUISITION_MAX_VERIFY: ClassVar[int] = 10
     ACQUISITION_MAX_SEARCH_ACTIONS: ClassVar[int] = 5
     FETCH_MAX_PAGES_PER_SITE: ClassVar[int] = 5
-    FETCH_MAX_BYTES: ClassVar[int] = 200 * 1024
+    FETCH_MAX_BYTES: ClassVar[int] = 1024 * 1024
     FETCH_TIMEOUT_SECONDS: ClassVar[int] = 10
 
 

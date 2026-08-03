@@ -76,6 +76,16 @@ def test_sanitizer_removes_scripts_hidden_text_and_instructions():
     assert snapshot.detected_prompt_injection is False
 
 
+def test_sanitizer_skips_descendants_detached_with_hidden_parent():
+    from app.integrations.web.sanitizer import sanitize_html
+
+    snapshot = sanitize_html(
+        '<div hidden><span style="display:none">discard</span></div><p>Visible distributor</p>'
+    )
+
+    assert snapshot.text == "Visible distributor"
+
+
 def test_visible_prompt_injection_is_flagged():
     from app.integrations.web.sanitizer import sanitize_html
 
@@ -143,6 +153,26 @@ def test_fetcher_stops_when_decoded_body_exceeds_limit():
     )
     with pytest.raises(FetchError, match="response_too_large"):
         fetcher.fetch("https://example.com")
+
+
+def test_fetcher_default_accepts_modern_page_below_one_mebibyte():
+    from app.integrations.web.fetcher import StaticFetcher
+
+    body = b"<p>dealer</p>" + (b" " * (256 * 1024))
+    fetcher = StaticFetcher(
+        transport=httpx.MockTransport(
+            lambda _request: httpx.Response(
+                200,
+                headers={"content-type": "text/html"},
+                content=body,
+            )
+        ),
+        resolver=lambda _host: ["93.184.216.34"],
+    )
+
+    result = fetcher.fetch("https://example.com")
+
+    assert "dealer" in result.text
 
 
 def test_fetcher_returns_only_sanitized_snapshot_metadata():

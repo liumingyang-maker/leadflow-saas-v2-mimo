@@ -21,6 +21,7 @@ from app.integrations.web.url_safety import (
 
 _ALLOWED_CONTENT_TYPES = {"text/html", "text/plain", "application/xhtml+xml"}
 _REDIRECT_STATUSES = {301, 302, 303, 307, 308}
+DEFAULT_FETCH_MAX_BYTES = 1024 * 1024
 
 
 class FetchError(RuntimeError):
@@ -50,7 +51,7 @@ class StaticFetcher:
         *,
         transport: httpx.BaseTransport | None = None,
         resolver: Resolver = system_resolver,
-        max_bytes: int = 200 * 1024,
+        max_bytes: int = DEFAULT_FETCH_MAX_BYTES,
         timeout_seconds: float = 10.0,
         max_redirects: int = 5,
         now: Callable[[], datetime] | None = None,
@@ -89,7 +90,7 @@ class StaticFetcher:
     @classmethod
     def from_app(cls, app) -> StaticFetcher:
         return cls(
-            max_bytes=int(app.config.get("FETCH_MAX_BYTES", 200 * 1024)),
+            max_bytes=int(app.config.get("FETCH_MAX_BYTES", DEFAULT_FETCH_MAX_BYTES)),
             timeout_seconds=float(app.config.get("FETCH_TIMEOUT_SECONDS", 10)),
         )
 

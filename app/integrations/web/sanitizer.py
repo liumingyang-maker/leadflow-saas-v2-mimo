@@ -85,6 +85,8 @@ def _sanitize_with_beautiful_soup(html: str) -> SanitizedSnapshot:
     for node in soup.find_all(_REMOVED_TAGS):
         node.decompose()
     for node in soup.find_all(True):
+        if node.attrs is None:
+            continue
         style = re.sub(r"\s+", "", str(node.get("style", "")).lower())
         if (
             node.has_attr("hidden")
