@@ -150,6 +150,19 @@ class MiMoProvider:
         )
         try:
             return schema.model_validate_json(output_text)
+        except (ValidationError, ValueError, TypeError) as exc:
+            repair_instructions = (
+                f"{instructions}\n"
+                "The previous response did not match the required JSON schema at: "
+                f"{_safe_validation_paths(exc)}. Return only a corrected JSON object."
+            )
+        repaired_output = self._request_with_retry(
+            instructions=repair_instructions,
+            input_text=input_text,
+            web_search=web_search,
+        )
+        try:
+            return schema.model_validate_json(repaired_output)
         except (ValidationError, ValueError, TypeError):
             raise ProviderResponseError() from None
 
@@ -239,6 +252,18 @@ class MiMoProvider:
 
 def _load_prompt(name: str) -> str:
     return (_PROMPT_DIR / name).read_text(encoding="utf-8")
+
+
+def _safe_validation_paths(exc: Exception) -> str:
+    if not isinstance(exc, ValidationError):
+        return "root"
+    paths = sorted(
+        {
+            ".".join(str(part) for part in item["loc"]) or "root"
+            for item in exc.errors(include_url=False, include_context=False, include_input=False)
+        }
+    )
+    return ", ".join(paths[:10]) or "root"
 
 
 def _map_provider_error(exc: Exception, *, web_search: bool) -> ProviderError:

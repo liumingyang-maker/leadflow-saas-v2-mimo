@@ -100,6 +100,73 @@ def test_mimo_extracts_only_validated_company_facts():
     assert str(result.observed_claims[0].source_url) == "https://motores.mx/products"
 
 
+def test_invalid_structured_output_gets_one_schema_repair_attempt():
+    from app.integrations.ai.mimo import MiMoProvider
+
+    outputs = iter(
+        [
+            '{"company_name":"Motozoon"}',
+            (
+                '{"company_name":"Motozoon","canonical_domain":"motozoon.mx",'
+                '"hq_country_code":"MX","opportunity_country_code":"MX",'
+                '"buyer_type":"distributor","product_terms":["motorcycle parts"],'
+                '"contact_paths":[],"observed_claims":[],"inferences":[],"unknowns":[]}'
+            ),
+        ]
+    )
+    calls: list[dict] = []
+
+    def create(**kwargs):
+        calls.append(kwargs)
+        return SimpleNamespace(output_text=next(outputs))
+
+    provider = MiMoProvider(
+        client=SimpleNamespace(responses=SimpleNamespace(create=create)),
+        model="mimo-v2.5",
+    )
+    snapshot = SimpleNamespace(
+        final_url="https://motozoon.mx/",
+        title="Motozoon",
+        text="wholesale motorcycle parts",
+    )
+
+    result = provider.extract(snapshot)
+
+    assert result.company_name == "Motozoon"
+    assert len(calls) == 2
+    assert "previous response" in calls[1]["instructions"].lower()
+    assert "canonical_domain" in calls[1]["instructions"]
+
+
+def test_second_invalid_structured_output_fails_safely():
+    from app.integrations.ai.mimo import MiMoProvider, ProviderResponseError
+
+    raw_sentinel = "raw-provider-secret-sentinel"
+    calls: list[dict] = []
+
+    def create(**kwargs):
+        calls.append(kwargs)
+        return SimpleNamespace(output_text=f'{{"company_name":"{raw_sentinel}"}}')
+
+    provider = MiMoProvider(
+        client=SimpleNamespace(responses=SimpleNamespace(create=create)),
+        model="mimo-v2.5",
+    )
+    snapshot = SimpleNamespace(
+        final_url="https://motozoon.mx/",
+        title="Motozoon",
+        text="wholesale motorcycle parts",
+    )
+
+    with pytest.raises(ProviderResponseError) as caught:
+        provider.extract(snapshot)
+
+    assert caught.value.code == "invalid_response"
+    assert len(calls) == 2
+    assert raw_sentinel not in str(caught.value)
+    assert raw_sentinel not in calls[1]["instructions"]
+
+
 def test_mimo_rejects_observed_claim_citing_an_unsupplied_url():
     from app.integrations.ai.mimo import MiMoProvider, ProviderResponseError
 
