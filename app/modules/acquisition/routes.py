@@ -20,6 +20,7 @@ from app.modules.acquisition.contracts import (
     MissionCreateInput,
 )
 from app.modules.acquisition.manual_evidence import ManualEvidenceError
+from app.modules.acquisition.mission_results import resolve_mission_result
 from app.modules.acquisition.models import AcquisitionCandidate
 from app.modules.acquisition.repository import (
     AssessmentRepository,
@@ -84,6 +85,18 @@ REJECTION_REASONS = (
     ("duplicate", "重复客户"),
     ("other", "其他"),
 )
+
+TERMINAL_MISSION_STATUSES = frozenset({"completed", "failed", "cancelled"})
+BUSINESS_RESULT_REASON_LABELS = {
+    "planning_failed": "研究计划生成失败",
+    "search_failed": "部分市场搜索失败",
+    "verification_failed": "部分官网验证失败",
+    "ai_analysis_failed": "部分候选分析失败",
+    "execution_failed": "部分执行步骤失败",
+    "legacy_failed_with_results": "旧任务虽标记失败，但已保留可用结果",
+    "completed_without_candidates": "搜索已完成，但没有发现候选客户",
+    "all_candidates_excluded": "发现的候选均已排除",
+}
 
 
 def register_acquisition_routes(app: Flask) -> None:
@@ -371,7 +384,16 @@ def register_acquisition_routes(app: Flask) -> None:
             mission = MissionRepository(db_session).get(mission_id, tenant_id=tenant_id)
             if mission is None:
                 abort(404)
-        return render_template("acquisition/_mission_status.html", mission=mission)
+            business_result = (
+                resolve_mission_result(db_session, mission, tenant_id=tenant_id)
+                if mission.status in TERMINAL_MISSION_STATUSES
+                else None
+            )
+        return render_template(
+            "acquisition/_mission_status.html",
+            mission=mission,
+            business_result=business_result,
+        )
 
     @app.get("/acquisition/candidates/<candidate_id>")
     @tenant_required(app)
@@ -681,6 +703,24 @@ def _render_mission(
         manual_url_available = mission.status != "cancelled" and _manual_url_policy_allows(
             channel_policy
         )
+        business_result = (
+            resolve_mission_result(
+                db_session,
+                mission,
+                tenant_id=tenant_id,
+                candidates=candidates,
+            )
+            if mission.status in TERMINAL_MISSION_STATUSES
+            else None
+        )
+        business_result_reasons = (
+            tuple(
+                BUSINESS_RESULT_REASON_LABELS.get(code, "部分执行步骤未完成")
+                for code in business_result.reason_codes
+            )
+            if business_result is not None
+            else ()
+        )
     return (
         render_template(
             "acquisition/mission_detail.html",
@@ -694,6 +734,8 @@ def _render_mission(
             manual_url_form=manual_url_form or _empty_manual_url_form(),
             manual_mode_open=manual_mode_open,
             manual_url_available=manual_url_available,
+            business_result=business_result,
+            business_result_reasons=business_result_reasons,
         ),
         status_code,
     )

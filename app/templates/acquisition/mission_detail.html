@@ -19,6 +19,20 @@
 
 {% if error %}<div class="lf-alert" role="alert"><strong>操作未执行</strong><span>{{ error }}</span></div>{% endif %}
 
+{% if business_result %}
+<section class="lf-panel lf-section" aria-labelledby="mission-result-title">
+  <div class="lf-status-row">
+    <h2 id="mission-result-title">任务结果</h2>
+    <span class="lf-badge lf-badge-{{ business_result.tone }}">{{ business_result.label }}</span>
+  </div>
+  <p>{{ business_result.summary }}</p>
+  {% if business_result_reasons %}
+  <ul>{% for reason in business_result_reasons %}<li>{{ reason }}</li>{% endfor %}</ul>
+  {% endif %}
+  <p><strong>下一步：</strong>{{ business_result.action_label }}</p>
+</section>
+{% endif %}
+
 {% if bulk_confirmation %}
 <section class="lf-panel lf-confirm-panel lf-section" aria-labelledby="bulk-confirm-title">
   <h2 id="bulk-confirm-title">确认加入 CRM</h2>

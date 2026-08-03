@@ -1,6 +1,11 @@
+{% set execution_label = {'draft':'待确认','queued':'排队中','running':'搜索中','paused':'已暂停','completed':'已完成','failed':'失败','cancelled':'已取消'}.get(mission.status, mission.status) %}
 <div class="lf-status-row" id="mission-status" aria-live="polite">
-  <span class="lf-badge{% if mission.status in ['completed', 'running'] %} lf-badge-success{% endif %}">
-    {{ {'draft':'待确认','queued':'排队中','running':'搜索中','paused':'已暂停','completed':'已完成','failed':'失败','cancelled':'已取消'}.get(mission.status, mission.status) }}
-  </span>
+  {% if business_result %}
+  <span class="lf-badge lf-badge-{{ business_result.tone }}">{{ business_result.label }}</span>
+  <span class="lf-muted">执行状态：{{ execution_label }}</span>
+  <span class="lf-muted">{{ business_result.summary }}</span>
+  {% else %}
+  <span class="lf-badge{% if mission.status == 'running' %} lf-badge-success{% endif %}">{{ execution_label }}</span>
+  {% endif %}
   <span class="lf-muted">最后更新 {{ mission.updated_at.strftime('%Y-%m-%d %H:%M') }}</span>
 </div>

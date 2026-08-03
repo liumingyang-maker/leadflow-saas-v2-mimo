@@ -336,6 +336,157 @@ def test_tenant_cannot_view_other_candidate(
     assert response.status_code == 404
 
 
+def test_failed_mission_routes_show_partial_business_result(
+    acquisition_app, logged_in_client, seed_acquisition_mission
+) -> None:
+    from app.extensions import get_engine
+    from app.modules.acquisition.models import (
+        AcquisitionMission,
+        CandidateEvidence,
+    )
+    from app.modules.jobs.models import Job
+
+    client, tenant_id = logged_in_client
+    mission = _seed_mission(
+        acquisition_app,
+        tenant_id=tenant_id,
+        actor_id=_actor_id(client),
+    )
+    candidate = _seed_candidate(
+        acquisition_app,
+        tenant_id=tenant_id,
+        mission_id=mission.id,
+        suffix="route-partial",
+        status="needs_evidence",
+        country_status="unknown",
+    )
+    with Session(get_engine(acquisition_app)) as db_session:
+        stored = db_session.get(AcquisitionMission, mission.id)
+        assert stored is not None
+        stored.status = "failed"
+        db_session.add_all(
+            [
+                CandidateEvidence(
+                    tenant_id=tenant_id,
+                    candidate_id=candidate.id,
+                    source_url="https://route-partial.example/about",
+                    canonical_url="https://route-partial.example/about",
+                    content_hash="e" * 64,
+                ),
+                Job(
+                    tenant_id=tenant_id,
+                    job_type="website_verify",
+                    status="failed",
+                    error_code="source_unreachable",
+                    payload_json=json.dumps({"candidate_id": candidate.id}),
+                ),
+            ]
+        )
+        db_session.commit()
+
+    detail = client.get(f"/acquisition/missions/{mission.id}")
+    fragment = client.get(f"/acquisition/missions/{mission.id}/status")
+
+    assert detail.status_code == 200
+    assert fragment.status_code == 200
+    for html in (detail.get_data(as_text=True), fragment.get_data(as_text=True)):
+        assert "部分完成" in html
+        assert "执行状态：失败" in html
+        assert "待补证 1" in html
+        assert "执行失败" not in html.split("执行状态：失败", 1)[0]
+
+    private_id = seed_acquisition_mission(tenant_id="other-tenant", suffix="result-private")
+    assert client.get(f"/acquisition/missions/{private_id}").status_code == 404
+    assert client.get(f"/acquisition/missions/{private_id}/status").status_code == 404
+
+
+@pytest.mark.parametrize(
+    ("case", "expected_code", "expected_kind", "expected_label", "expected_tone"),
+    [
+        ("partial", "partial", "mission_partial", "部分完成", "warning"),
+        ("no-results", "no_results", "mission_completed", "未找到结果", "neutral"),
+        ("failed", "failed", "mission_failed", "执行失败", "danger"),
+    ],
+)
+def test_terminal_routes_match_retrospective_and_notification_result(
+    acquisition_app,
+    logged_in_client,
+    case: str,
+    expected_code: str,
+    expected_kind: str,
+    expected_label: str,
+    expected_tone: str,
+) -> None:
+    from app.extensions import get_engine
+    from app.modules.acquisition.jobs import reconcile_missions
+    from app.modules.acquisition.models import AcquisitionMission, Notification
+    from app.modules.jobs.models import Job
+
+    client, tenant_id = logged_in_client
+    mission = _seed_mission(
+        acquisition_app,
+        tenant_id=tenant_id,
+        actor_id=_actor_id(client),
+    )
+    with Session(get_engine(acquisition_app)) as db_session:
+        stored = db_session.get(AcquisitionMission, mission.id)
+        assert stored is not None
+        stored.status = "running"
+        if case == "partial":
+            candidate = _seed_candidate(
+                acquisition_app,
+                tenant_id=tenant_id,
+                mission_id=mission.id,
+                suffix="route-consistency-partial",
+                status="needs_evidence",
+                country_status="unknown",
+            )
+            job = Job(
+                tenant_id=tenant_id,
+                job_type="website_verify",
+                status="failed",
+                error_code="source_unreachable",
+                payload_json=json.dumps({"candidate_id": candidate.id}),
+            )
+        else:
+            job = Job(
+                tenant_id=tenant_id,
+                job_type="acquisition_plan",
+                status="succeeded" if case == "no-results" else "failed",
+                error_code="" if case == "no-results" else "provider_unavailable",
+                payload_json=json.dumps({"mission_id": mission.id}),
+            )
+        db_session.add(job)
+        db_session.commit()
+
+    assert reconcile_missions(acquisition_app, tenant_id=tenant_id, now=datetime.now(UTC)) == 1
+
+    with Session(get_engine(acquisition_app)) as db_session:
+        stored = db_session.get(AcquisitionMission, mission.id)
+        notification = db_session.scalar(
+            select(Notification).where(
+                Notification.tenant_id == tenant_id,
+                Notification.target_url == f"/acquisition/missions/{mission.id}",
+            )
+        )
+        assert stored is not None
+        retrospective = json.loads(stored.retrospective_json)
+        assert notification is not None
+
+    detail = client.get(f"/acquisition/missions/{mission.id}")
+    fragment = client.get(f"/acquisition/missions/{mission.id}/status")
+
+    assert retrospective["business_result"]["code"] == expected_code
+    assert notification.kind == expected_kind
+    assert notification.title == f"找客户任务{expected_label}"
+    for response in (detail, fragment):
+        assert response.status_code == 200
+        html = response.get_data(as_text=True)
+        assert expected_label in html
+        assert f"lf-badge-{expected_tone}" in html
+        assert retrospective["business_result"]["summary"] in html
+
+
 def test_candidate_detail_uses_progressive_disclosure(acquisition_app, logged_in_client) -> None:
     client, tenant_id = logged_in_client
     mission = _seed_mission(acquisition_app, tenant_id=tenant_id, actor_id=_actor_id(client))
