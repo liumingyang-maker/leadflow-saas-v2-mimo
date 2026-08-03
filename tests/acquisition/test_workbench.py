@@ -131,7 +131,7 @@ def test_needs_evidence_resolves_verification_failure_and_becomes_next_action(
     acquisition_app, seed_acquisition_mission
 ) -> None:
     from app.extensions import get_engine
-    from app.modules.acquisition.models import AcquisitionCandidate
+    from app.modules.acquisition.models import AcquisitionCandidate, AcquisitionMission
     from app.modules.acquisition.workbench import load_workbench
     from app.modules.jobs.models import Job
 
@@ -139,6 +139,12 @@ def test_needs_evidence_resolves_verification_failure_and_becomes_next_action(
     newer_mission = seed_acquisition_mission(tenant_id="t1", suffix="needs-newer")
     now = datetime.now(UTC)
     with Session(get_engine(acquisition_app)) as db_session:
+        stored_oldest = db_session.get(AcquisitionMission, oldest_mission)
+        stored_newer = db_session.get(AcquisitionMission, newer_mission)
+        assert stored_oldest is not None
+        assert stored_newer is not None
+        stored_oldest.created_at = now - timedelta(days=2)
+        stored_newer.created_at = now - timedelta(days=1)
         resolved_candidate = AcquisitionCandidate(
             tenant_id="t1",
             mission_id=oldest_mission,
