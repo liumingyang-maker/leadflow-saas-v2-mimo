@@ -3,6 +3,7 @@ from __future__ import annotations
 from datetime import UTC, datetime
 
 from flask import Flask
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.core.capabilities import Capability, require_capability
@@ -112,7 +113,7 @@ def request_competitor_suggestions(
                 tenant_id=tenant_id,
             )
             if existing is None:
-                existing = RadarCompetitorSuggestion(
+                created = RadarCompetitorSuggestion(
                     tenant_id=tenant_id,
                     mission_id=mission_id,
                     company_name=item.company_name,
@@ -122,10 +123,23 @@ def request_competitor_suggestions(
                     evidence_json=item.evidence_json,
                     evidence_hash=item.evidence_hash,
                 )
-                suggestions.add(existing, tenant_id=tenant_id)
-                session.flush()
-                persisted_ids.append(existing.id)
-                continue
+                try:
+                    with session.begin_nested():
+                        suggestions.add(created, tenant_id=tenant_id)
+                        session.flush()
+                except IntegrityError:
+                    existing = suggestions.get_by_mission_domain(
+                        mission_id,
+                        item.canonical_domain,
+                        tenant_id=tenant_id,
+                    )
+                    if existing is None:
+                        raise RadarServiceError(
+                            "Competitor suggestion could not be stored"
+                        ) from None
+                else:
+                    persisted_ids.append(created.id)
+                    continue
             if existing.status == "dismissed" and existing.evidence_hash != item.evidence_hash:
                 existing.company_name = item.company_name
                 existing.official_url = item.official_url
@@ -169,15 +183,25 @@ def decide_competitor_suggestion(
         suggestion = suggestions.get(suggestion_id, tenant_id=tenant_id)
         if suggestion is None:
             raise RadarNotFoundError("Competitor suggestion was not found")
-        _load_mission_context(session, tenant_id=tenant_id, mission_id=suggestion.mission_id)
         profiles = CompetitorProfileRepository(session)
-        now = datetime.now(UTC)
+        profile = profiles.get_by_mission_domain(
+            suggestion.mission_id,
+            suggestion.canonical_domain,
+            tenant_id=tenant_id,
+        )
 
         if action == "dismiss":
             if suggestion.status == "approved":
                 raise RadarServiceError("Approved suggestions cannot be dismissed")
             if suggestion.status == "dismissed":
                 return None
+        elif suggestion.status == "approved" and profile is not None:
+            return profile
+
+        _load_mission_context(session, tenant_id=tenant_id, mission_id=suggestion.mission_id)
+        now = datetime.now(UTC)
+
+        if action == "dismiss":
             suggestion.status = "dismissed"
             suggestion.decided_by = actor_id
             suggestion.decided_at = now
@@ -195,17 +219,12 @@ def decide_competitor_suggestion(
 
         if suggestion.status == "dismissed":
             raise RadarServiceError("Dismissed suggestions require new cited evidence")
-        profile = profiles.get_by_mission_domain(
-            suggestion.mission_id,
-            suggestion.canonical_domain,
-            tenant_id=tenant_id,
-        )
         changed = suggestion.status != "approved" or profile is None
         if profile is None:
             mission = MissionRepository(session).get(suggestion.mission_id, tenant_id=tenant_id)
             if mission is None:
                 raise RadarNotFoundError("Mission was not found")
-            profile = CompetitorProfile(
+            created = CompetitorProfile(
                 tenant_id=tenant_id,
                 mission_id=suggestion.mission_id,
                 product_snapshot_id=mission.product_snapshot_id,
@@ -219,7 +238,20 @@ def decide_competitor_suggestion(
                 approved_by=actor_id,
                 approved_at=now,
             )
-            profiles.add(profile, tenant_id=tenant_id)
+            try:
+                with session.begin_nested():
+                    profiles.add(created, tenant_id=tenant_id)
+                    session.flush()
+            except IntegrityError:
+                profile = profiles.get_by_mission_domain(
+                    suggestion.mission_id,
+                    suggestion.canonical_domain,
+                    tenant_id=tenant_id,
+                )
+                if profile is None:
+                    raise RadarServiceError("Competitor profile could not be approved") from None
+            else:
+                profile = created
         suggestion.status = "approved"
         suggestion.decided_by = actor_id
         suggestion.decided_at = now

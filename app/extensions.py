@@ -112,13 +112,13 @@ def _busy_timeout_from_app(app: Flask | None) -> int:
     return value
 
 
+import app.integrations.browser.models  # noqa: E402,F401
 import app.modules.accounts.models  # noqa: E402,F401
 import app.modules.accounts.payment_models  # noqa: E402,F401
 import app.modules.acquisition.models  # noqa: E402,F401
 import app.modules.audit.models  # noqa: E402,F401
-import app.integrations.browser.models  # noqa: E402,F401
-import app.modules.radar.models  # noqa: E402,F401
 import app.modules.inbound.models  # noqa: E402,F401
 import app.modules.jobs.models  # noqa: E402,F401
 import app.modules.leads.models  # noqa: E402,F401
 import app.modules.outreach.models  # noqa: E402,F401
+import app.modules.radar.models  # noqa: E402,F401

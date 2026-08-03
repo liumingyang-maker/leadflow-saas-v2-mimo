@@ -55,6 +55,14 @@ class CompetitorEvidenceProposal(BaseModel):
             raise ValueError("source_url must not exceed 1000 characters")
         return value
 
+    @field_validator("excerpt")
+    @classmethod
+    def excerpt_is_meaningful(cls, value: str) -> str:
+        clean = " ".join(value.split())
+        if not clean:
+            raise ValueError("excerpt must contain non-whitespace text")
+        return clean
+
 
 class CompetitorSuggestionProposal(BaseModel):
     model_config = ConfigDict(extra="forbid")
@@ -73,6 +81,22 @@ class CompetitorSuggestionProposal(BaseModel):
         if len(str(value)) > 1000:
             raise ValueError("official_url must not exceed 1000 characters")
         return value
+
+    @field_validator("company_name")
+    @classmethod
+    def company_name_is_meaningful(cls, value: str) -> str:
+        clean = " ".join(value.split())
+        if not clean:
+            raise ValueError("company_name must contain non-whitespace text")
+        return clean
+
+    @field_validator("reason_codes")
+    @classmethod
+    def reason_codes_are_meaningful(cls, value: list[str]) -> list[str]:
+        normalized = [" ".join(item.split()) for item in value]
+        if not all(normalized):
+            raise ValueError("reason_codes must contain non-whitespace text")
+        return normalized
 
 
 class CompetitorSuggestionResults(BaseModel):
