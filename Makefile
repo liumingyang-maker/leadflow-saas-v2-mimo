@@ -6,7 +6,7 @@ lint:
 	$(PYTHON) -m ruff check .
 
 format-check:
-	$(PYTHON) -m ruff format --check .
+	$(PYTHON) -m ruff format --check app tests run_worker.py
 
 test:
 	$(PYTHON) -m pytest
