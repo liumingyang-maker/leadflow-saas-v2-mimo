@@ -105,3 +105,91 @@ class CompetitorProfile(Base):
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=_now, onupdate=_now, nullable=False
     )
+
+
+class RadarRun(Base):
+    """One explicitly requested, manually initiated Radar scan."""
+
+    __tablename__ = "radar_runs"
+    __table_args__ = (
+        CheckConstraint(
+            "status in ('queued','running','succeeded','partial','failed','cancelled')",
+            name="radar_run_status",
+        ),
+        CheckConstraint("length(budget_json) <= 5000", name="radar_run_budget_size"),
+        CheckConstraint("length(result_summary_json) <= 20000", name="radar_run_summary_size"),
+    )
+
+    id: Mapped[str] = mapped_column(String(64), primary_key=True, default=_id)
+    tenant_id: Mapped[str] = mapped_column(String(36), nullable=False, index=True)
+    profile_id: Mapped[str] = mapped_column(
+        ForeignKey("competitor_profiles.id"), nullable=False, index=True
+    )
+    root_job_id: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
+    requested_by: Mapped[str] = mapped_column(String(36), nullable=False)
+    status: Mapped[str] = mapped_column(String(24), default="queued", nullable=False, index=True)
+    stage: Mapped[str] = mapped_column(String(80), default="queued", nullable=False)
+    budget_json: Mapped[str] = mapped_column(Text, nullable=False)
+    result_summary_json: Mapped[str] = mapped_column(Text, default="{}", nullable=False)
+    parser_version: Mapped[str] = mapped_column(
+        String(40), default="radar-static-v1", nullable=False
+    )
+    diff_version: Mapped[str] = mapped_column(String(40), default="", nullable=False)
+    classifier_version: Mapped[str] = mapped_column(String(40), default="", nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=_now, nullable=False
+    )
+    started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    heartbeat_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+
+class RadarSnapshot(Base):
+    """Immutable, sanitized structured observation from a Radar Run."""
+
+    __tablename__ = "radar_snapshots"
+    __table_args__ = (
+        UniqueConstraint(
+            "tenant_id",
+            "profile_id",
+            "canonical_url",
+            "content_hash",
+            name="uq_radar_snapshot_profile_url_hash",
+        ),
+        CheckConstraint(
+            "page_kind in ('home','product','dealers','partners','contact','about','other')",
+            name="radar_snapshot_page_kind",
+        ),
+        CheckConstraint(
+            "source_method in ('static','browser')", name="radar_snapshot_source_method"
+        ),
+        CheckConstraint(
+            "validation_status in ('valid','partial','rejected','unreachable')",
+            name="radar_snapshot_validation_status",
+        ),
+        CheckConstraint("length(excerpt) <= 4000", name="radar_snapshot_excerpt_size"),
+        CheckConstraint("length(facts_json) <= 50000", name="radar_snapshot_facts_size"),
+    )
+
+    id: Mapped[str] = mapped_column(String(64), primary_key=True, default=_id)
+    tenant_id: Mapped[str] = mapped_column(String(36), nullable=False, index=True)
+    profile_id: Mapped[str] = mapped_column(
+        ForeignKey("competitor_profiles.id"), nullable=False, index=True
+    )
+    run_id: Mapped[str] = mapped_column(ForeignKey("radar_runs.id"), nullable=False, index=True)
+    page_kind: Mapped[str] = mapped_column(String(24), nullable=False, index=True)
+    requested_url: Mapped[str] = mapped_column(String(1000), nullable=False)
+    canonical_url: Mapped[str] = mapped_column(String(1000), nullable=False)
+    content_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    facts_json: Mapped[str] = mapped_column(Text, nullable=False)
+    excerpt: Mapped[str] = mapped_column(String(4000), default="", nullable=False)
+    source_method: Mapped[str] = mapped_column(String(24), default="static", nullable=False)
+    validation_status: Mapped[str] = mapped_column(String(24), default="valid", nullable=False)
+    extractor_version: Mapped[str] = mapped_column(
+        String(40), default="radar-static-v1", nullable=False
+    )
+    artifact_ref: Mapped[str] = mapped_column(String(128), default="", nullable=False)
+    observed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=_now, nullable=False
+    )

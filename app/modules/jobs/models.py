@@ -24,6 +24,7 @@ VALID_JOB_TYPES = (
     "feedback_summarize",
     "notification_dispatch",
     "acquisition_reconcile",
+    "radar_scan",
 )
 MAX_ATTEMPTS_DEFAULT = 3
 
@@ -75,7 +76,7 @@ class Job(Base):
             "job_type in ('google_search', 'google_maps', 'csv_import', 'xlsx_import', "
             "'acquisition_plan', 'web_discovery', 'website_verify', 'candidate_assess', "
             "'candidate_promote', 'feedback_summarize', 'notification_dispatch', "
-            "'acquisition_reconcile')",
+            "'acquisition_reconcile', 'radar_scan')",
             name="job_type",
         ),
         CheckConstraint("progress >= 0 AND progress <= 100", name="job_progress_range"),
