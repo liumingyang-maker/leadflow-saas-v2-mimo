@@ -408,7 +408,7 @@ def test_manual_url_still_fetches_extracts_and_assesses(acquisition_app):
         assert assessment.model_provider == "mimo"
         assert assessment.model_id == acquisition_app.config["MIMO_MODEL"]
         assert assessment.prompt_version == "company-extract-v1"
-        assert assessment.score_version == "priority-v2"
+        assert assessment.score_version == "priority-v3"
 
 
 def test_manual_facts_need_no_mimo_and_are_idempotent(acquisition_app):
@@ -474,7 +474,7 @@ def test_manual_facts_need_no_mimo_and_are_idempotent(acquisition_app):
         assert assessment.model_provider == "manual"
         assert assessment.model_id == "human-confirmed-v1"
         assert assessment.prompt_version == "manual-facts-v1"
-        assert assessment.score_version == "priority-v2"
+        assert assessment.score_version == "priority-v3"
 
 
 @pytest.mark.parametrize("mode", ["ai_extract", "manual_facts"])
@@ -1313,7 +1313,7 @@ def test_current_assessment_preserves_historical_priority_v1_row(acquisition_app
         assert _assessment_snapshot(historical) == before
         assert [assessment.score_version for assessment in assessments] == [
             "priority-v1",
-            "priority-v2",
+            "priority-v3",
         ]
 
 
@@ -1641,7 +1641,7 @@ def test_country_override_persists_evidence_and_assesses_synchronously(
         assert evidence.content_hash == snapshot.content_hash
         assert json.loads(evidence.supports_json) == ["country-evidence"]
         assert evidence.validation_status == "valid"
-        assert assessment.score_version == "priority-v2"
+        assert assessment.score_version == "priority-v3"
         assert assessment.model_provider == "manual"
         assert assessment.model_id == "human-confirmed-v1"
         assert assessment.prompt_version == "country-evidence-v1"

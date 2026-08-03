@@ -956,10 +956,11 @@ def test_discovery_verify_and_assess_handlers_preserve_evidence_boundary(
         assert historical is not None
         assert _assessment_snapshot(historical) == historical_before
         assessment = session.scalar(
-            select(CandidateAssessment).where(CandidateAssessment.score_version == "priority-v2")
+            select(CandidateAssessment).where(CandidateAssessment.score_version == "priority-v3")
         )
         assert assessment is not None
-        assert assessment.score_version == "priority-v2"
+        assert assessment.policy_version == "eligibility-v2"
+        assert assessment.score_version == "priority-v3"
         assert (
             candidate.ai_confidence
             == json.loads(assessment.score_breakdown_json)["data_quality_score"]

@@ -1,7 +1,7 @@
 """Version identifiers for immutable acquisition assessments."""
 
-ELIGIBILITY_POLICY_VERSION = "eligibility-v1"
-PRIORITY_SCORE_VERSION = "priority-v2"
+ELIGIBILITY_POLICY_VERSION = "eligibility-v2"
+PRIORITY_SCORE_VERSION = "priority-v3"
 MIMO_EXTRACT_PROMPT_VERSION = "company-extract-v1"
 EVIDENCE_ONLY_PROMPT_VERSION = "evidence-only-v1"
 MANUAL_FACTS_PROMPT_VERSION = "manual-facts-v1"
