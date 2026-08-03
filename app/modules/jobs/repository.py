@@ -61,6 +61,21 @@ class JobRepository:
         )
         return list(self.session.scalars(query))
 
+    def list_by_types_for_tenant(
+        self, job_types: Sequence[str], *, tenant_id: str
+    ) -> Sequence[Job]:
+        tenant_id = _require_tenant(tenant_id)
+        if not job_types:
+            return []
+        return list(
+            self.session.scalars(
+                select(Job).where(
+                    Job.tenant_id == tenant_id,
+                    Job.job_type.in_(job_types),
+                )
+            )
+        )
+
     def count_active_for_workbench(self, *, tenant_id: str) -> int:
         tenant_id = _require_tenant(tenant_id)
         return int(

@@ -221,3 +221,93 @@ def test_product_repository_returns_only_latest_version_per_product(acquisition_
         session.commit()
         latest = repo.list_latest(tenant_id="t1")
         assert [(item.product_name, item.version) for item in latest] == [("Engine", "v2")]
+
+
+def test_mission_repository_lists_recent_rows_with_tenant_and_limit_bounds(
+    acquisition_app, seed_acquisition_mission
+) -> None:
+    from app.extensions import get_engine
+    from app.modules.acquisition.repository import MissionRepository
+
+    own_id = seed_acquisition_mission(tenant_id="t1", suffix="recent-own")
+    seed_acquisition_mission(tenant_id="t2", suffix="recent-other")
+    with Session(get_engine(acquisition_app)) as session:
+        repo = MissionRepository(session)
+        assert [item.id for item in repo.list_recent(tenant_id="t1", limit=500)] == [own_id]
+        assert [item.id for item in repo.list_recent(tenant_id="t1", limit=0)] == [own_id]
+        with pytest.raises(ValueError, match="tenant_id is required"):
+            repo.list_recent(tenant_id="")
+
+
+def test_evidence_counts_projection_is_tenant_scoped_and_handles_empty_input(
+    acquisition_app, seed_acquisition_mission
+) -> None:
+    from app.extensions import get_engine
+    from app.modules.acquisition.models import AcquisitionCandidate, CandidateEvidence
+    from app.modules.acquisition.repository import EvidenceRepository
+
+    own_mission = seed_acquisition_mission(tenant_id="t1", suffix="evidence-own")
+    other_mission = seed_acquisition_mission(tenant_id="t2", suffix="evidence-other")
+    with Session(get_engine(acquisition_app)) as session:
+        own = AcquisitionCandidate(
+            id="repository-evidence-own",
+            tenant_id="t1",
+            mission_id=own_mission,
+            dedupe_key="domain:repository-evidence-own.example",
+        )
+        other = AcquisitionCandidate(
+            id="repository-evidence-other",
+            tenant_id="t2",
+            mission_id=other_mission,
+            dedupe_key="domain:repository-evidence-other.example",
+        )
+        session.add_all([own, other])
+        session.flush()
+        session.add_all(
+            [
+                CandidateEvidence(
+                    tenant_id="t1",
+                    candidate_id=own.id,
+                    source_url="https://own.example",
+                    canonical_url="https://own.example",
+                    content_hash="c" * 64,
+                ),
+                CandidateEvidence(
+                    tenant_id="t2",
+                    candidate_id=other.id,
+                    source_url="https://other.example",
+                    canonical_url="https://other.example",
+                    content_hash="d" * 64,
+                ),
+            ]
+        )
+        session.commit()
+
+        repo = EvidenceRepository(session)
+        assert repo.counts_by_candidate_ids([], tenant_id="t1") == {}
+        assert repo.counts_by_candidate_ids([own.id, other.id], tenant_id="t1") == {own.id: 1}
+        with pytest.raises(ValueError, match="tenant_id is required"):
+            repo.counts_by_candidate_ids([own.id], tenant_id=" ")
+
+
+def test_job_type_projection_is_tenant_scoped_and_handles_empty_input(acquisition_app) -> None:
+    from app.extensions import get_engine
+    from app.modules.jobs.models import Job
+    from app.modules.jobs.repository import JobRepository
+
+    with Session(get_engine(acquisition_app)) as session:
+        session.add_all(
+            [
+                Job(tenant_id="t1", job_type="website_verify", status="failed"),
+                Job(tenant_id="t2", job_type="website_verify", status="failed"),
+                Job(tenant_id="t1", job_type="google_search", status="failed"),
+            ]
+        )
+        session.commit()
+
+        repo = JobRepository(session)
+        assert repo.list_by_types_for_tenant([], tenant_id="t1") == []
+        rows = repo.list_by_types_for_tenant(["website_verify"], tenant_id="t1")
+        assert [(item.tenant_id, item.job_type) for item in rows] == [("t1", "website_verify")]
+        with pytest.raises(ValueError, match="tenant_id is required"):
+            repo.list_by_types_for_tenant(["website_verify"], tenant_id="")

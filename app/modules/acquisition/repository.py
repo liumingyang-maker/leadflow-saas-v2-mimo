@@ -3,7 +3,7 @@ from __future__ import annotations
 from collections.abc import Sequence
 from datetime import UTC, datetime
 
-from sqlalchemy import select, update
+from sqlalchemy import func, select, update
 from sqlalchemy.orm import Session
 
 from app.modules.acquisition.models import (
@@ -83,6 +83,18 @@ class MissionRepository:
             select(AcquisitionMission).where(
                 AcquisitionMission.id == mission_id,
                 AcquisitionMission.tenant_id == tenant_id,
+            )
+        )
+
+    def list_recent(self, *, tenant_id: str, limit: int = 50) -> Sequence[AcquisitionMission]:
+        tenant_id = _require_tenant(tenant_id)
+        bounded = max(1, min(int(limit), 100))
+        return list(
+            self.session.scalars(
+                select(AcquisitionMission)
+                .where(AcquisitionMission.tenant_id == tenant_id)
+                .order_by(AcquisitionMission.created_at.desc(), AcquisitionMission.id.desc())
+                .limit(bounded)
             )
         )
 
@@ -235,6 +247,22 @@ class EvidenceRepository:
             .order_by(CandidateEvidence.retrieved_at.desc())
         )
         return list(self.session.scalars(query))
+
+    def counts_by_candidate_ids(
+        self, candidate_ids: Sequence[str], *, tenant_id: str
+    ) -> dict[str, int]:
+        tenant_id = _require_tenant(tenant_id)
+        if not candidate_ids:
+            return {}
+        rows = self.session.execute(
+            select(CandidateEvidence.candidate_id, func.count(CandidateEvidence.id))
+            .where(
+                CandidateEvidence.tenant_id == tenant_id,
+                CandidateEvidence.candidate_id.in_(candidate_ids),
+            )
+            .group_by(CandidateEvidence.candidate_id)
+        ).all()
+        return {candidate_id: int(count) for candidate_id, count in rows}
 
     def find_content(
         self,
