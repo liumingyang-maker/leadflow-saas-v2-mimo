@@ -87,6 +87,7 @@ def request_competitor_suggestions(
     try:
         validated = suggestion_policy.validate_competitor_suggestions(
             proposal,
+            product_summary=product_summary,
             resolver=suggestion_policy.system_resolver,
         )
     except RadarProposalError as exc:

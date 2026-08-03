@@ -223,6 +223,25 @@ def test_request_rejects_evidence_that_does_not_name_the_competitor(
     assert _stored_counts(radar_app) == (0, 0)
 
 
+def test_request_rejects_evidence_unrelated_to_the_mission_product(
+    monkeypatch, radar_app, seed_radar_mission
+) -> None:
+    from app.modules.radar.service import RadarServiceError, request_competitor_suggestions
+
+    _enable_radar(radar_app)
+    seed_radar_mission()
+    provider = FakeProvider(
+        _valid_payload(evidence_excerpt="Acme Rival publishes local weather forecasts.")
+    )
+    _install_provider(monkeypatch, provider)
+
+    with pytest.raises(RadarServiceError):
+        request_competitor_suggestions(
+            radar_app, tenant_id="tenant-a", actor_id="owner-a", mission_id="mission-a"
+        )
+    assert _stored_counts(radar_app) == (0, 0)
+
+
 def test_dismissal_is_terminal_until_evidence_changes(
     monkeypatch, radar_app, seed_radar_mission
 ) -> None:
@@ -259,7 +278,7 @@ def test_dismissal_is_terminal_until_evidence_changes(
     )
 
     provider.result = _valid_payload(
-        evidence_excerpt="Acme Rival has new cited evidence supporting the category."
+        evidence_excerpt="Acme Rival has new cited evidence offering motorcycle engines."
     )
     assert request_competitor_suggestions(
         radar_app, tenant_id="tenant-a", actor_id="owner-a", mission_id="mission-a"

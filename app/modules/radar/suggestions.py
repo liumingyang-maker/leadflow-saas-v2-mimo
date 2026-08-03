@@ -28,6 +28,7 @@ class ValidatedCompetitorSuggestion:
 def validate_competitor_suggestions(
     proposal: object,
     *,
+    product_summary: str,
     resolver: Resolver = system_resolver,
 ) -> tuple[ValidatedCompetitorSuggestion, ...]:
     """Validate the provider boundary again before tenant data is persisted."""
@@ -56,8 +57,12 @@ def validate_competitor_suggestions(
             raise RadarProposalError("Competitor suggestion contains an unsafe URL") from exc
         if official.host in seen_domains:
             raise RadarProposalError("Competitor suggestions repeat a canonical domain")
-        if not _evidence_mentions_company(suggestion.company_name, evidence):
-            raise RadarProposalError("Competitor evidence does not identify the proposed company")
+        if not _evidence_supports_competitor_relevance(
+            suggestion.company_name,
+            product_summary,
+            evidence,
+        ):
+            raise RadarProposalError("Competitor evidence does not support mission relevance")
         seen_domains.add(official.host)
         evidence_json = canonical_json(evidence)
         validated.append(
@@ -75,12 +80,32 @@ def validate_competitor_suggestions(
     return tuple(validated)
 
 
-def _evidence_mentions_company(company_name: str, evidence: list[dict[str, str]]) -> bool:
+def _evidence_supports_competitor_relevance(
+    company_name: str,
+    product_summary: str,
+    evidence: list[dict[str, str]],
+) -> bool:
     company_marker = _normalized_text(company_name)
-    if not company_marker:
+    product_terms = _significant_terms(product_summary)
+    if not company_marker or not product_terms:
         return False
-    return any(company_marker in _normalized_text(item["excerpt"]) for item in evidence)
+    for item in evidence:
+        excerpt = _normalized_text(item["excerpt"])
+        if company_marker not in excerpt:
+            continue
+        if product_terms.intersection(_significant_terms(excerpt)):
+            return True
+    return False
 
 
 def _normalized_text(value: str) -> str:
     return " ".join(re.findall(r"\w+", value.casefold(), flags=re.UNICODE))
+
+
+def _significant_terms(value: str) -> set[str]:
+    terms: set[str] = set()
+    for raw in re.findall(r"\w+", value.casefold(), flags=re.UNICODE):
+        normalized = raw[:-1] if raw.isascii() and raw.endswith("s") and len(raw) > 4 else raw
+        if len(normalized) >= 3:
+            terms.add(normalized)
+    return terms
