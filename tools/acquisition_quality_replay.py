@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import argparse
 import json
 from dataclasses import dataclass
 from pathlib import Path
@@ -19,6 +20,7 @@ class ReplayCase:
     case_id: str
     scenario: str
     target_country_code: str
+    source_url: str
     source_path: Path
     source_text: str
     legacy_output: dict[str, object]
@@ -68,6 +70,7 @@ def load_replay_cases(manifest_path: Path) -> ReplaySuite:
                 case_id=case_id,
                 scenario=item["scenario"],
                 target_country_code=item["target_country_code"],
+                source_url=item["source_url"],
                 source_path=source,
                 source_text=source.read_text(encoding="utf-8"),
                 legacy_output=dict(legacy),
@@ -75,3 +78,50 @@ def load_replay_cases(manifest_path: Path) -> ReplaySuite:
             )
         )
     return ReplaySuite(version=payload["version"], cases=tuple(cases))
+
+
+def compare_legacy_to_expected(suite: ReplaySuite) -> dict[str, object]:
+    rows: list[dict[str, object]] = []
+    matched = 0
+    for case in suite.cases:
+        mismatches = [
+            field for field in OUTPUT_FIELDS if case.legacy_output[field] != case.expected[field]
+        ]
+        matched += len(OUTPUT_FIELDS) - len(mismatches)
+        rows.append(
+            {
+                "id": case.case_id,
+                "scenario": case.scenario,
+                "mismatches": mismatches,
+                "legacy_output": case.legacy_output,
+                "expected": case.expected,
+            }
+        )
+    field_count = len(suite.cases) * len(OUTPUT_FIELDS)
+    return {
+        "suite_version": suite.version,
+        "case_count": len(suite.cases),
+        "field_count": field_count,
+        "matched_fields": matched,
+        "gap_fields": field_count - matched,
+        "cases": rows,
+    }
+
+
+def _main() -> int:
+    parser = argparse.ArgumentParser(description="Compare frozen acquisition output with labels")
+    parser.add_argument("--manifest", type=Path, required=True)
+    parser.add_argument("--output", type=Path, required=True)
+    args = parser.parse_args()
+    report = compare_legacy_to_expected(load_replay_cases(args.manifest))
+    args.output.parent.mkdir(parents=True, exist_ok=True)
+    args.output.write_text(
+        json.dumps(report, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+    print(f"wrote replay report: {args.output}")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(_main())

@@ -5,21 +5,127 @@
       "id": "mx-official-address",
       "scenario": "Mexico ccTLD plus official address",
       "source": "pages/mx_official.html",
+      "source_url": "https://distribuidor.example.com.mx/",
       "target_country_code": "MX",
-      "legacy_output": {
-        "hq_country_code": "",
-        "opportunity_country_code": "",
-        "country_resolution_status": "unknown",
-        "contact_kinds": [],
-        "entity_kind": "unknown"
-      },
-      "expected": {
-        "hq_country_code": "MX",
-        "opportunity_country_code": "MX",
-        "country_resolution_status": "confirmed",
-        "contact_kinds": ["email"],
-        "entity_kind": "buyer_or_distributor"
-      }
+      "legacy_output": {"hq_country_code": "", "opportunity_country_code": "", "country_resolution_status": "unknown", "contact_kinds": [], "entity_kind": "unknown"},
+      "expected": {"hq_country_code": "MX", "opportunity_country_code": "MX", "country_resolution_status": "confirmed", "contact_kinds": ["email"], "entity_kind": "buyer_or_distributor"}
+    },
+    {
+      "id": "br-local-phone",
+      "scenario": "Brazil ccTLD, Portuguese copy, address, and local phone",
+      "source": "pages/br_distributor.html",
+      "source_url": "https://empresa.example.com.br/",
+      "target_country_code": "BR",
+      "legacy_output": {"hq_country_code": "", "opportunity_country_code": "", "country_resolution_status": "unknown", "contact_kinds": [], "entity_kind": "unknown"},
+      "expected": {"hq_country_code": "BR", "opportunity_country_code": "BR", "country_resolution_status": "confirmed", "contact_kinds": ["phone"], "entity_kind": "buyer_or_distributor"}
+    },
+    {
+      "id": "de-eu-cross-border",
+      "scenario": "German headquarters and EU-wide cross-border sales",
+      "source": "pages/de_cross_border.html",
+      "source_url": "https://haendler.example.de/",
+      "target_country_code": "DE",
+      "legacy_output": {"hq_country_code": "", "opportunity_country_code": "", "country_resolution_status": "unknown", "contact_kinds": [], "entity_kind": "unknown"},
+      "expected": {"hq_country_code": "DE", "opportunity_country_code": "DE", "country_resolution_status": "confirmed", "contact_kinds": [], "entity_kind": "buyer_or_distributor"}
+    },
+    {
+      "id": "us-dot-com-address",
+      "scenario": "Generic dot-com with a strong United States address",
+      "source": "pages/us_distributor.html",
+      "source_url": "https://dealer.example.com/",
+      "target_country_code": "US",
+      "legacy_output": {"hq_country_code": "", "opportunity_country_code": "", "country_resolution_status": "unknown", "contact_kinds": [], "entity_kind": "unknown"},
+      "expected": {"hq_country_code": "US", "opportunity_country_code": "US", "country_resolution_status": "confirmed", "contact_kinds": ["contact_page"], "entity_kind": "buyer_or_distributor"}
+    },
+    {
+      "id": "cn-headquarters-serves-mx",
+      "scenario": "China headquarters explicitly serves the Mexico market",
+      "source": "pages/cn_serves_mx.html",
+      "source_url": "https://supplier.example.com.cn/",
+      "target_country_code": "MX",
+      "legacy_output": {"hq_country_code": "CN", "opportunity_country_code": "", "country_resolution_status": "unknown", "contact_kinds": [], "entity_kind": "unknown"},
+      "expected": {"hq_country_code": "CN", "opportunity_country_code": "MX", "country_resolution_status": "confirmed", "contact_kinds": ["contact_page"], "entity_kind": "manufacturer_or_supplier"}
+    },
+    {
+      "id": "generic-dot-co",
+      "scenario": "Genericized dot-co without independent Colombia evidence",
+      "source": "pages/generic_co.html",
+      "source_url": "https://brand.example.co/",
+      "target_country_code": "CO",
+      "legacy_output": {"hq_country_code": "", "opportunity_country_code": "", "country_resolution_status": "unknown", "contact_kinds": [], "entity_kind": "unknown"},
+      "expected": {"hq_country_code": "", "opportunity_country_code": "", "country_resolution_status": "unknown", "contact_kinds": [], "entity_kind": "company"}
+    },
+    {
+      "id": "global-headquarters-opportunity-split",
+      "scenario": "Global company headquarters and opportunity market differ",
+      "source": "pages/global_branch.html",
+      "source_url": "https://global.example.com/",
+      "target_country_code": "BR",
+      "legacy_output": {"hq_country_code": "DE", "opportunity_country_code": "", "country_resolution_status": "unknown", "contact_kinds": [], "entity_kind": "unknown"},
+      "expected": {"hq_country_code": "DE", "opportunity_country_code": "BR", "country_resolution_status": "confirmed", "contact_kinds": ["phone"], "entity_kind": "buyer_or_distributor"}
+    },
+    {
+      "id": "sparse-single-page",
+      "scenario": "Information-sparse single-page company site",
+      "source": "pages/sparse_single_page.html",
+      "source_url": "https://sparse.example/",
+      "target_country_code": "MX",
+      "legacy_output": {"hq_country_code": "", "opportunity_country_code": "", "country_resolution_status": "unknown", "contact_kinds": [], "entity_kind": "unknown"},
+      "expected": {"hq_country_code": "", "opportunity_country_code": "", "country_resolution_status": "unknown", "contact_kinds": [], "entity_kind": "unknown"}
+    },
+    {
+      "id": "association-or-chamber",
+      "scenario": "Trade chamber member listing",
+      "source": "pages/chamber.html",
+      "source_url": "https://chamber.example/",
+      "target_country_code": "MX",
+      "legacy_output": {"hq_country_code": "", "opportunity_country_code": "", "country_resolution_status": "unknown", "contact_kinds": [], "entity_kind": "unknown"},
+      "expected": {"hq_country_code": "", "opportunity_country_code": "", "country_resolution_status": "unknown", "contact_kinds": [], "entity_kind": "association_or_chamber"}
+    },
+    {
+      "id": "directory-or-marketplace",
+      "scenario": "Multi-supplier directory page",
+      "source": "pages/directory.html",
+      "source_url": "https://directory.example/",
+      "target_country_code": "MX",
+      "legacy_output": {"hq_country_code": "", "opportunity_country_code": "", "country_resolution_status": "unknown", "contact_kinds": [], "entity_kind": "unknown"},
+      "expected": {"hq_country_code": "", "opportunity_country_code": "", "country_resolution_status": "unknown", "contact_kinds": [], "entity_kind": "directory_or_marketplace"}
+    },
+    {
+      "id": "government",
+      "scenario": "Public procurement authority page",
+      "source": "pages/government.html",
+      "source_url": "https://procurement.example/",
+      "target_country_code": "US",
+      "legacy_output": {"hq_country_code": "", "opportunity_country_code": "", "country_resolution_status": "unknown", "contact_kinds": [], "entity_kind": "unknown"},
+      "expected": {"hq_country_code": "", "opportunity_country_code": "", "country_resolution_status": "unknown", "contact_kinds": [], "entity_kind": "government"}
+    },
+    {
+      "id": "media-or-article",
+      "scenario": "Editorial article about distributors",
+      "source": "pages/media.html",
+      "source_url": "https://news.example/",
+      "target_country_code": "DE",
+      "legacy_output": {"hq_country_code": "", "opportunity_country_code": "", "country_resolution_status": "unknown", "contact_kinds": [], "entity_kind": "unknown"},
+      "expected": {"hq_country_code": "", "opportunity_country_code": "", "country_resolution_status": "unknown", "contact_kinds": [], "entity_kind": "media_or_article"}
+    },
+    {
+      "id": "careers-page",
+      "scenario": "Recruiting page without buyer evidence",
+      "source": "pages/careers.html",
+      "source_url": "https://jobs.example/",
+      "target_country_code": "BR",
+      "legacy_output": {"hq_country_code": "", "opportunity_country_code": "", "country_resolution_status": "unknown", "contact_kinds": [], "entity_kind": "unknown"},
+      "expected": {"hq_country_code": "", "opportunity_country_code": "", "country_resolution_status": "unknown", "contact_kinds": [], "entity_kind": "unknown"}
+    },
+    {
+      "id": "dealer-counterexample",
+      "scenario": "Real distributor name contains a directory-like word",
+      "source": "pages/dealer_counterexample.html",
+      "source_url": "https://directory-motors.example/",
+      "target_country_code": "US",
+      "legacy_output": {"hq_country_code": "", "opportunity_country_code": "", "country_resolution_status": "unknown", "contact_kinds": [], "entity_kind": "unknown"},
+      "expected": {"hq_country_code": "US", "opportunity_country_code": "US", "country_resolution_status": "confirmed", "contact_kinds": ["email"], "entity_kind": "buyer_or_distributor"}
     }
   ]
 }
