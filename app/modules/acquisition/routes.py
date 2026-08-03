@@ -824,30 +824,127 @@ def _candidate_view(
     )
     has_assessment = assessment is not None
     priority_mode = assessment.priority_mode if assessment else ""
-    is_provisional = priority_mode == "fit_quality_provisional_v1"
+    is_provisional = bool(assessment and priority_mode != "full_v1")
+    score_breakdown = _json_value(assessment.score_breakdown_json, {}) if assessment else {}
+    display_band = candidate.priority_band or ""
+    if is_provisional and display_band in {"S", "A"}:
+        display_band = "B"
+    if candidate.status == "rejected":
+        priority_label = "已拒绝"
+        display_priority = None
+    elif not assessment:
+        priority_label = "待评估"
+        display_priority = None
+    elif is_provisional:
+        priority_label = f"暂定 {display_band or '待评估'}"
+        display_priority = display_band or None
+    else:
+        priority_label = f"{display_band or '待评估'} 优先级"
+        display_priority = display_band or None
     reason = assessment.explanation if assessment and assessment.explanation else ""
-    if not reason:
-        reason = {
-            "eligible": "国家和买家类型证据符合当前目标。",
-            "country_confirmed": "目标国家已经确认，建议进一步审核。",
-            "missing_contact_path": "基础匹配，但仍需补充联系路径。",
-            "country_unknown": "目标国家仍需确认。",
-            "country_conflicting": "国家证据存在冲突。",
-        }.get(candidate.eligibility_code, "根据现有公开信息值得进一步审核。")
+    reason_by_code = {
+        "eligible": "国家和买家类型证据符合当前目标。",
+        "country_confirmed": "目标国家已经确认，建议进一步审核。",
+        "missing_contact_path": "基础匹配，但仍需补充联系路径。",
+        "country_unknown": "目标国家仍需确认。",
+        "country_conflicting": "国家证据存在冲突。",
+        "buyer_type_unknown": "买家类型仍需公开证据确认。",
+        "product_evidence_unknown": "目标产品相关性仍需公开证据确认。",
+        "contact_path_unknown": "公开联系方式仍需确认。",
+        "wrong_country": "公开证据显示目标国家不匹配。",
+        "wrong_buyer_type": "公开证据显示该企业不是目标买家类型。",
+        "excluded_business": "公开证据命中了排除业务类型。",
+    }
+    if candidate.status == "rejected" and candidate.eligibility_code in reason_by_code:
+        reason = reason_by_code[candidate.eligibility_code]
+    elif not reason:
+        reason = reason_by_code.get(
+            candidate.eligibility_code,
+            "根据现有公开信息值得进一步审核。",
+        )
+    processing_note = ""
+    if priority_mode == "evidence_only_provisional_v1":
+        processing_note = "官网验证或结构化分析尚未完成；当前为临时评估，请重新验证。"
+    elif priority_mode == "fit_quality_provisional_v1":
+        processing_note = "尚未观察到采购意向信号；当前优先级仅依据匹配度和证据质量。"
+    observed_facts = _candidate_observed_facts(candidate.observed_facts_json)
+    inferences = _json_value(candidate.inferences_json, [])
+    analysis_items: list[object] = [reason]
+    if isinstance(inferences, list):
+        analysis_items.extend(item for item in inferences if item != reason)
+    unknowns = _json_value(candidate.unknowns_json, [])
+    if not unknowns and priority_mode == "evidence_only_provisional_v1":
+        unknowns = ["官网结构化事实、目标国家、买家角色和联系方式仍可能需要确认。"]
+    elif not unknowns and priority_mode == "fit_quality_provisional_v1":
+        unknowns = ["尚未观察到明确采购意向信号。"]
+    score_rows = _candidate_score_rows(score_breakdown)
+    if candidate.status == "rejected":
+        score_rows = [row for row in score_rows if row[0] != "综合优先级"]
     return {
         "candidate": candidate,
         "primary_reason": reason,
         "contacts": _json_value(candidate.contact_json, {}),
-        "observed_facts": _json_value(candidate.observed_facts_json, []),
-        "inferences": _json_value(candidate.inferences_json, []),
-        "unknowns": _json_value(candidate.unknowns_json, []),
+        "observed_facts": observed_facts,
+        "inferences": inferences,
+        "analysis_items": analysis_items,
+        "unknowns": unknowns,
         "evidence": evidence,
         "assessment": assessment,
         "has_assessment": has_assessment,
         "priority_mode": priority_mode,
         "is_provisional": is_provisional,
-        "score_breakdown": (_json_value(assessment.score_breakdown_json, {}) if assessment else {}),
+        "priority_label": priority_label,
+        "display_priority": display_priority,
+        "processing_note": processing_note,
+        "score_breakdown": score_breakdown,
+        "score_rows": score_rows,
     }
+
+
+def _candidate_observed_facts(value: str) -> list[object]:
+    observed = _json_value(value, [])
+    if isinstance(observed, list):
+        return observed
+    if not isinstance(observed, dict):
+        return []
+    facts: list[object] = []
+    if observed.get("buyer_type"):
+        facts.append(f"买家类型：{observed['buyer_type']}")
+    product_terms = observed.get("product_terms", [])
+    if isinstance(product_terms, list) and product_terms:
+        facts.append(f"相关产品：{', '.join(map(str, product_terms))}")
+    claims = observed.get("claims", [])
+    if isinstance(claims, list):
+        facts.extend(claims)
+    return facts
+
+
+def _candidate_score_rows(score_breakdown: object) -> list[tuple[str, object]]:
+    if not isinstance(score_breakdown, dict):
+        return []
+    fields = (
+        ("fit_score", "匹配度", "fit"),
+        ("intent_score", "采购意向", "intent"),
+        ("data_quality_score", "证据质量", "data_quality"),
+        ("priority_score", "综合优先级", "priority"),
+        ("signal_coverage", "信号覆盖", "coverage"),
+    )
+    rows: list[tuple[str, object]] = []
+    for key, label, legacy_key in fields:
+        if key in score_breakdown:
+            value = score_breakdown[key]
+        elif legacy_key in score_breakdown:
+            value = score_breakdown[legacy_key]
+        else:
+            continue
+        if value is None:
+            display_value: object = "未观察到" if key == "intent_score" else "待补充"
+        elif key == "signal_coverage":
+            display_value = f"{value}%"
+        else:
+            display_value = value
+        rows.append((label, display_value))
+    return rows
 
 
 def _validate_bulk_accept(

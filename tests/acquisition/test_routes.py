@@ -98,6 +98,8 @@ def _seed_assessment(
     tenant_id: str,
     candidate_id: str,
     priority_mode: str,
+    score_breakdown_json: str = '{"fit": 80, "data_quality": 72}',
+    explanation: str = "适合当前目标市场。",
 ) -> None:
     from app.extensions import get_engine
     from app.modules.acquisition.models import CandidateAssessment
@@ -115,10 +117,10 @@ def _seed_assessment(
                 model_id="deterministic",
                 input_json="{}",
                 hard_gate_json="{}",
-                score_breakdown_json='{"fit": 80, "data_quality": 72}',
+                score_breakdown_json=score_breakdown_json,
                 signal_coverage=50,
                 priority_mode=priority_mode,
-                explanation="适合当前目标市场。",
+                explanation=explanation,
             )
         )
         db_session.commit()
@@ -385,8 +387,8 @@ def test_candidate_detail_labels_provisional_priority_and_explains_missing_inten
     html = response.get_data(as_text=True)
 
     assert response.status_code == 200
-    assert "暂定 A" in html
-    assert "暂无意向信号，当前排序只依据匹配度和数据质量。" in html
+    assert "暂定 B" in html
+    assert "尚未观察到采购意向信号；当前优先级仅依据匹配度和证据质量。" in html
     assert "priority-v2" in html
     assert "fit_quality_provisional_v1" in html
 
@@ -415,6 +417,123 @@ def test_candidate_detail_does_not_call_full_priority_missing_intent(
     assert response.status_code == 200
     assert "A 优先级" in html
     assert "暂无意向信号" not in html
+
+
+def test_rejected_candidate_primary_layer_never_shows_priority_band(
+    acquisition_app, logged_in_client
+) -> None:
+    client, tenant_id = logged_in_client
+    mission = _seed_mission(acquisition_app, tenant_id=tenant_id, actor_id=_actor_id(client))
+    candidate = _seed_candidate(
+        acquisition_app,
+        tenant_id=tenant_id,
+        mission_id=mission.id,
+        suffix="rejected-priority",
+        status="rejected",
+        eligibility_code="wrong_buyer_type",
+    )
+    _seed_assessment(
+        acquisition_app,
+        tenant_id=tenant_id,
+        candidate_id=candidate.id,
+        priority_mode="full_v1",
+    )
+
+    response = client.get(f"/acquisition/candidates/{candidate.id}")
+    html = response.get_data(as_text=True)
+    primary = html.split("证据、评分和未知项", 1)[0]
+
+    assert response.status_code == 200
+    assert "已拒绝" in primary
+    assert "A 优先级" not in primary
+    assert "暂定 A" not in primary
+
+
+def test_evidence_only_card_explains_pending_analysis_without_raw_none(
+    acquisition_app, logged_in_client
+) -> None:
+    from app.extensions import get_engine
+    from app.modules.acquisition.models import AcquisitionCandidate
+
+    client, tenant_id = logged_in_client
+    mission = _seed_mission(acquisition_app, tenant_id=tenant_id, actor_id=_actor_id(client))
+    candidate = _seed_candidate(
+        acquisition_app,
+        tenant_id=tenant_id,
+        mission_id=mission.id,
+        suffix="evidence-only",
+        status="needs_evidence",
+        country_status="unknown",
+        eligibility_code="product_evidence_unknown",
+    )
+    with Session(get_engine(acquisition_app)) as session:
+        stored = session.get(AcquisitionCandidate, candidate.id)
+        assert stored is not None
+        stored.observed_facts_json = "[]"
+        stored.inferences_json = "[]"
+        stored.unknowns_json = "[]"
+        stored.priority_band = "B"
+        session.commit()
+    _seed_assessment(
+        acquisition_app,
+        tenant_id=tenant_id,
+        candidate_id=candidate.id,
+        priority_mode="evidence_only_provisional_v1",
+        score_breakdown_json=(
+            '{"fit_score":null,"intent_score":null,"data_quality_score":68,'
+            '"priority_score":68,"signal_coverage":15}'
+        ),
+        explanation="当前为临时评估；官网验证或结构化分析尚未完成，请重新验证。",
+    )
+
+    response = client.get(f"/acquisition/candidates/{candidate.id}")
+    html = response.get_data(as_text=True)
+    user_output = html.split("技术详情", 1)[0]
+
+    assert response.status_code == 200
+    assert "暂定 B" in user_output
+    assert "AI 分析结论" in user_output
+    assert "官网验证或结构化分析尚未完成" in user_output
+    assert "重新验证" in user_output
+    assert "采购意向" in user_output
+    assert "未观察到" in user_output
+    assert "AI 置信度" not in user_output
+    assert "None" not in user_output
+    assert "暂无推断" not in user_output
+
+
+def test_empty_model_inference_shows_evidence_based_conclusion(
+    acquisition_app, logged_in_client
+) -> None:
+    from app.extensions import get_engine
+    from app.modules.acquisition.models import AcquisitionCandidate
+
+    client, tenant_id = logged_in_client
+    mission = _seed_mission(acquisition_app, tenant_id=tenant_id, actor_id=_actor_id(client))
+    candidate = _seed_candidate(
+        acquisition_app,
+        tenant_id=tenant_id,
+        mission_id=mission.id,
+        suffix="no-inference",
+    )
+    with Session(get_engine(acquisition_app)) as session:
+        stored = session.get(AcquisitionCandidate, candidate.id)
+        assert stored is not None
+        stored.inferences_json = "[]"
+        session.commit()
+    _seed_assessment(
+        acquisition_app,
+        tenant_id=tenant_id,
+        candidate_id=candidate.id,
+        priority_mode="fit_quality_provisional_v1",
+        explanation="公开证据显示该企业与目标产品及买家类型匹配。",
+    )
+
+    html = client.get(f"/acquisition/candidates/{candidate.id}").get_data(as_text=True)
+
+    assert "AI 分析结论" in html
+    assert "公开证据显示该企业与目标产品及买家类型匹配。" in html
+    assert "暂无推断" not in html
 
 
 def test_reject_requires_csrf_when_enabled(csrf_client) -> None:

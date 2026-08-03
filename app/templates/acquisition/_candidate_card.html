@@ -9,10 +9,10 @@
     <div class="lf-candidate-heading">
       <div class="lf-status-row">
         <h3>{{ candidate.company_name or candidate.domain or "待确认公司" }}</h3>
-        <span class="lf-badge{% if view.has_assessment and candidate.priority_band in ['A', 'B'] %} lf-badge-success{% endif %}">{% if not view.has_assessment %}待评估{% elif view.is_provisional %}暂定 {{ candidate.priority_band or "待评估" }}{% else %}{{ candidate.priority_band or "待评估" }} 优先级{% endif %}</span>
+        <span class="lf-badge{% if candidate.status != 'rejected' and view.display_priority in ['A', 'B'] %} lf-badge-success{% endif %}">{{ view.priority_label }}</span>
       </div>
       <p><strong>{{ candidate.opportunity_country_code or "国家待确认" }}</strong> · <span>为什么推荐：{{ view.primary_reason }}</span></p>
-      {% if view.is_provisional %}<p class="lf-muted">暂无意向信号，当前排序只依据匹配度和数据质量。</p>{% endif %}
+      {% if view.processing_note %}<p class="lf-muted">{{ view.processing_note }}</p>{% endif %}
       {% if candidate.website %}<a class="lf-safe-link" href="{{ candidate.website }}" target="_blank" rel="noopener noreferrer">访问公司网站</a>{% endif %}
     </div>
   </header>
@@ -107,10 +107,8 @@
         <h4>评分概览</h4>
         {% if view.has_assessment %}
         <dl class="lf-dl">
-          <dt>综合优先级</dt><dd>{{ candidate.priority_score if candidate.priority_score is not none else '待评估' }}</dd>
-          <dt>信号覆盖</dt><dd>{{ candidate.signal_coverage }}%</dd>
-          <dt>AI 置信度</dt><dd>{{ candidate.ai_confidence }}%</dd>
-          {% for key, value in view.score_breakdown.items() %}<dt>{{ key|replace('_', ' ') }}</dt><dd>{{ value }}</dd>{% endfor %}
+          <dt>最终决策</dt><dd>{{ view.priority_label }}</dd>
+          {% for label, value in view.score_rows %}<dt>{{ label }}</dt><dd>{{ value }}</dd>{% endfor %}
         </dl>
         {% else %}<p class="lf-muted">尚未生成评估。</p>{% endif %}
       </section>
@@ -119,8 +117,8 @@
         {% if view.observed_facts %}<ul>{% for fact in view.observed_facts %}<li>{{ fact|tojson }}</li>{% endfor %}</ul>{% else %}<p class="lf-muted">暂无结构化事实。</p>{% endif %}
       </section>
       <section>
-        <h4>AI 推断</h4>
-        {% if view.inferences %}<ul>{% for item in view.inferences %}<li>{{ item|tojson }}</li>{% endfor %}</ul>{% else %}<p class="lf-muted">暂无推断。</p>{% endif %}
+        <h4>AI 分析结论</h4>
+        <ul>{% for item in view.analysis_items %}<li>{{ item if item is string else item|tojson }}</li>{% endfor %}</ul>
       </section>
       <section>
         <h4>仍未知</h4>
