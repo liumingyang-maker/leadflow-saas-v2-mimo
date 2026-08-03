@@ -215,6 +215,8 @@ def test_acquisition_core_tables_and_crm_columns_exist_at_head() -> None:
             "mission_suggestions",
             "notifications",
             "provider_statuses",
+            "radar_competitor_suggestions",
+            "competitor_profiles",
         } <= tables
         assert {
             "opportunity_country_code",
@@ -271,4 +273,34 @@ def test_browser_foundation_roundtrip_0014_to_0015() -> None:
         command.upgrade(cfg, "0015_browser_foundation")
         engine = create_engine(f"sqlite:///{db_path}")
         assert "browser_research_runs" in set(inspect(engine).get_table_names())
+        engine.dispose()
+
+
+def test_radar_profiles_roundtrip_0015_to_0016() -> None:
+    with tempfile.TemporaryDirectory() as tmpdir:
+        db_path = os.path.join(tmpdir, "radar.db")
+        cfg = _alembic_cfg(db_path)
+
+        command.upgrade(cfg, "0015_browser_foundation")
+        engine = create_engine(f"sqlite:///{db_path}")
+        assert "competitor_profiles" not in set(inspect(engine).get_table_names())
+        assert "radar_competitor_suggestions" not in set(inspect(engine).get_table_names())
+        engine.dispose()
+
+        command.upgrade(cfg, "0016_radar_profiles")
+        engine = create_engine(f"sqlite:///{db_path}")
+        assert {"competitor_profiles", "radar_competitor_suggestions"} <= set(
+            inspect(engine).get_table_names()
+        )
+        engine.dispose()
+
+        command.downgrade(cfg, "0015_browser_foundation")
+        engine = create_engine(f"sqlite:///{db_path}")
+        assert "competitor_profiles" not in set(inspect(engine).get_table_names())
+        assert "radar_competitor_suggestions" not in set(inspect(engine).get_table_names())
+        engine.dispose()
+
+        command.upgrade(cfg, "0016_radar_profiles")
+        engine = create_engine(f"sqlite:///{db_path}")
+        assert "competitor_profiles" in set(inspect(engine).get_table_names())
         engine.dispose()
