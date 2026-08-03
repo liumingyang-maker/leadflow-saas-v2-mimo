@@ -835,6 +835,9 @@ def _candidate_view(
     elif not assessment:
         priority_label = "待评估"
         display_priority = None
+    elif priority_mode == "evidence_only_provisional_v1":
+        priority_label = "待补充匹配证据"
+        display_priority = None
     elif is_provisional:
         priority_label = f"暂定 {display_band or '待评估'}"
         display_priority = display_band or None

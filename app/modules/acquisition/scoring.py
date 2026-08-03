@@ -172,6 +172,10 @@ def score_candidate(value: ScoreInput) -> ScoreResult:
         mode = "fit_quality_provisional_v1"
     else:
         mode = "evidence_only_provisional_v1"
+        # Evidence quality tells us whether a source is usable; by itself it says
+        # nothing about whether the company is a good lead. Keep that quality
+        # score visible, but do not turn it into a misleading lead priority.
+        priority = None
     return ScoreResult(
         fit_score=fit,
         intent_score=intent,

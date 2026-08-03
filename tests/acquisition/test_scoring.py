@@ -111,7 +111,7 @@ def test_provisional_priority_cannot_receive_s_band():
     assert result.priority_band == "B"
 
 
-def test_evidence_only_priority_is_provisional_and_capped_at_b():
+def test_evidence_only_quality_does_not_masquerade_as_lead_priority():
     from app.modules.acquisition.scoring import ScoreInput, score_candidate
 
     result = score_candidate(
@@ -134,8 +134,9 @@ def test_evidence_only_priority_is_provisional_and_capped_at_b():
     )
 
     assert result.priority_mode == "evidence_only_provisional_v1"
-    assert result.priority_score == 100
-    assert result.priority_band == "B"
+    assert result.data_quality_score == 100
+    assert result.priority_score is None
+    assert result.priority_band == "unknown"
 
 
 def test_full_priority_can_receive_s_band():

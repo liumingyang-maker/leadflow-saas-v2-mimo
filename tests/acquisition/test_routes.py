@@ -472,7 +472,8 @@ def test_evidence_only_card_explains_pending_analysis_without_raw_none(
         stored.observed_facts_json = "[]"
         stored.inferences_json = "[]"
         stored.unknowns_json = "[]"
-        stored.priority_band = "B"
+        stored.priority_score = None
+        stored.priority_band = "unknown"
         session.commit()
     _seed_assessment(
         acquisition_app,
@@ -481,7 +482,7 @@ def test_evidence_only_card_explains_pending_analysis_without_raw_none(
         priority_mode="evidence_only_provisional_v1",
         score_breakdown_json=(
             '{"fit_score":null,"intent_score":null,"data_quality_score":68,'
-            '"priority_score":68,"signal_coverage":15}'
+            '"priority_score":null,"signal_coverage":15}'
         ),
         explanation="当前为临时评估；官网验证或结构化分析尚未完成，请重新验证。",
     )
@@ -491,7 +492,8 @@ def test_evidence_only_card_explains_pending_analysis_without_raw_none(
     user_output = html.split("技术详情", 1)[0]
 
     assert response.status_code == 200
-    assert "暂定 B" in user_output
+    assert "待补充匹配证据" in user_output
+    assert "暂定 B" not in user_output
     assert "AI 分析结论" in user_output
     assert "官网验证或结构化分析尚未完成" in user_output
     assert "重新验证" in user_output

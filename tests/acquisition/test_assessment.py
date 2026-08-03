@@ -81,7 +81,8 @@ def test_search_evidence_only_creates_bounded_provisional_computation():
     assert result.extraction_complete is False
     assert result.gate.disposition == "needs_evidence"
     assert result.score.priority_mode == "evidence_only_provisional_v1"
-    assert result.score.priority_band == "B"
+    assert result.score.priority_score is None
+    assert result.score.priority_band == "unknown"
     assert result.model_provider == "deterministic"
     assert result.model_id == "evidence-only-v1"
     assert "临时评估" in result.explanation

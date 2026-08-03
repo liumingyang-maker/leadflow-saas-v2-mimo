@@ -783,7 +783,8 @@ def test_search_evidence_only_assessment_is_persisted_as_needs_evidence(
         )
         assert candidate is not None
         assert assessment is not None
-        assert candidate.priority_band == "B"
+        assert candidate.priority_score is None
+        assert candidate.priority_band == "unknown"
         assert candidate.signal_coverage > 0
         assert assessment.priority_mode == "evidence_only_provisional_v1"
         assert assessment.model_provider == "deterministic"
@@ -956,11 +957,11 @@ def test_discovery_verify_and_assess_handlers_preserve_evidence_boundary(
         assert historical is not None
         assert _assessment_snapshot(historical) == historical_before
         assessment = session.scalar(
-            select(CandidateAssessment).where(CandidateAssessment.score_version == "priority-v3")
+            select(CandidateAssessment).where(CandidateAssessment.score_version == "priority-v4")
         )
         assert assessment is not None
         assert assessment.policy_version == "eligibility-v2"
-        assert assessment.score_version == "priority-v3"
+        assert assessment.score_version == "priority-v4"
         assert (
             candidate.ai_confidence
             == json.loads(assessment.score_breakdown_json)["data_quality_score"]
