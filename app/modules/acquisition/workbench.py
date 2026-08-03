@@ -14,6 +14,10 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.extensions import get_engine
+from app.modules.acquisition.mission_results import (
+    MissionResultSummary,
+    list_mission_result_summaries,
+)
 from app.modules.acquisition.models import (
     AcquisitionCandidate,
     Notification,
@@ -88,6 +92,7 @@ class WorkbenchView:
     attention_url: str
     has_product_knowledge: bool
     terminal_history_truncated: bool
+    recent_missions: tuple[MissionResultSummary, ...]
 
 
 def _session(app) -> Session:
@@ -178,6 +183,11 @@ def load_workbench(app, *, tenant_id: str, now: datetime | None = None) -> Workb
             )
             is not None
         )
+        recent_missions = list_mission_result_summaries(
+            db_session,
+            tenant_id=tenant_id,
+            limit=5,
+        )
 
     acquisition_start_url = (
         "/acquisition/missions/new" if has_product_knowledge else "/acquisition/products"
@@ -222,6 +232,7 @@ def load_workbench(app, *, tenant_id: str, now: datetime | None = None) -> Workb
         attention_url=attention_url,
         has_product_knowledge=has_product_knowledge,
         terminal_history_truncated=terminal_projection.truncated,
+        recent_missions=recent_missions,
     )
 
 

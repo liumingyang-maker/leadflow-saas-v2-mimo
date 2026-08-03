@@ -4,6 +4,8 @@
 {% call shell("产品知识 · LeadFlow") %}
 <nav class="lf-top-nav" aria-label="获客导航">
   <a href="/workbench">今日工作台</a>
+  <a href="/acquisition/missions">任务</a>
+  <a href="/notifications">通知{% if view is defined and view.notifications_unread is defined and view.notifications_unread %}（{{ view.notifications_unread }}）{% endif %}</a>
   <a href="/acquisition/missions/new">创建找客户任务</a>
   <a href="/acquisition/products" aria-current="page">产品知识</a>
   <a href="/leads">CRM</a>

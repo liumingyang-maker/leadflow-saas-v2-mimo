@@ -2,9 +2,10 @@
 {% call shell("今日工作台 · LeadFlow") %}
 <nav class="lf-top-nav" aria-label="Primary navigation">
   <a href="/workbench" aria-current="page">今日工作台</a>
+  <a href="/acquisition/missions">任务</a>
   <a href="{% if view.has_product_knowledge %}/acquisition/missions/new{% else %}/acquisition/products{% endif %}">{% if view.has_product_knowledge %}创建找客户任务{% else %}先添加产品知识{% endif %}</a>
   <a href="/leads">候选与 CRM</a>
-  <a href="/notifications">通知{% if view.notifications_unread %}（{{ view.notifications_unread }}）{% endif %}</a>
+  <a href="/notifications">通知{% if view is defined and view.notifications_unread is defined and view.notifications_unread %}（{{ view.notifications_unread }}）{% endif %}</a>
   <a href="/outreach">外联</a>
   <a href="/settings">设置</a>
 </nav>

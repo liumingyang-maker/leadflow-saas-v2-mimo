@@ -192,6 +192,56 @@ def test_acquisition_routes_require_login(acquisition_app) -> None:
     assert response.status_code in {302, 303}
     assert response.headers["Location"].endswith("/login")
 
+    mission_list = client.get("/acquisition/missions")
+    assert mission_list.status_code in {302, 303}
+    assert mission_list.headers["Location"].endswith("/login")
+
+
+def test_mission_list_is_tenant_scoped_and_separates_active_execution_state(
+    acquisition_app, logged_in_client, seed_acquisition_mission
+) -> None:
+    from app.extensions import get_engine
+    from app.modules.acquisition.models import AcquisitionMission
+
+    client, tenant_id = logged_in_client
+    terminal = _seed_mission(
+        acquisition_app,
+        tenant_id=tenant_id,
+        actor_id=_actor_id(client),
+    )
+    active = _seed_mission(
+        acquisition_app,
+        tenant_id=tenant_id,
+        actor_id=_actor_id(client),
+    )
+    other_id = seed_acquisition_mission(tenant_id="other-tenant", suffix="list-private")
+    with Session(get_engine(acquisition_app)) as db_session:
+        terminal_row = db_session.get(AcquisitionMission, terminal.id)
+        active_row = db_session.get(AcquisitionMission, active.id)
+        other_row = db_session.get(AcquisitionMission, other_id)
+        assert terminal_row is not None
+        assert active_row is not None
+        assert other_row is not None
+        terminal_row.name = "Own terminal mission"
+        terminal_row.status = "completed"
+        active_row.name = "Own active mission"
+        active_row.status = "running"
+        other_row.name = "Private other mission"
+        other_row.status = "completed"
+        db_session.commit()
+
+    response = client.get("/acquisition/missions")
+
+    assert response.status_code == 200
+    html = response.get_data(as_text=True)
+    assert "Own terminal mission" in html
+    assert "未找到结果" in html
+    assert f'href="/acquisition/missions/{terminal.id}"' in html
+    active_card = html.split("Own active mission", 1)[1].split("</article>", 1)[0]
+    assert "搜索中" in active_card
+    assert "未找到结果" not in active_card
+    assert "Private other mission" not in html
+
 
 def test_mission_form_exposes_three_required_business_fields(logged_in_client) -> None:
     client, _tenant_id = logged_in_client
@@ -475,11 +525,13 @@ def test_terminal_routes_match_retrospective_and_notification_result(
 
     detail = client.get(f"/acquisition/missions/{mission.id}")
     fragment = client.get(f"/acquisition/missions/{mission.id}/status")
+    task_list = client.get("/acquisition/missions")
+    workbench_live = client.get("/workbench/live")
 
     assert retrospective["business_result"]["code"] == expected_code
     assert notification.kind == expected_kind
     assert notification.title == f"找客户任务{expected_label}"
-    for response in (detail, fragment):
+    for response in (detail, fragment, task_list, workbench_live):
         assert response.status_code == 200
         html = response.get_data(as_text=True)
         assert expected_label in html

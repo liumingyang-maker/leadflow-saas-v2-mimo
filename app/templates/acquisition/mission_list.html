@@ -1,0 +1,41 @@
+{% from "components/_shell.html" import shell %}
+{% call shell("任务 · LeadFlow") %}
+<nav class="lf-top-nav" aria-label="获客导航">
+  <a href="/workbench">今日工作台</a>
+  <a href="/acquisition/missions">任务</a>
+  <a href="/notifications">通知{% if view is defined and view.notifications_unread is defined and view.notifications_unread %}（{{ view.notifications_unread }}）{% endif %}</a>
+  <a href="/acquisition/missions/new">创建找客户任务</a>
+  <a href="/acquisition/products">产品知识</a>
+  <a href="/leads">CRM</a>
+</nav>
+<header class="lf-page-header">
+  <div>
+    <span class="lf-eyebrow">获客任务</span>
+    <h1 class="lf-page-title">任务</h1>
+    <p class="lf-muted">查看最近任务的执行状态和业务结果。</p>
+  </div>
+  <a class="lf-button lf-button-primary" href="/acquisition/missions/new">新建任务</a>
+</header>
+
+{% if missions %}
+<div class="lf-card-list lf-section">
+  {% for item in missions %}
+  <article class="lf-panel">
+    <div class="lf-status-row">
+      <strong>{{ item.name }}</strong>
+      {% if item.result %}
+      <span class="lf-badge lf-badge-{{ item.result.tone }}">{{ item.result.label }}</span>
+      {% else %}
+      <span class="lf-badge{% if item.execution_status == 'running' %} lf-badge-success{% endif %}">{{ {'draft':'待确认','queued':'排队中','running':'搜索中','paused':'已暂停'}.get(item.execution_status, item.execution_status) }}</span>
+      {% endif %}
+    </div>
+    {% if item.result %}<p>{{ item.result.summary }}</p>{% endif %}
+    <small class="lf-muted">创建于 {{ item.created_at.strftime('%Y-%m-%d %H:%M') }}</small>
+    <div><a class="lf-button" href="{{ item.target_url }}">查看任务</a></div>
+  </article>
+  {% endfor %}
+</div>
+{% else %}
+<div class="lf-empty-state"><strong>还没有任务</strong><span>创建任务后，执行状态和结果会显示在这里。</span><a class="lf-button lf-button-primary" href="/acquisition/missions/new">创建找客户任务</a></div>
+{% endif %}
+{% endcall %}

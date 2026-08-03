@@ -491,6 +491,63 @@ def test_latest_terminal_outcome_uses_completion_time_not_creation_time(
     assert view.failed_jobs == ()
 
 
+def test_workbench_recent_missions_are_bounded_tenant_scoped_and_share_result(
+    acquisition_app, seed_acquisition_mission
+) -> None:
+    from app.extensions import get_engine
+    from app.modules.acquisition.models import AcquisitionCandidate, AcquisitionMission
+    from app.modules.acquisition.workbench import load_workbench
+    from app.modules.jobs.models import Job
+
+    mission_ids = [
+        seed_acquisition_mission(tenant_id="t1", suffix=f"recent-{index}") for index in range(6)
+    ]
+    private_id = seed_acquisition_mission(tenant_id="t2", suffix="recent-private")
+    partial_id = mission_ids[0]
+    now = datetime.now(UTC)
+    with Session(get_engine(acquisition_app)) as db_session:
+        for index, mission_id in enumerate(mission_ids):
+            mission = db_session.get(AcquisitionMission, mission_id)
+            assert mission is not None
+            mission.status = "failed" if mission_id == partial_id else "completed"
+            mission.created_at = now - timedelta(days=index)
+        private = db_session.get(AcquisitionMission, private_id)
+        assert private is not None
+        private.status = "completed"
+        private.created_at = now + timedelta(days=1)
+        candidate = AcquisitionCandidate(
+            id="workbench-recent-partial-candidate",
+            tenant_id="t1",
+            mission_id=partial_id,
+            status="needs_evidence",
+            dedupe_key="domain:workbench-recent-partial.example",
+        )
+        db_session.add(candidate)
+        db_session.add(
+            Job(
+                tenant_id="t1",
+                job_type="website_verify",
+                status="failed",
+                error_code="source_unreachable",
+                payload_json=json.dumps({"candidate_id": candidate.id}),
+            )
+        )
+        db_session.commit()
+
+    view = load_workbench(acquisition_app, tenant_id="t1")
+
+    assert len(view.recent_missions) == 5
+    assert private_id not in {item.mission_id for item in view.recent_missions}
+    partial = next(item for item in view.recent_missions if item.mission_id == partial_id)
+    assert partial.result is not None
+    assert partial.result.label == "部分完成"
+    assert "待补证 1" in partial.result.summary
+    assert view.candidates_to_review == 0
+    assert view.needs_evidence == 1
+    assert view.jobs_failed == 0
+    assert view.next_action_url == f"/acquisition/missions/{partial_id}"
+
+
 def test_unresolved_failure_count_is_not_truncated_with_display_list(acquisition_app) -> None:
     from app.extensions import get_engine
     from app.modules.acquisition.workbench import load_workbench

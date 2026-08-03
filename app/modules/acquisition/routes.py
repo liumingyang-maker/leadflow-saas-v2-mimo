@@ -20,7 +20,10 @@ from app.modules.acquisition.contracts import (
     MissionCreateInput,
 )
 from app.modules.acquisition.manual_evidence import ManualEvidenceError
-from app.modules.acquisition.mission_results import resolve_mission_result
+from app.modules.acquisition.mission_results import (
+    list_mission_result_summaries,
+    resolve_mission_result,
+)
 from app.modules.acquisition.models import AcquisitionCandidate
 from app.modules.acquisition.repository import (
     AssessmentRepository,
@@ -133,6 +136,18 @@ def register_acquisition_routes(app: Flask) -> None:
             ),
             400 if error else 200,
         )
+
+    @app.get("/acquisition/missions")
+    @tenant_required(app)
+    def acquisition_mission_list():
+        tenant_id, _actor_id = _identity()
+        with Session(get_engine(app)) as db_session:
+            missions = list_mission_result_summaries(
+                db_session,
+                tenant_id=tenant_id,
+                limit=50,
+            )
+        return render_template("acquisition/mission_list.html", missions=missions)
 
     @app.route("/acquisition/missions/new", methods=["GET", "POST"])
     @tenant_required(app)
