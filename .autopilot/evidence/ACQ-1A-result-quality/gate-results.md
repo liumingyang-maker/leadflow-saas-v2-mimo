@@ -61,3 +61,19 @@ PASS:
 The first replay exposed a product-level defect: with only 16% signal coverage, evidence quality scores of 67 and 86 were both converted into `暂定 B`. This confused source quality with customer value and provided no useful ordering.
 
 The corrected `priority-v4` behavior retains the evidence quality score but sets lead priority to unknown until at least one product, buyer-role, or industry-fit signal exists. The primary card now says `待补充匹配证据`. This correction was implemented only after a focused regression test failed on the observed output, then passed after the minimal scoring and presentation changes.
+
+## Local runtime smoke
+
+The verified branch was started locally with exactly one Web process and one RQ Worker against the existing Solo SQLite database. The existing affected Mission was then reassessed without network/provider calls.
+
+| Check | Result |
+|---|---|
+| `/health/ready` | PASS — HTTP 200, database `ok`, Redis `ok` |
+| Latest assessment version | PASS — all 10 candidates use `priority-v4` |
+| Candidate states | 8 `needs_evidence`, 2 `rejected` |
+| Authenticated Mission render | PASS — HTTP 200, 10 cards |
+| Primary labels | PASS — 8 `待补充匹配证据`, 2 `已拒绝` |
+| Analysis conclusions | PASS — 10 of 10 present |
+| Re-verification actions | PASS — 8 of 8 incomplete candidates |
+| Semantic violations | PASS — 0 |
+| Reconciler pass | PASS — 0 additional Mission changes required |
