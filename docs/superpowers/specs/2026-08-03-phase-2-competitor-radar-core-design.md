@@ -104,6 +104,7 @@ The first release does not include:
 - paid data providers;
 - automatic competitor approval;
 - full-page HTML retention or arbitrary web archives;
+- historical-archive services such as Wayback as a substitute for current official-site evidence;
 - visual pixel diffs;
 - cross-tenant or cross-Mission evidence reuse;
 - global company alias resolution or a company master-data system;
@@ -132,15 +133,19 @@ checks, audit events, and a minimal profile UI. No crawling or Diff is introduce
 Add the manual-run endpoint, `RadarRun` state machine, static page discovery, bounded structured
 snapshots, identical-content dedupe, partial-result preservation, and Browser fallback orchestration.
 
-### P2-3: Commercial Change Signals
-
-Add deterministic structured Diff, materiality rules, evidence-bound AI classification, first-run
-baseline behavior, signal acknowledgement/dismissal, notifications, and the change workbench.
-
-### P2-4: Dealer Relationship and Candidate Conversion
+### P2-3: Dealer Relationship and Candidate Conversion
 
 Add evidence-strength resolution, relationship lifecycle, active-Mission checks, idempotent
 Candidate/Evidence conversion through an Acquisition public service, and review-queue integration.
+
+This subproject intentionally follows P2-2 so the first useful vertical slice can create review
+candidates from an initial structured baseline without waiting for change monitoring.
+
+### P2-4: Commercial Change Signals
+
+Add deterministic structured Diff, materiality rules, evidence-bound AI classification, first-run
+baseline behavior, run-level drift protection, signal acknowledgement/dismissal, aggregated
+notifications, and the change workbench.
 
 ### P2-5: Runtime, Security, and Quality Gate
 
@@ -288,10 +293,10 @@ radar_competitor_suggest
          -> zero or more BrowserResearchRun/browser Jobs when allowed
          -> radar_reconcile observes child terminal state
          -> radar_finalize
-              -> deterministic Diff
-              -> evidence-bound classification
               -> relationship resolution
-              -> bounded Candidate conversion
+              -> bounded Candidate conversion when conversion gates pass
+              -> deterministic Diff when the change-signals slice is installed
+              -> evidence-bound classification when a deterministic delta exists
 ```
 
 Rules:
@@ -334,7 +339,16 @@ The homepage is the only implicit seed. Additional URLs must be either:
 - observed as same-domain links in a successfully fetched seed page.
 
 MiMo may classify observed links into approved page kinds but may not invent arbitrary crawl URLs.
-Every selected URL passes canonicalization and fetch policy independently.
+If MiMo is unavailable or its output is invalid, a versioned deterministic classifier uses only URL
+path and anchor-text patterns. Unresolved observed links remain `other`/`unclassified`; they are not
+silently dropped and do not become arbitrary crawl targets. Every selected URL passes
+canonicalization and fetch policy independently.
+
+A deterministic static-page classifier may emit `dynamic_content_suspected` only when an otherwise
+successful HTML response contains bounded application-shell markers and insufficient visible
+business content. If Browser fallback is disabled or policy-blocked, this becomes the actionable
+reason `requires_browser`. A normal page with no dealer relationship is
+`no_relationships_observed`, never `requires_browser` merely because extraction returned no result.
 
 Pinned default budgets per Run:
 
@@ -370,6 +384,20 @@ type, materiality, and explanation. It may not add a fact absent from the determ
 When classification fails, the structural Diff is retained as `informational` with a safe
 `classification_unavailable` reason rather than discarded.
 
+Before releasing signals or conversions, a versioned run-level drift guard compares coverage and
+version metadata with the previous valid run. A Run becomes `possible_baseline_drift` when at least
+three page identities are comparable and any of these deterministic conditions holds:
+
+- the extractor/parser version changed across the compared baseline;
+- at least half of previously valid page identities are now missing or invalid; or
+- at least 60% of previously stable structured facts disappear across two or more page kinds.
+
+The drift state preserves snapshots and Diffs but suppresses automatic Candidate conversion,
+relationship-removal application, and material-change notifications. The UI shows the contributing
+counts and reason codes and lets the user explicitly accept the new baseline after inspection. The
+system never resets a baseline automatically. Thresholds are part of the versioned detector policy
+and may change only through a new policy version and offline replay evidence.
+
 ### 9.5 Relationship evidence strength
 
 `confirmed` requires all of the following:
@@ -385,11 +413,22 @@ When classification fails, the structural Diff is retained as `informational` wi
 Missing any requirement downgrades the result to `likely` or `unknown`. No country-specific domain,
 language, or keyword branch may act as an automatic confirmation rule.
 
+Automatic Candidate conversion is narrower than relationship confirmation:
+
+- `dealer` and `distributor` may convert automatically only when evidence strength is `confirmed`;
+- `service_network` remains proposed for human conversion and is eligible only when the destination
+  Mission explicitly targets `repair_network` and the relationship corpus covers that behavior;
+- `partner` remains a suggestion and never converts automatically in the first release;
+- relationship type `unknown`, or evidence strength `likely`/`unknown`, never converts
+  automatically.
+
 ### 9.6 Candidate conversion
 
 Conversion calls a new Acquisition public service; Radar does not write Candidate tables directly.
 The service requires tenant ID, an active destination Mission, the relationship ID, normalized
-domain, and evidence references.
+domain, relationship type, `confirmed` evidence strength, and evidence references. It rejects any
+automatic request that does not satisfy the type gates in Section 9.5 or comes from a Run marked
+`possible_baseline_drift`.
 
 It atomically:
 
@@ -410,12 +449,16 @@ the existing re-verification action when the candidate is worth deeper research.
 P2-0 is a hard gate. Radar Browser fallback remains disabled until all of these are proven:
 
 - Browser runtime is disabled by default and controlled by Capability plus tenant/system policy;
-- the Browser Worker receives Redis, bounded budgets, and artifact storage only;
+- the Browser Worker receives a dedicated Browser transport Redis/ACL namespace containing only
+  bounded descriptors/results, bounded budgets, and artifact storage; it cannot read application
+  Jobs or business queues;
 - the Browser Worker receives no database URL, Flask secret, tenant secret, MiMo key, or user token;
 - each run has an isolated temporary directory, browser context, lease, heartbeat, and process group;
 - success, failure, cancellation, timeout, and Worker crash all clean up processes and temporary data;
 - network policy blocks localhost, private, link-local, reserved, and cloud metadata ranges at the
   container/network layer, not only in Python URL validation;
+- the Browser container can reach only its dedicated transport Redis and an egress proxy; the
+  browser process has no direct route to the application Redis, Web, database, or Docker network;
 - redirect and final URLs are validated again;
 - output passes the shared sanitizer and prompt-injection policy;
 - artifact manifests are size-bounded, content-addressed, and tenant-owned when imported;
@@ -471,11 +514,19 @@ be inspected but new Candidate conversion is paused until a new active Mission i
 Show stage, bounded budgets, per-page status, static/Browser source method, safe failures, snapshots,
 changes, relationship decisions, and audit timestamps. Do not render raw JSON by default.
 
+When a Radar relationship becomes a Candidate, both the relationship view and Candidate card show
+`来自竞品 <name> 的官方经销商/分销商页面`, the source URL, observed time, relationship type, and
+trust tier. The UI also states that this proves a competitor relationship only; it does not prove
+the target company's country, contactability, buying intent, or own-site identity.
+
 ### 12.5 Workbench integration
 
 Add compact counts for open material changes, proposed relationships, and partial/failed manual Runs.
 Notifications are created only for material changes, newly confirmed relationships, and terminal
 partial/failed Runs. Baselines and identical runs produce no notification.
+
+Each `(tenant_id, profile_id, run_id)` creates at most one Radar notification. It aggregates counts
+and at most five prioritized highlights; the Run detail remains the source for the complete list.
 
 All POST actions require CSRF and tenant authorization. Status, severity, and actions must be
 understandable without relying on color. Keyboard focus and mobile layout are acceptance gates.
@@ -517,12 +568,14 @@ Create minimal, redacted fixtures rather than copies of real pages. Include at l
 cases spanning multiple regions and languages:
 
 - stable page with style/navigation-only changes;
+- coordinated whole-site redesign and extractor-version drift;
 - product introduction and removal;
 - target-market addition/removal;
 - dealer addition/removal;
 - directory, association, government, media, recruitment, login, privacy, and generic platform
   false positives;
 - competitor official page linking a real dealer;
+- confirmed dealer/distributor, broad partner, and service-network conversion counterexamples;
 - outbound link without a relationship claim;
 - same company represented by duplicate URLs;
 - global company with headquarters and opportunity market differing;
@@ -570,6 +623,7 @@ It contains no credentials or copyrighted full-page content.
 | confirmed relationship precision on labeled corpus | >= 70% |
 | material-change precision on labeled corpus | >= 80% |
 | baseline false change notifications | 0 |
+| Radar notifications per profile/Run | <= 1 |
 | duplicate Candidate on retry | 0 |
 | manual single-profile Run target | <= 5 minutes under initial bounded staging sample |
 
@@ -592,7 +646,8 @@ execution baseline. Expected changes are:
 ### P2-1 through P2-4
 
 - create the `app/modules/radar/` files listed in Section 6;
-- create new forward-only migrations after the actual current head;
+- create one forward-only migration per subproject after the actual current head: P2-1 owns
+  suggestions/profiles, P2-2 owns runs/snapshots, P2-3 owns relationships, and P2-4 owns signals;
 - register a radar blueprint and radar Job handlers;
 - add templates and minimal CSS within the existing design system;
 - add focused `tests/radar/` suites and only the necessary Acquisition boundary tests;
