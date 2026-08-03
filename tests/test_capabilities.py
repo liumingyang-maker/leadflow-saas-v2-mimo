@@ -159,6 +159,18 @@ def test_testing_app_keeps_browser_research_disabled_by_default(monkeypatch):
     assert app.config["CAPABILITIES"][Capability.BROWSER_RESEARCH] is False
 
 
+def test_testing_app_keeps_competitor_radar_disabled_by_default(monkeypatch):
+    monkeypatch.delenv("COMPETITOR_RADAR_ENABLED", raising=False)
+    monkeypatch.setenv("SECRET_KEY", "test-secret-key-that-is-long-enough")
+
+    from app import create_app
+    from app.core.capabilities import Capability, resolve_capabilities
+
+    assert resolve_capabilities("internal")[Capability.COMPETITOR_RADAR] is False
+    app = create_app("testing")
+    assert app.config["CAPABILITIES"][Capability.COMPETITOR_RADAR] is False
+
+
 def test_browser_runtime_is_disabled_and_bounded(monkeypatch):
     for name in (
         "BROWSER_RESEARCH_ENABLED",
