@@ -537,6 +537,7 @@ def test_terminal_routes_match_retrospective_and_notification_result(
         assert expected_label in html
         assert f"lf-badge-{expected_tone}" in html
         assert retrospective["business_result"]["summary"] in html
+    assert retrospective["business_result"]["action_label"] in fragment.get_data(as_text=True)
 
 
 def test_candidate_detail_uses_progressive_disclosure(acquisition_app, logged_in_client) -> None:

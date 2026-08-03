@@ -629,6 +629,10 @@ def retry_candidate_verification(
             if terminal_notification is not None:
                 terminal_notification.status = "archived"
                 terminal_notification.read_at = now
+        if mission.status == "completed":
+            retrospective = _json_object(mission.retrospective_json)
+            retrospective["business_result_pending_reconcile"] = True
+            mission.retrospective_json = canonical_json(retrospective)
         if mission.status == "failed":
             mission.status = "running"
             mission.finished_at = None

@@ -2220,7 +2220,12 @@ def test_retry_does_not_demote_completed_mission_with_usable_candidate(
     acquisition_app, monkeypatch
 ) -> None:
     from app.extensions import get_engine
-    from app.modules.acquisition.models import AcquisitionCandidate, AcquisitionMission
+    from app.modules.acquisition.jobs import reconcile_missions
+    from app.modules.acquisition.models import (
+        AcquisitionCandidate,
+        AcquisitionMission,
+        Notification,
+    )
     from app.modules.acquisition.service import retry_candidate_verification
     from app.modules.jobs.models import Job
 
@@ -2236,14 +2241,26 @@ def test_retry_does_not_demote_completed_mission_with_usable_candidate(
         assert mission is not None
         mission.status = "completed"
         mission.finished_at = completed_at
-        session.add(
-            AcquisitionCandidate(
-                tenant_id="t1",
-                mission_id="m1",
-                status="eligible",
-                eligibility_code="eligible",
-                dedupe_key="domain:retry-completed-usable.example",
-            )
+        mission.retrospective_json = json.dumps({"business_result": {"code": "ready"}})
+        session.add_all(
+            [
+                AcquisitionCandidate(
+                    tenant_id="t1",
+                    mission_id="m1",
+                    status="eligible",
+                    eligibility_code="eligible",
+                    dedupe_key="domain:retry-completed-usable.example",
+                ),
+                Notification(
+                    id="retry-completed-visible",
+                    tenant_id="t1",
+                    kind="mission_completed",
+                    title="Current completed result",
+                    target_url="/acquisition/missions/m1",
+                    status="unread",
+                    dedupe_key="mission-terminal:m1:completed",
+                ),
+            ]
         )
         session.commit()
 
@@ -2273,8 +2290,47 @@ def test_retry_does_not_demote_completed_mission_with_usable_candidate(
     with Session(get_engine(acquisition_app)) as session:
         mission = session.get(AcquisitionMission, "m1")
         retry_candidate = session.get(AcquisitionCandidate, retry_candidate_id)
+        notification = session.get(Notification, "retry-completed-visible")
         assert mission is not None
         assert mission.status == "completed"
         assert mission.finished_at == completed_at.replace(tzinfo=None)
         assert retry_candidate is not None
         assert retry_candidate.status == "verifying"
+        assert notification is not None
+        assert notification.status == "archived"
+
+    assert reconcile_missions(acquisition_app, tenant_id="t1", now=datetime.now(UTC)) == 0
+
+    with Session(get_engine(acquisition_app)) as session:
+        mission = session.get(AcquisitionMission, "m1")
+        assert mission is not None
+        assert mission.status == "completed"
+        assert mission.finished_at == completed_at.replace(tzinfo=None)
+
+        retry_job = session.scalar(
+            select(Job).where(
+                Job.tenant_id == "t1",
+                Job.job_type == "website_verify",
+            )
+        )
+        retry_candidate = session.get(AcquisitionCandidate, retry_candidate_id)
+        assert retry_job is not None
+        assert retry_candidate is not None
+        retry_job.status = "succeeded"
+        retry_job.finished_at = datetime.now(UTC)
+        retry_candidate.status = "eligible"
+        retry_candidate.eligibility_code = "eligible"
+        session.commit()
+
+    assert reconcile_missions(acquisition_app, tenant_id="t1", now=datetime.now(UTC)) == 1
+
+    with Session(get_engine(acquisition_app)) as session:
+        mission = session.get(AcquisitionMission, "m1")
+        notification = session.get(Notification, "retry-completed-visible")
+        assert mission is not None
+        retrospective = json.loads(mission.retrospective_json)
+        assert mission.status == "completed"
+        assert retrospective["business_result"]["code"] == "ready"
+        assert "business_result_pending_reconcile" not in retrospective
+        assert notification is not None
+        assert notification.status == "unread"

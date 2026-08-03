@@ -170,6 +170,22 @@ class CandidateRepository:
         )
         return list(self.session.scalars(query))
 
+    def list_for_missions(
+        self, mission_ids: Sequence[str], *, tenant_id: str
+    ) -> Sequence[AcquisitionCandidate]:
+        tenant_id = _require_tenant(tenant_id)
+        if not mission_ids:
+            return []
+        query = (
+            select(AcquisitionCandidate)
+            .where(
+                AcquisitionCandidate.mission_id.in_(mission_ids),
+                AcquisitionCandidate.tenant_id == tenant_id,
+            )
+            .order_by(AcquisitionCandidate.created_at.desc())
+        )
+        return list(self.session.scalars(query))
+
     def list_by_status(
         self, statuses: Sequence[str], *, tenant_id: str
     ) -> Sequence[AcquisitionCandidate]:
@@ -413,7 +429,14 @@ class NotificationRepository:
         return _add_tenant_owned(self.session, notification, tenant_id=tenant_id)
 
     def mark_read(self, notification_id: str, *, tenant_id: str) -> Notification | None:
-        notification = self.get(notification_id, tenant_id=tenant_id)
+        tenant_id = _require_tenant(tenant_id)
+        notification = self.session.scalar(
+            select(Notification).where(
+                Notification.id == notification_id,
+                Notification.tenant_id == tenant_id,
+                Notification.status != "archived",
+            )
+        )
         if notification is not None:
             notification.status = "read"
             notification.read_at = datetime.now(UTC)

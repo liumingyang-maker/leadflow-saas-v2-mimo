@@ -4,7 +4,8 @@ from __future__ import annotations
 
 import json
 import re
-from collections.abc import Sequence
+from collections import defaultdict
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime
 
@@ -75,26 +76,49 @@ def resolve_mission_result(
             ACQUISITION_RESULT_JOB_TYPES, tenant_id=tenant_id
         )
     )
-    facts = BusinessResultFacts(
-        execution_status=mission.status,
-        candidates=tuple(
-            CandidateResultFact(row.id, row.status, evidence_counts.get(row.id, 0))
-            for row in candidate_rows
-        ),
-        jobs=_mission_job_facts(
+    return _resolve_business_result(
+        mission,
+        candidate_rows,
+        evidence_counts,
+        _mission_job_facts(
             mission.id,
             candidate_ids,
             job_rows,
             tenant_id=tenant_id,
         ),
     )
-    return BusinessResultResolver.resolve(facts)
 
 
 def list_mission_result_summaries(
     session: Session, tenant_id: str, limit: int = 50
 ) -> tuple[MissionResultSummary, ...]:
     missions = MissionRepository(session).list_recent(tenant_id=tenant_id, limit=limit)
+    terminal_missions = [
+        mission for mission in missions if mission.status not in _ACTIVE_MISSION_STATUSES
+    ]
+    terminal_ids = tuple(mission.id for mission in terminal_missions)
+    candidate_rows = tuple(
+        CandidateRepository(session).list_for_missions(terminal_ids, tenant_id=tenant_id)
+    )
+    candidates_by_mission: dict[str, list[AcquisitionCandidate]] = defaultdict(list)
+    for candidate in candidate_rows:
+        candidates_by_mission[candidate.mission_id].append(candidate)
+    evidence_counts = EvidenceRepository(session).counts_by_candidate_ids(
+        tuple(candidate.id for candidate in candidate_rows), tenant_id=tenant_id
+    )
+    job_rows = tuple(
+        JobRepository(session).list_by_types_for_tenant(
+            ACQUISITION_RESULT_JOB_TYPES, tenant_id=tenant_id
+        )
+        if terminal_missions
+        else ()
+    )
+    jobs_by_mission = _mission_job_facts_by_mission(
+        terminal_ids,
+        candidate_rows,
+        job_rows,
+        tenant_id=tenant_id,
+    )
     return tuple(
         MissionResultSummary(
             mission_id=mission.id,
@@ -103,13 +127,35 @@ def list_mission_result_summaries(
             result=(
                 None
                 if mission.status in _ACTIVE_MISSION_STATUSES
-                else resolve_mission_result(session, mission, tenant_id=tenant_id)
+                else _resolve_business_result(
+                    mission,
+                    tuple(candidates_by_mission.get(mission.id, ())),
+                    evidence_counts,
+                    jobs_by_mission.get(mission.id, ()),
+                )
             ),
             target_url=f"/acquisition/missions/{mission.id}",
             created_at=mission.created_at,
         )
         for mission in missions
     )
+
+
+def _resolve_business_result(
+    mission: AcquisitionMission,
+    candidates: Sequence[AcquisitionCandidate],
+    evidence_counts: Mapping[str, int],
+    jobs: Sequence[JobResultFact],
+) -> BusinessResult:
+    facts = BusinessResultFacts(
+        execution_status=mission.status,
+        candidates=tuple(
+            CandidateResultFact(row.id, row.status, evidence_counts.get(row.id, 0))
+            for row in candidates
+        ),
+        jobs=tuple(jobs),
+    )
+    return BusinessResultResolver.resolve(facts)
 
 
 def _mission_job_facts(
@@ -134,7 +180,61 @@ def _mission_job_facts(
         if identity is not None:
             relevant.append((job, identity))
 
-    relevant.sort(key=lambda pair: _outcome_key(pair[0]))
+    return _ordered_job_facts(relevant)
+
+
+def _mission_job_facts_by_mission(
+    mission_ids: Sequence[str],
+    candidates: Sequence[AcquisitionCandidate],
+    jobs: Sequence[Job],
+    *,
+    tenant_id: str,
+) -> dict[str, tuple[JobResultFact, ...]]:
+    mission_scope = set(mission_ids)
+    if not mission_scope:
+        return {}
+    candidate_missions = {
+        candidate.id: candidate.mission_id
+        for candidate in candidates
+        if candidate.tenant_id == tenant_id and candidate.mission_id in mission_scope
+    }
+    candidate_ids_by_mission: dict[str, set[str]] = defaultdict(set)
+    for candidate_id, mission_id in candidate_missions.items():
+        candidate_ids_by_mission[mission_id].add(candidate_id)
+
+    relevant_by_mission: dict[str, list[tuple[Job, str]]] = defaultdict(list)
+    for job in jobs:
+        if job.tenant_id != tenant_id or job.job_type not in ACQUISITION_RESULT_JOB_TYPES:
+            continue
+        payload = _payload_object(job.payload_json)
+        if job.job_type in {"acquisition_plan", "web_discovery"}:
+            mission_id = payload.get("mission_id")
+            if not isinstance(mission_id, str) or mission_id not in mission_scope:
+                continue
+        else:
+            candidate_id = payload.get("candidate_id")
+            if not isinstance(candidate_id, str) or not _SAFE_ID.fullmatch(candidate_id):
+                continue
+            mission_id = candidate_missions.get(candidate_id)
+            if mission_id is None:
+                continue
+        identity = _mission_job_identity(
+            job,
+            payload,
+            mission_id=mission_id,
+            candidate_ids=candidate_ids_by_mission.get(mission_id, set()),
+        )
+        if identity is not None:
+            relevant_by_mission[mission_id].append((job, identity))
+
+    return {
+        mission_id: _ordered_job_facts(relevant)
+        for mission_id, relevant in relevant_by_mission.items()
+    }
+
+
+def _ordered_job_facts(relevant: Sequence[tuple[Job, str]]) -> tuple[JobResultFact, ...]:
+    ordered = sorted(relevant, key=lambda pair: job_outcome_key(pair[0]))
     return tuple(
         JobResultFact(
             identity=identity,
@@ -143,7 +243,7 @@ def _mission_job_facts(
             error_code=job.error_code,
             outcome_order=order,
         )
-        for order, (job, identity) in enumerate(relevant, start=1)
+        for order, (job, identity) in enumerate(ordered, start=1)
     )
 
 
@@ -185,7 +285,7 @@ def _payload_object(payload_json: str) -> dict[str, object]:
     return payload if isinstance(payload, dict) else {}
 
 
-def _outcome_key(job: Job) -> tuple[float, float, float, str]:
+def job_outcome_key(job: Job) -> tuple[float, float, float, str]:
     return (
         _timestamp(job.finished_at or job.updated_at or job.created_at),
         _timestamp(job.updated_at),

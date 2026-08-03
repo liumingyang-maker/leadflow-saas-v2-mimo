@@ -23,6 +23,7 @@ _HUMAN_DECISION_FIELDS = (
 BusinessResultCode = Literal[
     "ready", "needs_review", "partial", "no_results", "failed", "cancelled"
 ]
+TERMINAL_JOB_OUTCOME_STATUSES = frozenset({"succeeded", "failed", "cancelled"})
 
 
 @dataclass(frozen=True)
@@ -95,6 +96,8 @@ class BusinessResultResolver:
     def resolve(cls, facts: BusinessResultFacts) -> BusinessResult:
         latest_jobs: dict[str, JobResultFact] = {}
         for job in facts.jobs:
+            if job.status not in TERMINAL_JOB_OUTCOME_STATUSES:
+                continue
             current = latest_jobs.get(job.identity)
             if current is None or job.outcome_order > current.outcome_order:
                 latest_jobs[job.identity] = job

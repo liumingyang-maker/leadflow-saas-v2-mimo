@@ -135,6 +135,41 @@ def test_later_success_supersedes_failure_for_same_logical_identity() -> None:
     assert result.counts.failed_jobs == 0
 
 
+@pytest.mark.parametrize("retry_status", ["queued", "running", "retrying"])
+def test_non_terminal_retry_does_not_supersede_latest_terminal_failure(
+    retry_status: str,
+) -> None:
+    result = BusinessResultResolver.resolve(
+        BusinessResultFacts(
+            "completed",
+            candidates=(CandidateResultFact("c", "eligible", evidence_count=1),),
+            jobs=(
+                JobResultFact("verify:c", "website_verify", "failed", "timeout", 1),
+                JobResultFact("verify:c", "website_verify", retry_status, "", 2),
+            ),
+        )
+    )
+
+    assert result.code == "partial"
+    assert result.counts.failed_jobs == 1
+
+
+def test_cancelled_terminal_retry_supersedes_prior_failure() -> None:
+    result = BusinessResultResolver.resolve(
+        BusinessResultFacts(
+            "completed",
+            candidates=(CandidateResultFact("c", "eligible", evidence_count=1),),
+            jobs=(
+                JobResultFact("verify:c", "website_verify", "failed", "timeout", 1),
+                JobResultFact("verify:c", "website_verify", "cancelled", "", 2),
+            ),
+        )
+    )
+
+    assert result.code == "ready"
+    assert result.counts.failed_jobs == 0
+
+
 def test_success_for_another_identity_does_not_hide_failure() -> None:
     result = BusinessResultResolver.resolve(
         BusinessResultFacts(
@@ -376,3 +411,63 @@ def test_recent_mission_summaries_keep_active_execution_state(
     assert by_id[active_id].result is None
     assert by_id[terminal_id].result is not None
     assert by_id[terminal_id].result.code == "no_results"
+
+
+def test_recent_mission_summaries_batch_terminal_projection_queries(
+    acquisition_app, seed_acquisition_mission
+) -> None:
+    import json
+
+    from sqlalchemy import event
+    from sqlalchemy.orm import Session
+
+    from app.extensions import get_engine
+    from app.modules.acquisition.mission_results import list_mission_result_summaries
+    from app.modules.acquisition.models import AcquisitionCandidate, AcquisitionMission
+    from app.modules.jobs.models import Job
+
+    mission_ids = [
+        seed_acquisition_mission(tenant_id="t1", suffix=f"summary-batch-{index}")
+        for index in range(3)
+    ]
+    engine = get_engine(acquisition_app)
+    with Session(engine) as session:
+        for index, mission_id in enumerate(mission_ids):
+            mission = session.get(AcquisitionMission, mission_id)
+            assert mission is not None
+            mission.status = "completed"
+            candidate_id = f"candidate-summary-batch-{index}"
+            session.add(
+                AcquisitionCandidate(
+                    id=candidate_id,
+                    tenant_id="t1",
+                    mission_id=mission_id,
+                    status="eligible",
+                    dedupe_key=f"domain:summary-batch-{index}.example",
+                )
+            )
+            session.add(
+                Job(
+                    tenant_id="t1",
+                    job_type="candidate_assess",
+                    status="succeeded",
+                    payload_json=json.dumps({"candidate_id": candidate_id}),
+                )
+            )
+        session.commit()
+
+    select_statements: list[str] = []
+
+    def count_selects(_connection, _cursor, statement, _parameters, _context, _many):
+        if statement.lstrip().upper().startswith("SELECT"):
+            select_statements.append(statement)
+
+    event.listen(engine, "before_cursor_execute", count_selects)
+    try:
+        with Session(engine) as session:
+            summaries = list_mission_result_summaries(session, "t1", limit=50)
+    finally:
+        event.remove(engine, "before_cursor_execute", count_selects)
+
+    assert {item.mission_id for item in summaries} == set(mission_ids)
+    assert len(select_statements) <= 4

@@ -80,6 +80,37 @@ def test_candidate_status_map_is_tenant_scoped(acquisition_app, seed_acquisition
     assert statuses == {own.id: "needs_evidence"}
 
 
+def test_candidate_batch_projection_is_tenant_scoped(acquisition_app, seed_acquisition_mission):
+    from app.extensions import get_engine
+    from app.modules.acquisition.models import AcquisitionCandidate
+    from app.modules.acquisition.repository import CandidateRepository
+
+    own_mission = seed_acquisition_mission(tenant_id="t1", suffix="batch-own")
+    other_mission = seed_acquisition_mission(tenant_id="t2", suffix="batch-other")
+    with Session(get_engine(acquisition_app)) as session:
+        own = AcquisitionCandidate(
+            tenant_id="t1",
+            mission_id=own_mission,
+            status="eligible",
+            dedupe_key="domain:batch-own.example",
+        )
+        other = AcquisitionCandidate(
+            tenant_id="t2",
+            mission_id=other_mission,
+            status="eligible",
+            dedupe_key="domain:batch-other.example",
+        )
+        session.add_all([own, other])
+        session.commit()
+
+        repo = CandidateRepository(session)
+        rows = repo.list_for_missions([own_mission, other_mission], tenant_id="t1")
+        assert [row.id for row in rows] == [own.id]
+        assert repo.list_for_missions([], tenant_id="t1") == []
+        with pytest.raises(ValueError, match="tenant_id is required"):
+            repo.list_for_missions([own_mission], tenant_id=" ")
+
+
 def test_candidate_repository_atomically_marks_only_needs_evidence_candidate_verifying(
     acquisition_app, seed_acquisition_mission
 ):

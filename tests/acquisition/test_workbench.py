@@ -933,6 +933,41 @@ def test_notification_routes_hide_other_tenants(acquisition_app, logged_in_clien
     assert own_read.status_code in {302, 303}
 
 
+def test_stale_read_request_cannot_resurrect_archived_notification(
+    acquisition_app, logged_in_client
+) -> None:
+    from app.extensions import get_engine
+    from app.modules.acquisition.models import Notification
+    from app.modules.acquisition.workbench import notify_once
+
+    client, tenant_id = logged_in_client
+    notification = notify_once(
+        acquisition_app,
+        tenant_id=tenant_id,
+        kind="mission_completed",
+        dedupe_key="mission:stale-tab:completed",
+        title="Stale terminal notification",
+        target_url="/workbench",
+    )
+    with Session(get_engine(acquisition_app)) as db_session:
+        stored = db_session.get(Notification, notification.id)
+        assert stored is not None
+        stored.status = "archived"
+        db_session.commit()
+
+    before = client.get("/notifications")
+    stale_read = client.post(f"/notifications/{notification.id}/read")
+    after = client.get("/notifications")
+
+    assert "Stale terminal notification" not in before.get_data(as_text=True)
+    assert stale_read.status_code == 404
+    assert "Stale terminal notification" not in after.get_data(as_text=True)
+    with Session(get_engine(acquisition_app)) as db_session:
+        stored = db_session.get(Notification, notification.id)
+        assert stored is not None
+        assert stored.status == "archived"
+
+
 def test_lead_route_applies_acquisition_filters(acquisition_app, logged_in_client) -> None:
     from app.extensions import get_engine
     from app.modules.leads.models import Lead

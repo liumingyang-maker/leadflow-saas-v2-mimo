@@ -19,7 +19,7 @@ from app.integrations.ai.contracts import CountryResearchPlan
 from app.integrations.ai.mimo import ProviderError, build_mimo_provider
 from app.integrations.web.fetcher import FetchError, StaticFetcher
 from app.modules.acquisition.assessment import compute_candidate_assessment
-from app.modules.acquisition.mission_results import resolve_mission_result
+from app.modules.acquisition.mission_results import job_outcome_key, resolve_mission_result
 from app.modules.acquisition.models import (
     AcquisitionCandidate,
     AcquisitionMission,
@@ -38,7 +38,11 @@ from app.modules.acquisition.repository import (
     ProductKnowledgeRepository,
     ProviderStatusRepository,
 )
-from app.modules.acquisition.states import update_assessment_state_if_mutable
+from app.modules.acquisition.states import (
+    TERMINAL_JOB_OUTCOME_STATUSES,
+    USABLE_CANDIDATE_STATUSES,
+    update_assessment_state_if_mutable,
+)
 from app.modules.acquisition.versions import (
     ELIGIBILITY_POLICY_VERSION,
     PRIORITY_SCORE_VERSION,
@@ -582,29 +586,49 @@ ACQUISITION_HANDLERS = {
 }
 
 
-def reconcile_missions(app, *, tenant_id: str | None = None, now: datetime) -> int:
+def reconcile_missions(
+    app,
+    *,
+    tenant_id: str | None = None,
+    now: datetime,
+    _skip_recovery: bool = False,
+) -> int:
     """Recover stale jobs, derive Mission status, and dedupe notifications."""
 
     from app.modules.jobs.worker import recover_stale_jobs
 
-    recover_stale_jobs(app)
+    if not _skip_recovery:
+        recover_stale_jobs(app)
+    if tenant_id is None:
+        return sum(
+            reconcile_missions(
+                app,
+                tenant_id=scoped_tenant_id,
+                now=now,
+                _skip_recovery=True,
+            )
+            for scoped_tenant_id in _reconciliation_tenant_ids(app)
+        )
+    if not tenant_id.strip():
+        raise ValueError("tenant_id is required")
     changed = 0
     with Session(get_engine(app)) as session:
         provider_query = select(ProviderStatus).where(
             ProviderStatus.provider == "mimo",
             ProviderStatus.status == "failed",
             ProviderStatus.consecutive_failures >= 3,
+            ProviderStatus.tenant_id == tenant_id,
         )
-        if tenant_id is not None:
-            provider_query = provider_query.where(ProviderStatus.tenant_id == tenant_id)
         for provider_status in session.scalars(provider_query):
             _ensure_provider_failure_notification(session, provider_status)
 
-        job_query = select(Job).where(Job.job_type.in_(_ACQUISITION_JOB_TYPES))
-        candidate_query = select(AcquisitionCandidate)
-        if tenant_id is not None:
-            job_query = job_query.where(Job.tenant_id == tenant_id)
-            candidate_query = candidate_query.where(AcquisitionCandidate.tenant_id == tenant_id)
+        job_query = select(Job).where(
+            Job.job_type.in_(_ACQUISITION_JOB_TYPES),
+            Job.tenant_id == tenant_id,
+        )
+        candidate_query = select(AcquisitionCandidate).where(
+            AcquisitionCandidate.tenant_id == tenant_id
+        )
         all_jobs = list(session.scalars(job_query))
         candidates = list(session.scalars(candidate_query))
         candidate_by_id = {item.id: item for item in candidates}
@@ -618,10 +642,9 @@ def reconcile_missions(app, *, tenant_id: str | None = None, now: datetime) -> i
             if candidate.status in {"discovered", "verifying"}
         }
         mission_query = select(AcquisitionMission).where(
-            AcquisitionMission.status.in_(["queued", "running", "completed", "failed"])
+            AcquisitionMission.status.in_(["queued", "running", "completed", "failed"]),
+            AcquisitionMission.tenant_id == tenant_id,
         )
-        if tenant_id is not None:
-            mission_query = mission_query.where(AcquisitionMission.tenant_id == tenant_id)
         missions = [
             mission
             for mission in session.scalars(mission_query)
@@ -638,10 +661,22 @@ def reconcile_missions(app, *, tenant_id: str | None = None, now: datetime) -> i
                 if item.tenant_id == mission.tenant_id
                 and _job_belongs_to_mission(item, mission.id, candidate_missions)
             ]
-            if not mission_jobs:
+            backfill_without_jobs = (
+                not mission_jobs
+                and mission.status in {"completed", "failed"}
+                and _mission_needs_result_backfill(mission)
+            )
+            if not mission_jobs and not backfill_without_jobs:
                 continue
             if any(item.status in _ACTIVE_JOB_STATUSES for item in mission_jobs):
-                mission.status = "running"
+                has_usable_result = any(
+                    item.tenant_id == mission.tenant_id
+                    and item.mission_id == mission.id
+                    and item.status in USABLE_CANDIDATE_STATUSES
+                    for item in candidates
+                )
+                if mission.status != "completed" or not has_usable_result:
+                    mission.status = "running"
                 continue
             if any(item.status not in _TERMINAL_JOB_STATUSES for item in mission_jobs):
                 continue
@@ -673,7 +708,11 @@ def reconcile_missions(app, *, tenant_id: str | None = None, now: datetime) -> i
                 candidates=mission_candidates,
                 jobs=mission_jobs,
             )
-            next_status = "failed" if result.counts.failed_jobs else "completed"
+            next_status = (
+                mission.status
+                if backfill_without_jobs
+                else ("failed" if result.counts.failed_jobs else "completed")
+            )
             if mission.status != next_status:
                 mission.status = next_status
                 result = resolve_mission_result(
@@ -683,6 +722,7 @@ def reconcile_missions(app, *, tenant_id: str | None = None, now: datetime) -> i
                     candidates=mission_candidates,
                     jobs=mission_jobs,
                 )
+            retrospective.pop("business_result_pending_reconcile", None)
             retrospective.update(mission_retrospective_payload(result, mission_candidates))
             mission.retrospective_json = canonical_json(retrospective)
             mission.finished_at = now
@@ -745,22 +785,46 @@ def reconcile_missions(app, *, tenant_id: str | None = None, now: datetime) -> i
     return changed
 
 
+def _reconciliation_tenant_ids(app) -> tuple[str, ...]:
+    with Session(get_engine(app)) as session:
+        tenant_ids = set(session.scalars(select(AcquisitionMission.tenant_id).distinct()))
+        tenant_ids.update(
+            session.scalars(
+                select(ProviderStatus.tenant_id)
+                .where(
+                    ProviderStatus.provider == "mimo",
+                    ProviderStatus.status == "failed",
+                    ProviderStatus.consecutive_failures >= 3,
+                )
+                .distinct()
+            )
+        )
+    return tuple(sorted(tenant_id for tenant_id in tenant_ids if tenant_id))
+
+
 def _failed_verification_candidates(
     jobs: list[Job],
     *,
     candidate_by_id: dict[str, AcquisitionCandidate],
 ) -> list[AcquisitionCandidate]:
-    failed_candidates: dict[str, AcquisitionCandidate] = {}
+    latest_jobs: dict[str, Job] = {}
     for job in jobs:
-        if job.job_type != "website_verify" or job.status != "failed":
+        if job.job_type != "website_verify" or job.status not in TERMINAL_JOB_OUTCOME_STATUSES:
             continue
         candidate_id = _json_object(job.payload_json).get("candidate_id")
         if not isinstance(candidate_id, str):
             continue
         candidate = candidate_by_id.get(candidate_id)
-        if candidate is not None and candidate.tenant_id == job.tenant_id:
-            failed_candidates[candidate.id] = candidate
-    return list(failed_candidates.values())
+        if candidate is None or candidate.tenant_id != job.tenant_id:
+            continue
+        current = latest_jobs.get(candidate_id)
+        if current is None or job_outcome_key(job) > job_outcome_key(current):
+            latest_jobs[candidate_id] = job
+    return [
+        candidate_by_id[candidate_id]
+        for candidate_id, job in latest_jobs.items()
+        if job.status == "failed"
+    ]
 
 
 def _reconcile_failed_verification_candidates(
@@ -780,6 +844,8 @@ def _reconcile_failed_verification_candidates(
 
 def _mission_needs_result_backfill(mission: AcquisitionMission) -> bool:
     retrospective = _json_object(mission.retrospective_json)
+    if retrospective.get("business_result_pending_reconcile") is True:
+        return True
     business_result = retrospective.get("business_result")
     return not (
         isinstance(business_result, dict) and business_result.get("code") in _BUSINESS_RESULT_CODES
