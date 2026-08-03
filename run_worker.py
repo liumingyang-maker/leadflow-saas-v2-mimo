@@ -31,16 +31,19 @@ def _worker_class_for(platform_name: str):
 
 
 def _run_recovery() -> None:
-    """Run stale-job recovery and mission reconciliation with their own DB connection."""
-    from datetime import UTC, datetime
+    """Recover persisted jobs and enqueue tenant-owned mission reconciliation jobs."""
 
     from app import create_app
-    from app.modules.acquisition.jobs import reconcile_missions
+    from app.modules.acquisition.jobs import enqueue_mission_reconciliations
+    from app.modules.jobs.worker import recover_stale_jobs
 
     app = create_app(os.environ.get("APP_ENV", "development"))
-    count = reconcile_missions(app, now=datetime.now(UTC))
-    if count:
-        print(f"Reconciled {count} acquisition mission(s)")
+    recovered = recover_stale_jobs(app)
+    queued = enqueue_mission_reconciliations(app)
+    if recovered:
+        print(f"Recovered {recovered} background job(s)")
+    if queued:
+        print(f"Queued {queued} tenant reconciliation job(s)")
 
 
 if __name__ == "__main__":

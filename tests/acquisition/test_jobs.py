@@ -359,48 +359,117 @@ def test_reconciler_does_not_repair_superseded_verification_failure(
         assert result["counts"]["verification_failed"] == 0
 
 
-def test_global_reconciler_dispatches_each_tenant_as_a_scoped_unit(
+def test_reconciler_repairs_cancelled_latest_verification_for_retry(
     acquisition_app, seed_acquisition_mission
 ) -> None:
     from app.extensions import get_engine
     from app.modules.acquisition.jobs import reconcile_missions
-    from app.modules.acquisition.models import AcquisitionMission, Notification
+    from app.modules.acquisition.models import AcquisitionCandidate, AcquisitionMission
     from app.modules.jobs.models import Job
 
-    mission_ids = {
-        "t1": seed_acquisition_mission(tenant_id="t1", suffix="global-dispatch-t1"),
-        "t2": seed_acquisition_mission(tenant_id="t2", suffix="global-dispatch-t2"),
-    }
+    mission_id = seed_acquisition_mission(suffix="cancelled-verification")
+    candidate_id = "candidate-cancelled-verification"
     with Session(get_engine(acquisition_app)) as session:
-        for tenant_id, mission_id in mission_ids.items():
-            mission = session.get(AcquisitionMission, mission_id)
-            assert mission is not None
-            mission.status = "running"
-            session.add(
-                Job(
-                    tenant_id=tenant_id,
-                    job_type="acquisition_plan",
-                    status="succeeded",
-                    payload_json=json.dumps({"mission_id": mission_id}),
-                )
+        mission = session.get(AcquisitionMission, mission_id)
+        assert mission is not None
+        mission.status = "running"
+        session.add(
+            AcquisitionCandidate(
+                id=candidate_id,
+                tenant_id="t1",
+                mission_id=mission_id,
+                status="verifying",
+                dedupe_key="domain:cancelled-verification.example",
             )
+        )
+        session.add(
+            Job(
+                tenant_id="t1",
+                job_type="website_verify",
+                status="cancelled",
+                payload_json=json.dumps({"candidate_id": candidate_id}),
+                finished_at=datetime.now(UTC),
+            )
+        )
         session.commit()
 
-    assert reconcile_missions(acquisition_app, now=datetime.now(UTC)) == 2
+    assert reconcile_missions(acquisition_app, tenant_id="t1", now=datetime.now(UTC)) == 1
 
     with Session(get_engine(acquisition_app)) as session:
-        for tenant_id, mission_id in mission_ids.items():
-            mission = session.get(AcquisitionMission, mission_id)
-            notification = session.scalar(
-                select(Notification).where(
-                    Notification.tenant_id == tenant_id,
-                    Notification.target_url == f"/acquisition/missions/{mission_id}",
-                )
+        candidate = session.get(AcquisitionCandidate, candidate_id)
+        mission = session.get(AcquisitionMission, mission_id)
+        assert candidate is not None
+        assert candidate.status == "needs_evidence"
+        assert mission is not None
+        assert mission.status == "completed"
+        result = json.loads(mission.retrospective_json)["business_result"]
+        assert result["code"] == "needs_review"
+        assert result["counts"]["failed_jobs"] == 0
+
+
+def test_reconciliation_scheduler_persists_one_tenant_owned_job_per_non_deleted_tenant(
+    acquisition_app, monkeypatch
+) -> None:
+    from app.extensions import get_engine
+    from app.modules.accounts.models import Tenant
+    from app.modules.acquisition.jobs import enqueue_mission_reconciliations
+    from app.modules.jobs.models import Job
+
+    enqueued: list[str] = []
+
+    class FakeQueue:
+        def enqueue(self, _handler, job_id, **_kwargs):
+            enqueued.append(job_id)
+            return type("RQJob", (), {"id": f"rq-{job_id}"})()
+
+    monkeypatch.setattr("app.modules.jobs.service._queue", lambda _app, _queue_name: FakeQueue())
+    with Session(get_engine(acquisition_app)) as session:
+        session.add_all(
+            [
+                Tenant(id="t1", company_name="Tenant 1", status="active"),
+                Tenant(id="t2", company_name="Tenant 2", status="suspended"),
+                Tenant(id="deleted", company_name="Deleted", status="deleted"),
+            ]
+        )
+        session.commit()
+
+    assert enqueue_mission_reconciliations(acquisition_app) == 2
+    assert enqueue_mission_reconciliations(acquisition_app) == 0
+
+    with Session(get_engine(acquisition_app)) as session:
+        jobs = list(
+            session.scalars(
+                select(Job).where(Job.job_type == "acquisition_reconcile").order_by(Job.tenant_id)
             )
-            assert mission is not None
-            assert mission.status == "completed"
-            assert notification is not None
-            assert notification.tenant_id == tenant_id
+        )
+
+    assert [(job.tenant_id, job.status, json.loads(job.payload_json)) for job in jobs] == [
+        ("t1", "queued", {}),
+        ("t2", "queued", {}),
+    ]
+    assert enqueued == [job.id for job in jobs]
+
+
+def test_reconciliation_job_handler_uses_owning_tenant(acquisition_app, monkeypatch) -> None:
+    from app.modules.acquisition.jobs import handle_acquisition_reconcile
+    from app.modules.jobs.models import Job
+
+    calls: list[str] = []
+
+    def fake_reconcile(_app, *, tenant_id, now):
+        assert now.tzinfo is UTC
+        calls.append(tenant_id)
+        return 3
+
+    monkeypatch.setattr("app.modules.acquisition.jobs.reconcile_missions", fake_reconcile)
+    result = handle_acquisition_reconcile(
+        acquisition_app,
+        Job(tenant_id="t1", job_type="acquisition_reconcile"),
+        {},
+    )
+
+    assert calls == ["t1"]
+    assert result == {"stage": "reconciled", "changed": 3}
 
 
 def test_reconciler_distinguishes_no_results_from_execution_failure(

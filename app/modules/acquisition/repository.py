@@ -430,17 +430,16 @@ class NotificationRepository:
 
     def mark_read(self, notification_id: str, *, tenant_id: str) -> Notification | None:
         tenant_id = _require_tenant(tenant_id)
-        notification = self.session.scalar(
-            select(Notification).where(
+        return self.session.scalar(
+            update(Notification)
+            .where(
                 Notification.id == notification_id,
                 Notification.tenant_id == tenant_id,
-                Notification.status != "archived",
+                Notification.status == "unread",
             )
+            .values(status="read", read_at=datetime.now(UTC))
+            .returning(Notification)
         )
-        if notification is not None:
-            notification.status = "read"
-            notification.read_at = datetime.now(UTC)
-        return notification
 
 
 class ProviderStatusRepository:

@@ -578,38 +578,66 @@ def handle_candidate_assess(app, job: Job, payload: dict[str, Any]) -> dict[str,
     }
 
 
+def handle_acquisition_reconcile(app, job: Job, payload: dict[str, object]) -> dict[str, object]:
+    """Run reconciliation only for the tenant that owns the persisted Job."""
+
+    validate_handler_payload(payload, allowed=set(), required=set())
+    changed = reconcile_missions(app, tenant_id=job.tenant_id, now=datetime.now(UTC))
+    return {"stage": "reconciled", "changed": changed}
+
+
 ACQUISITION_HANDLERS = {
     "acquisition_plan": handle_acquisition_plan,
     "web_discovery": handle_web_discovery,
     "website_verify": handle_website_verify,
     "candidate_assess": handle_candidate_assess,
+    "acquisition_reconcile": handle_acquisition_reconcile,
 }
+
+
+def enqueue_mission_reconciliations(app) -> int:
+    """Persist one reconciliation Job for each non-deleted control-plane tenant."""
+
+    from app.modules.accounts.models import Tenant
+
+    with Session(get_engine(app)) as session:
+        tenant_ids = tuple(
+            session.scalars(select(Tenant.id).where(Tenant.status != "deleted").order_by(Tenant.id))
+        )
+
+    queued = 0
+    for tenant_id in tenant_ids:
+        with Session(get_engine(app)) as session:
+            active_job_id = session.scalar(
+                select(Job.id)
+                .where(
+                    Job.tenant_id == tenant_id,
+                    Job.job_type == "acquisition_reconcile",
+                    Job.status.in_(_ACTIVE_JOB_STATUSES),
+                )
+                .limit(1)
+            )
+        if active_job_id is not None:
+            continue
+        create_and_enqueue(
+            app,
+            tenant_id=tenant_id,
+            job_type="acquisition_reconcile",
+            payload={},
+        )
+        queued += 1
+    return queued
 
 
 def reconcile_missions(
     app,
     *,
-    tenant_id: str | None = None,
+    tenant_id: str,
     now: datetime,
-    _skip_recovery: bool = False,
 ) -> int:
-    """Recover stale jobs, derive Mission status, and dedupe notifications."""
+    """Derive Mission status and notifications inside one explicit tenant scope."""
 
-    from app.modules.jobs.worker import recover_stale_jobs
-
-    if not _skip_recovery:
-        recover_stale_jobs(app)
-    if tenant_id is None:
-        return sum(
-            reconcile_missions(
-                app,
-                tenant_id=scoped_tenant_id,
-                now=now,
-                _skip_recovery=True,
-            )
-            for scoped_tenant_id in _reconciliation_tenant_ids(app)
-        )
-    if not tenant_id.strip():
+    if not isinstance(tenant_id, str) or not tenant_id.strip():
         raise ValueError("tenant_id is required")
     changed = 0
     with Session(get_engine(app)) as session:
@@ -785,23 +813,6 @@ def reconcile_missions(
     return changed
 
 
-def _reconciliation_tenant_ids(app) -> tuple[str, ...]:
-    with Session(get_engine(app)) as session:
-        tenant_ids = set(session.scalars(select(AcquisitionMission.tenant_id).distinct()))
-        tenant_ids.update(
-            session.scalars(
-                select(ProviderStatus.tenant_id)
-                .where(
-                    ProviderStatus.provider == "mimo",
-                    ProviderStatus.status == "failed",
-                    ProviderStatus.consecutive_failures >= 3,
-                )
-                .distinct()
-            )
-        )
-    return tuple(sorted(tenant_id for tenant_id in tenant_ids if tenant_id))
-
-
 def _failed_verification_candidates(
     jobs: list[Job],
     *,
@@ -823,7 +834,7 @@ def _failed_verification_candidates(
     return [
         candidate_by_id[candidate_id]
         for candidate_id, job in latest_jobs.items()
-        if job.status == "failed"
+        if job.status in {"failed", "cancelled"}
     ]
 
 
@@ -997,8 +1008,12 @@ def _main() -> int:
     from app import create_app
 
     app = create_app()
-    changed = reconcile_missions(app, tenant_id=args.tenant_id, now=datetime.now(UTC))
-    print(f"Reconciled {changed} acquisition mission(s)")
+    if args.tenant_id:
+        changed = reconcile_missions(app, tenant_id=args.tenant_id, now=datetime.now(UTC))
+        print(f"Reconciled {changed} acquisition mission(s)")
+    else:
+        queued = enqueue_mission_reconciliations(app)
+        print(f"Queued {queued} tenant reconciliation job(s)")
     return 0
 
 
