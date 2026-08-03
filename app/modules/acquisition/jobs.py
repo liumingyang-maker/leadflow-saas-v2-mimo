@@ -50,6 +50,14 @@ from app.modules.jobs.service import create_and_enqueue
 
 _ACTIVE_JOB_STATUSES = {"queued", "running", "retrying"}
 _TERMINAL_JOB_STATUSES = {"succeeded", "failed", "cancelled"}
+_BUSINESS_RESULT_CODES = {
+    "ready",
+    "needs_review",
+    "partial",
+    "no_results",
+    "failed",
+    "cancelled",
+}
 _ACQUISITION_JOB_TYPES = {
     "acquisition_plan",
     "web_discovery",
@@ -609,16 +617,18 @@ def reconcile_missions(app, *, tenant_id: str | None = None, now: datetime) -> i
             for candidate in failed_verification_candidates
             if candidate.status in {"discovered", "verifying"}
         }
-        mission_filter = AcquisitionMission.status.in_(["queued", "running"])
-        if repairable_terminal_ids:
-            mission_filter = mission_filter | (
-                AcquisitionMission.status.in_(["completed", "failed"])
-                & AcquisitionMission.id.in_(repairable_terminal_ids)
-            )
-        mission_query = select(AcquisitionMission).where(mission_filter)
+        mission_query = select(AcquisitionMission).where(
+            AcquisitionMission.status.in_(["queued", "running", "completed", "failed"])
+        )
         if tenant_id is not None:
             mission_query = mission_query.where(AcquisitionMission.tenant_id == tenant_id)
-        missions = list(session.scalars(mission_query))
+        missions = [
+            mission
+            for mission in session.scalars(mission_query)
+            if mission.status in {"queued", "running"}
+            or mission.id in repairable_terminal_ids
+            or _mission_needs_result_backfill(mission)
+        ]
         candidate_missions = {item.id: item.mission_id for item in candidate_by_id.values()}
 
         for mission in missions:
@@ -766,6 +776,14 @@ def _reconcile_failed_verification_candidates(
             and candidate.status in {"discovered", "verifying"}
         ):
             candidate.status = "needs_evidence"
+
+
+def _mission_needs_result_backfill(mission: AcquisitionMission) -> bool:
+    retrospective = _json_object(mission.retrospective_json)
+    business_result = retrospective.get("business_result")
+    return not (
+        isinstance(business_result, dict) and business_result.get("code") in _BUSINESS_RESULT_CODES
+    )
 
 
 def _job_belongs_to_mission(job: Job, mission_id: str, candidate_missions: dict[str, str]) -> bool:

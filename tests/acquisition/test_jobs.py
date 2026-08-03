@@ -492,6 +492,89 @@ def test_reconciler_repairs_inconsistent_completed_mission_and_notification(
         assert "验证失败 1" in current[0].body
 
 
+def test_reconciler_backfills_legacy_failed_mission_result_notification(
+    acquisition_app, seed_acquisition_mission
+) -> None:
+    from app.extensions import get_engine
+    from app.modules.acquisition.jobs import reconcile_missions
+    from app.modules.acquisition.models import (
+        AcquisitionCandidate,
+        AcquisitionMission,
+        Notification,
+    )
+    from app.modules.audit.models import AuditEvent
+    from app.modules.jobs.models import Job
+
+    mission_id = seed_acquisition_mission(suffix="legacy-result-backfill")
+    candidate_id = "candidate-legacy-result-backfill"
+    failed_key = f"mission-terminal:{mission_id}:failed"
+    with Session(get_engine(acquisition_app)) as session:
+        mission = session.get(AcquisitionMission, mission_id)
+        assert mission is not None
+        mission.status = "failed"
+        mission.retrospective_json = json.dumps({"candidate_count": 1, "partial_success": False})
+        session.add_all(
+            [
+                AcquisitionCandidate(
+                    id=candidate_id,
+                    tenant_id="t1",
+                    mission_id=mission_id,
+                    status="needs_evidence",
+                    dedupe_key="domain:legacy-result-backfill.example",
+                ),
+                Job(
+                    tenant_id="t1",
+                    job_type="website_verify",
+                    status="failed",
+                    error_code="source_unreachable",
+                    payload_json=json.dumps({"candidate_id": candidate_id}),
+                ),
+                Notification(
+                    tenant_id="t1",
+                    kind="mission_failed",
+                    title="Acquisition mission failed",
+                    body="Mission legacy-result-backfill: 0 usable candidates",
+                    target_url=f"/acquisition/missions/{mission_id}",
+                    status="unread",
+                    dedupe_key=failed_key,
+                ),
+            ]
+        )
+        session.commit()
+
+    now = datetime.now(UTC)
+    assert reconcile_missions(acquisition_app, tenant_id="t1", now=now) == 1
+    assert reconcile_missions(acquisition_app, tenant_id="t1", now=now) == 0
+
+    with Session(get_engine(acquisition_app)) as session:
+        mission = session.get(AcquisitionMission, mission_id)
+        notification = session.scalar(
+            select(Notification).where(
+                Notification.tenant_id == "t1",
+                Notification.dedupe_key == failed_key,
+            )
+        )
+        audit_count = session.scalar(
+            select(func.count())
+            .select_from(AuditEvent)
+            .where(
+                AuditEvent.tenant_id == "t1",
+                AuditEvent.action == "acquisition_mission.result_resolved",
+                AuditEvent.target_id == mission_id,
+            )
+        )
+
+    assert mission is not None
+    assert json.loads(mission.retrospective_json)["business_result"]["code"] == "partial"
+    assert notification is not None
+    assert notification.kind == "mission_partial"
+    assert notification.title == "找客户任务部分完成"
+    assert "已发现 1" in notification.body
+    assert "待补证 1" in notification.body
+    assert "查看部分结果" in notification.body
+    assert audit_count == 1
+
+
 def test_reconciler_refreshes_existing_current_terminal_notification(
     acquisition_app, seed_acquisition_mission
 ):
@@ -576,14 +659,19 @@ def test_reconciler_refreshes_existing_current_terminal_notification(
 
 
 @pytest.mark.parametrize(
-    ("mission_status", "candidate_status"),
-    [("completed", "eligible"), ("failed", "needs_evidence")],
+    ("mission_status", "candidate_status", "job_status", "result_code"),
+    [
+        ("completed", "eligible", "succeeded", "ready"),
+        ("failed", "needs_evidence", "failed", "partial"),
+    ],
 )
 def test_reconciler_skips_consistent_terminal_missions(
     acquisition_app,
     seed_acquisition_mission,
     mission_status,
     candidate_status,
+    job_status,
+    result_code,
 ):
     from app.extensions import get_engine
     from app.modules.acquisition.jobs import reconcile_missions
@@ -600,6 +688,7 @@ def test_reconciler_skips_consistent_terminal_missions(
         mission = session.get(AcquisitionMission, mission_id)
         assert mission is not None
         mission.status = mission_status
+        mission.retrospective_json = json.dumps({"business_result": {"code": result_code}})
         session.add(
             AcquisitionCandidate(
                 id=candidate_id,
@@ -613,8 +702,8 @@ def test_reconciler_skips_consistent_terminal_missions(
             Job(
                 tenant_id="t1",
                 job_type="website_verify",
-                status="failed",
-                error_code="source_unreachable",
+                status=job_status,
+                error_code="source_unreachable" if job_status == "failed" else "",
                 payload_json=json.dumps({"candidate_id": candidate_id}),
             )
         )
