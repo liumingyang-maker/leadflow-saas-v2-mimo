@@ -1,0 +1,53 @@
+{% from "components/_shell.html" import shell %}
+{% from "components/_forms.html" import csrf_input %}
+{% call shell("Competitor suggestions · LeadFlow") %}
+<nav class="lf-top-nav" aria-label="Workspace navigation">
+  <a href="/workbench">Workbench</a>
+  <a href="/acquisition/missions">Acquisition missions</a>
+  <a href="/radar">Competitor Radar</a>
+</nav>
+<header class="lf-page-header">
+  <div>
+    <span class="lf-eyebrow">Mission: {{ mission.name }}</span>
+    <h1 class="lf-page-title">Competitor suggestions</h1>
+    <p class="lf-muted">Every suggestion needs a cited source and a human decision. This action does not fetch pages or start a monitoring run.</p>
+  </div>
+  <a class="lf-button" href="/radar">Back to Radar</a>
+</header>
+
+{% if error %}<div class="lf-alert" role="alert">{{ error }}</div>{% endif %}
+<section class="lf-panel lf-section" aria-labelledby="request-suggestions">
+  <h2 id="request-suggestions">Request suggestions</h2>
+  <p>Runs only when you submit this form. No background schedule is configured.</p>
+  <form method="post" action="{{ url_for('radar_request_suggestions', mission_id=mission.id) }}">
+    {{ csrf_input() }}
+    <button class="lf-button lf-button-primary" type="submit">Request cited suggestions</button>
+  </form>
+</section>
+
+<section class="lf-section" aria-labelledby="suggestion-list">
+  <h2 id="suggestion-list">Suggestions</h2>
+  {% if suggestions %}
+  <div class="lf-card-list">
+    {% for suggestion in suggestions %}
+    <article class="lf-panel">
+      <div class="lf-status-row"><strong>{{ suggestion.company_name }}</strong><span>Status: {{ suggestion.status }}</span></div>
+      <p><a href="{{ suggestion.official_url }}" rel="noreferrer">{{ suggestion.official_url }}</a></p>
+      <h3>Why it may match</h3>
+      <ul>{% for code in suggestion.reason_codes %}<li>{{ code }}</li>{% endfor %}</ul>
+      <h3>Cited evidence</h3>
+      <ul>{% for evidence in suggestion.evidence %}<li><a href="{{ evidence.source_url }}" rel="noreferrer">{{ evidence.source_url }}</a><br>{{ evidence.excerpt }}</li>{% endfor %}</ul>
+      {% if suggestion.status == 'proposed' %}
+      <div class="lf-status-row">
+        <form method="post" action="{{ url_for('radar_approve_suggestion', suggestion_id=suggestion.id) }}">{{ csrf_input() }}<button class="lf-button lf-button-primary" type="submit">Approve profile</button></form>
+        <form method="post" action="{{ url_for('radar_dismiss_suggestion', suggestion_id=suggestion.id) }}">{{ csrf_input() }}<button class="lf-button" type="submit">Dismiss</button></form>
+      </div>
+      {% endif %}
+    </article>
+    {% endfor %}
+  </div>
+  {% else %}
+  <div class="lf-empty-state"><strong>No suggestions yet</strong><span>Use the manual request above to ask for cited proposals.</span></div>
+  {% endif %}
+</section>
+{% endcall %}

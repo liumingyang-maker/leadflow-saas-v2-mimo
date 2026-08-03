@@ -1,0 +1,22 @@
+{% from "components/_shell.html" import shell %}
+{% call shell(profile.company_name ~ " · Competitor Radar") %}
+<nav class="lf-top-nav" aria-label="Workspace navigation">
+  <a href="/workbench">Workbench</a>
+  <a href="/radar">Competitor Radar</a>
+</nav>
+<header class="lf-page-header">
+  <div>
+    <span class="lf-eyebrow">Approved competitor profile</span>
+    <h1 class="lf-page-title">{{ profile.company_name }}</h1>
+    <p>Status: {{ profile.status }}</p>
+  </div>
+  <a class="lf-button" href="{{ url_for('radar_suggestions', mission_id=profile.mission_id) }}">Back to suggestions</a>
+</header>
+<section class="lf-panel lf-section">
+  <dl class="lf-dl">
+    <dt>Official URL</dt><dd><a href="{{ profile.official_url }}" rel="noreferrer">{{ profile.official_url }}</a></dd>
+    <dt>Canonical domain</dt><dd>{{ profile.canonical_domain }}</dd>
+    <dt>Monitoring state</dt><dd>No monitoring run has been started. This profile is only an approved manual record.</dd>
+  </dl>
+</section>
+{% endcall %}

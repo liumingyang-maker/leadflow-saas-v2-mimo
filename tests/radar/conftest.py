@@ -60,3 +60,35 @@ def seed_radar_mission(radar_app):
         return mission_id
 
     return seed
+
+
+@pytest.fixture
+def radar_logged_in_client(radar_app):
+    from sqlalchemy import select
+    from sqlalchemy.orm import Session
+
+    from app.extensions import get_engine
+    from app.modules.accounts.models import EmailToken, Tenant
+
+    client = radar_app.test_client()
+    client.post(
+        "/register",
+        data={
+            "email": "radar-owner@example.com",
+            "password": "safe-password-123",
+            "company_name": "Radar Owner",
+        },
+    )
+    with Session(get_engine(radar_app)) as session:
+        token = session.scalars(
+            select(EmailToken.token).where(EmailToken.token_type == "verify")
+        ).one()
+        tenant_id = session.scalars(select(Tenant.id)).one()
+    client.get(f"/verify-email/{token}")
+    client.post(
+        "/login",
+        data={"email": "radar-owner@example.com", "password": "safe-password-123"},
+    )
+    with client.session_transaction() as browser_session:
+        actor_id = str(browser_session["user_id"])
+    return client, tenant_id, actor_id

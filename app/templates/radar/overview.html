@@ -1,0 +1,51 @@
+{% from "components/_shell.html" import shell %}
+{% call shell("Competitor Radar · LeadFlow") %}
+<nav class="lf-top-nav" aria-label="Workspace navigation">
+  <a href="/workbench">Workbench</a>
+  <a href="/acquisition/missions">Acquisition missions</a>
+  <a href="/radar" aria-current="page">Competitor Radar</a>
+  <a href="/leads">CRM</a>
+</nav>
+<header class="lf-page-header">
+  <div>
+    <span class="lf-eyebrow">Manual review</span>
+    <h1 class="lf-page-title">Competitor Radar</h1>
+    <p class="lf-muted">Request cited suggestions for an active mission, then approve or dismiss them yourself.</p>
+  </div>
+</header>
+
+<section class="lf-section" aria-labelledby="radar-missions">
+  <h2 id="radar-missions">Active missions</h2>
+  {% if missions %}
+  <div class="lf-card-list">
+    {% for mission in missions %}
+    <article class="lf-panel">
+      <strong>{{ mission.name }}</strong>
+      <p>Status: {{ mission.status }}</p>
+      <a class="lf-button" href="{{ url_for('radar_suggestions', mission_id=mission.id) }}">Review suggestions</a>
+    </article>
+    {% endfor %}
+  </div>
+  {% else %}
+  <div class="lf-empty-state"><strong>No active missions</strong><span>Queue, run, or pause an acquisition mission before requesting competitor suggestions.</span></div>
+  {% endif %}
+</section>
+
+<section class="lf-section" aria-labelledby="radar-profiles">
+  <h2 id="radar-profiles">Approved competitor profiles</h2>
+  {% if profiles %}
+  <div class="lf-card-list">
+    {% for profile in profiles %}
+    <article class="lf-panel">
+      <strong>{{ profile.company_name }}</strong>
+      <p>Status: {{ profile.status }}</p>
+      <p><a href="{{ profile.official_url }}" rel="noreferrer">{{ profile.official_url }}</a></p>
+      <a class="lf-button" href="{{ url_for('radar_profile_detail', profile_id=profile.id) }}">View profile</a>
+    </article>
+    {% endfor %}
+  </div>
+  {% else %}
+  <div class="lf-empty-state"><strong>No profiles yet</strong><span>Approved suggestions will appear here. No monitoring run has been started.</span></div>
+  {% endif %}
+</section>
+{% endcall %}
