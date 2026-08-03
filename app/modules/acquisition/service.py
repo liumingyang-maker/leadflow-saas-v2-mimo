@@ -19,6 +19,7 @@ from sqlalchemy.orm import Session
 from app.extensions import get_engine
 from app.integrations.ai.contracts import CompanyExtractor, ExtractedCompanyFacts
 from app.integrations.web.fetcher import FetchResult, StaticFetcher
+from app.modules.acquisition.assessment import compute_candidate_assessment
 from app.modules.acquisition.contracts import (
     CandidateDecisionInput,
     CountryEvidenceInput,
@@ -54,12 +55,6 @@ from app.modules.acquisition.repository import (
     NotificationRepository,
     ProductKnowledgeRepository,
     SuggestionRepository,
-)
-from app.modules.acquisition.scoring import (
-    EligibilityFacts,
-    ScoreInput,
-    evaluate_gate,
-    score_candidate,
 )
 from app.modules.acquisition.states import (
     USABLE_CANDIDATE_STATUSES,
@@ -1248,86 +1243,37 @@ def _assess_candidate_in_session(
     tenant_id: str,
     provenance: AssessmentProvenance = MIMO_PROVENANCE,
 ) -> None:
-    observed = _json_object(candidate.observed_facts_json)
-    contact = _json_object(candidate.contact_json)
-    target = _json_object(mission.target_profile_json)
-    countries = {str(item).upper() for item in target.get("country_codes", [])}
-    country_status = candidate.country_resolution_status
-    gate_country = (
-        "mismatch"
-        if country_status == "confirmed"
-        and countries
-        and candidate.opportunity_country_code not in countries
-        else country_status
-    )
-    buyer_type = str(observed.get("buyer_type", "")).lower()
-    expected_buyers = {str(item).lower() for item in target.get("buyer_types", [])}
-    buyer_match = not buyer_type or not expected_buyers or buyer_type in expected_buyers
-    product_terms = list(observed.get("product_terms", []))
-    claims = list(observed.get("claims", []))
-    paths = list(contact.get("paths", []))
-    if contact.get("email"):
-        paths.append(str(contact["email"]))
-    combined = " ".join(
-        [candidate.company_name, buyer_type, *map(str, product_terms), json.dumps(claims)]
-    ).lower()
-    excluded = any(str(term).lower() in combined for term in target.get("exclude_terms", []))
-    gate = evaluate_gate(
-        EligibilityFacts(
-            country_status=gate_country,
-            buyer_type_match=buyer_match,
-            excluded_business=excluded,
-            independent_identity=bool(candidate.company_name and candidate.domain),
-            product_evidence=bool(product_terms or claims),
-            contact_path=bool(paths),
-        )
-    )
     evidence = [
         item
         for item in EvidenceRepository(session).list_for_candidate(
             candidate.id, tenant_id=tenant_id
         )
-        if item.validation_status == "valid"
     ]
-    trust = {"A": 100, "B": 80, "C": 60, "D": 40, "E": 20}
-    best_trust = max((trust.get(item.trust_tier, 0) for item in evidence), default=0)
-    score_input = ScoreInput(
-        product_relevance=85 if product_terms else None,
-        buyer_role=85 if buyer_type and buyer_match else (0 if buyer_type else None),
-        country_match=(
-            100 if gate_country == "confirmed" else (0 if gate_country == "mismatch" else None)
-        ),
-        company_size=None,
-        industry_match=70 if product_terms else None,
-        direct_purchase=None,
-        recent_activity=None,
-        competitor_signal=None,
-        signal_recency=None,
-        identity_quality=90 if candidate.company_name and candidate.domain else None,
-        source_trust=best_trust or None,
-        contactability=80 if paths else None,
-        independent_evidence=80 if len(evidence) >= 2 else (50 if evidence else None),
-        data_recency=90 if evidence else None,
+    configured_model_id = str(app.config.get("MIMO_MODEL", "mimo-v2.5"))
+    computation = compute_candidate_assessment(
+        candidate,
+        mission,
+        evidence,
+        mimo_model_id=configured_model_id,
     )
-    score = score_candidate(score_input)
-    bundle_hash = hashlib.sha256(
-        canonical_json(
-            sorted(
-                (item.canonical_url, item.content_hash, item.validation_status) for item in evidence
-            )
-        ).encode("utf-8")
-    ).hexdigest()
-    model_id = provenance.model_id or str(app.config.get("MIMO_MODEL", "mimo-v2.5"))
-    input_json = canonical_json(score_input.__dict__)
-    hard_gate_json = canonical_json(gate.__dict__)
-    score_breakdown_json = canonical_json(score.__dict__)
+    if computation.extraction_complete:
+        model_provider = provenance.provider
+        model_id = provenance.model_id or configured_model_id
+        prompt_version = provenance.prompt_version
+    else:
+        model_provider = computation.model_provider
+        model_id = computation.model_id
+        prompt_version = computation.prompt_version
+    input_json = canonical_json(computation.score_input.__dict__)
+    hard_gate_json = canonical_json(computation.gate.__dict__)
+    score_breakdown_json = canonical_json(computation.score.__dict__)
     assessments = AssessmentRepository(session)
     existing_assessment = assessments.find_input_version(
         candidate.id,
-        bundle_hash,
+        computation.evidence_bundle_hash,
         ELIGIBILITY_POLICY_VERSION,
         PRIORITY_SCORE_VERSION,
-        provenance.prompt_version,
+        prompt_version,
         model_id,
         tenant_id=tenant_id,
     )
@@ -1335,18 +1281,18 @@ def _assess_candidate_in_session(
         assessments.add(
             CandidateAssessment(
                 candidate_id=candidate.id,
-                evidence_bundle_hash=bundle_hash,
+                evidence_bundle_hash=computation.evidence_bundle_hash,
                 policy_version=ELIGIBILITY_POLICY_VERSION,
                 score_version=PRIORITY_SCORE_VERSION,
-                prompt_version=provenance.prompt_version,
-                model_provider=provenance.provider,
+                prompt_version=prompt_version,
+                model_provider=model_provider,
                 model_id=model_id,
                 input_json=input_json,
                 hard_gate_json=hard_gate_json,
                 score_breakdown_json=score_breakdown_json,
-                signal_coverage=score.signal_coverage,
-                priority_mode=score.priority_mode,
-                explanation="Deterministic evidence-aware assessment",
+                signal_coverage=computation.score.signal_coverage,
+                priority_mode=computation.score.priority_mode,
+                explanation=computation.explanation,
             ),
             tenant_id=tenant_id,
         )
@@ -1354,20 +1300,22 @@ def _assess_candidate_in_session(
         existing_assessment.input_json != input_json
         or existing_assessment.hard_gate_json != hard_gate_json
         or existing_assessment.score_breakdown_json != score_breakdown_json
-        or existing_assessment.signal_coverage != score.signal_coverage
-        or existing_assessment.priority_mode != score.priority_mode
+        or existing_assessment.signal_coverage != computation.score.signal_coverage
+        or existing_assessment.priority_mode != computation.score.priority_mode
     ):
         raise AcquisitionError("assessment conflicts with existing evidence version")
-    candidate.priority_score = score.priority_score
-    candidate.priority_band = score.priority_band
-    candidate.signal_coverage = score.signal_coverage
-    candidate.ai_confidence = score.data_quality_score or 0
+    candidate.priority_score = computation.score.priority_score
+    candidate.priority_band = computation.score.priority_band
+    candidate.signal_coverage = computation.score.signal_coverage
+    candidate.ai_confidence = computation.score.data_quality_score or 0
     update_assessment_state_if_mutable(
         session,
         candidate,
         tenant_id=tenant_id,
-        status=gate.disposition,
-        eligibility_code=gate.reason_codes[0] if gate.reason_codes else "eligible",
+        status=computation.gate.disposition,
+        eligibility_code=(
+            computation.gate.reason_codes[0] if computation.gate.reason_codes else "eligible"
+        ),
     )
 
 

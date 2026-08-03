@@ -165,7 +165,10 @@ def score_candidate(value: ScoreInput) -> ScoreResult:
     total_coverage = round((fit_coverage * 50 + intent_coverage * 30 + quality_coverage * 20) / 100)
     if intent is not None:
         mode: PriorityMode = "full_v1"
-    elif fit is not None:
+    elif any(
+        item is not None
+        for item in (value.product_relevance, value.buyer_role, value.industry_match)
+    ):
         mode = "fit_quality_provisional_v1"
     else:
         mode = "evidence_only_provisional_v1"

@@ -18,6 +18,7 @@ from app.extensions import get_engine
 from app.integrations.ai.contracts import CountryResearchPlan
 from app.integrations.ai.mimo import ProviderError, build_mimo_provider
 from app.integrations.web.fetcher import FetchError, StaticFetcher
+from app.modules.acquisition.assessment import compute_candidate_assessment
 from app.modules.acquisition.models import (
     AcquisitionCandidate,
     AcquisitionMission,
@@ -36,19 +37,12 @@ from app.modules.acquisition.repository import (
     ProductKnowledgeRepository,
     ProviderStatusRepository,
 )
-from app.modules.acquisition.scoring import (
-    EligibilityFacts,
-    ScoreInput,
-    evaluate_gate,
-    score_candidate,
-)
 from app.modules.acquisition.states import (
     USABLE_CANDIDATE_STATUSES,
     update_assessment_state_if_mutable,
 )
 from app.modules.acquisition.versions import (
     ELIGIBILITY_POLICY_VERSION,
-    MIMO_EXTRACT_PROMPT_VERSION,
     PRIORITY_SCORE_VERSION,
 )
 from app.modules.audit.service import add_event
@@ -73,6 +67,16 @@ _TRANSIENT_CODES = {
     "transient",
     "source_timeout",
     "source_unreachable",
+}
+_FETCH_ERROR_EXCERPTS = {
+    "response_too_large": "Website exceeded the safe download size limit",
+    "source_timeout": "Website did not respond within the safe time limit",
+    "source_unreachable": "Website could not be reached by the static verifier",
+    "unsupported_content_type": "Website returned an unsupported evidence type",
+    "policy_url_blocked": "Website URL was blocked by the public-evidence safety policy",
+    "dns_changed": "Website DNS changed during verification and was blocked",
+    "invalid_redirect": "Website returned an invalid redirect",
+    "too_many_redirects": "Website exceeded the safe redirect limit",
 }
 
 
@@ -368,9 +372,14 @@ def handle_website_verify(app, job: Job, payload: dict[str, Any]) -> dict[str, A
     except FetchError as exc:
         _record_cost(app, tenant_id, mission_id, "static_fetcher", started, requests=1)
         _save_error_evidence(app, job, candidate_id, website, exc.code)
+        _enqueue_candidate_assessment_if_inactive(
+            app,
+            tenant_id=tenant_id,
+            candidate_id=candidate_id,
+        )
         raise AcquisitionJobError(
-            "source_unreachable",
-            "Candidate website could not be verified",
+            exc.code,
+            exc.safe_summary,
             retryable=exc.code in {"source_timeout", "source_unreachable"},
         ) from None
     _record_cost(
@@ -417,6 +426,11 @@ def handle_website_verify(app, job: Job, payload: dict[str, Any]) -> dict[str, A
     except ProviderError as exc:
         _record_cost(app, tenant_id, mission_id, "mimo", started, requests=1)
         _provider_failure(app, tenant_id, exc.code)
+        _enqueue_candidate_assessment_if_inactive(
+            app,
+            tenant_id=tenant_id,
+            candidate_id=candidate_id,
+        )
         raise AcquisitionJobError(exc.code, exc.safe_summary, retryable=exc.retryable) from None
     _record_cost(app, tenant_id, mission_id, "mimo", started, requests=1)
     _provider_success(app, tenant_id)
@@ -446,20 +460,34 @@ def handle_website_verify(app, job: Job, payload: dict[str, Any]) -> dict[str, A
         candidate.unknowns_json = canonical_json(facts.unknowns)
         session.commit()
 
+    _enqueue_candidate_assessment_if_inactive(
+        app,
+        tenant_id=tenant_id,
+        candidate_id=candidate_id,
+    )
+    return {"candidate_id": candidate_id, "evidence_count": 1, "stage": "verified"}
+
+
+def _enqueue_candidate_assessment_if_inactive(
+    app,
+    *,
+    tenant_id: str,
+    candidate_id: str,
+) -> None:
     with Session(get_engine(app)) as session:
         assessment_active = JobRepository(session).has_active_for_candidate(
             candidate_id,
             job_type="candidate_assess",
             tenant_id=tenant_id,
         )
-    if not assessment_active:
-        create_and_enqueue(
-            app,
-            tenant_id=tenant_id,
-            job_type="candidate_assess",
-            payload={"candidate_id": candidate_id},
-        )
-    return {"candidate_id": candidate_id, "evidence_count": 1, "stage": "verified"}
+    if assessment_active:
+        return
+    create_and_enqueue(
+        app,
+        tenant_id=tenant_id,
+        job_type="candidate_assess",
+        payload={"candidate_id": candidate_id},
+    )
 
 
 def handle_candidate_assess(app, job: Job, payload: dict[str, Any]) -> dict[str, Any]:
@@ -480,119 +508,62 @@ def handle_candidate_assess(app, job: Job, payload: dict[str, Any]) -> dict[str,
         evidence_items = list(
             EvidenceRepository(session).list_for_candidate(candidate_id, tenant_id=tenant_id)
         )
-        target = _json_object(mission.target_profile_json)
-        observed = _json_object(candidate.observed_facts_json)
-        contact = _json_object(candidate.contact_json)
-
-        countries = {str(value).upper() for value in target.get("country_codes", [])}
-        country_status = candidate.country_resolution_status
-        if (
-            country_status == "confirmed"
-            and countries
-            and candidate.opportunity_country_code not in countries
-        ):
-            gate_country = "mismatch"
-        else:
-            gate_country = country_status
-        buyer_type = str(observed.get("buyer_type", "")).lower()
-        buyer_types = {str(value).lower() for value in target.get("buyer_types", [])}
-        buyer_match = not buyer_type or not buyer_types or buyer_type in buyer_types
-        product_terms = [str(value) for value in observed.get("product_terms", [])]
-        claims = observed.get("claims", [])
-        contact_paths = [str(value) for value in contact.get("paths", [])]
-        combined = " ".join(
-            [candidate.company_name, buyer_type, *product_terms, json.dumps(claims)]
-        ).lower()
-        excluded = any(str(term).lower() in combined for term in target.get("exclude_terms", []))
-        gate = evaluate_gate(
-            EligibilityFacts(
-                country_status=gate_country,
-                buyer_type_match=buyer_match,
-                excluded_business=excluded,
-                independent_identity=bool(candidate.company_name and candidate.domain),
-                product_evidence=bool(product_terms or claims),
-                contact_path=bool(contact_paths),
-            )
-        )
-        trust_values = {"A": 100, "B": 80, "C": 60, "D": 40, "E": 20}
-        best_trust = max(
-            (trust_values.get(item.trust_tier, 0) for item in evidence_items), default=0
-        )
-        score_input = ScoreInput(
-            product_relevance=85 if product_terms else None,
-            buyer_role=85 if buyer_type and buyer_match else (0 if buyer_type else None),
-            country_match=(
-                100 if gate_country == "confirmed" else (0 if gate_country == "mismatch" else None)
-            ),
-            company_size=None,
-            industry_match=70 if product_terms else None,
-            direct_purchase=None,
-            recent_activity=None,
-            competitor_signal=None,
-            signal_recency=None,
-            identity_quality=90 if candidate.company_name and candidate.domain else None,
-            source_trust=best_trust or None,
-            contactability=80 if contact_paths else None,
-            independent_evidence=80
-            if len(evidence_items) >= 2
-            else (50 if evidence_items else None),
-            data_recency=90 if evidence_items else None,
-        )
-        score = score_candidate(score_input)
-        bundle_hash = _hash_json(
-            sorted(
-                (item.canonical_url, item.content_hash, item.validation_status)
-                for item in evidence_items
-            )
+        computation = compute_candidate_assessment(
+            candidate,
+            mission,
+            evidence_items,
+            mimo_model_id=str(app.config.get("MIMO_MODEL", "mimo-v2.5")),
         )
         assessments = AssessmentRepository(session)
-        model_id = str(app.config.get("MIMO_MODEL", "mimo-v2.5"))
         existing = assessments.find_input_version(
             candidate_id,
-            bundle_hash,
+            computation.evidence_bundle_hash,
             ELIGIBILITY_POLICY_VERSION,
             PRIORITY_SCORE_VERSION,
-            MIMO_EXTRACT_PROMPT_VERSION,
-            model_id,
+            computation.prompt_version,
+            computation.model_id,
             tenant_id=tenant_id,
         )
         if existing is None:
             assessments.add(
                 CandidateAssessment(
                     candidate_id=candidate_id,
-                    evidence_bundle_hash=bundle_hash,
+                    evidence_bundle_hash=computation.evidence_bundle_hash,
                     policy_version=ELIGIBILITY_POLICY_VERSION,
                     score_version=PRIORITY_SCORE_VERSION,
-                    prompt_version=MIMO_EXTRACT_PROMPT_VERSION,
-                    model_provider="mimo",
-                    model_id=model_id,
-                    input_json=canonical_json(score_input.__dict__),
-                    hard_gate_json=canonical_json(gate.__dict__),
-                    score_breakdown_json=canonical_json(score.__dict__),
-                    signal_coverage=score.signal_coverage,
-                    priority_mode=score.priority_mode,
-                    explanation="Deterministic evidence-aware assessment",
+                    prompt_version=computation.prompt_version,
+                    model_provider=computation.model_provider,
+                    model_id=computation.model_id,
+                    input_json=canonical_json(computation.score_input.__dict__),
+                    hard_gate_json=canonical_json(computation.gate.__dict__),
+                    score_breakdown_json=canonical_json(computation.score.__dict__),
+                    signal_coverage=computation.score.signal_coverage,
+                    priority_mode=computation.score.priority_mode,
+                    explanation=computation.explanation,
                 ),
                 tenant_id=tenant_id,
             )
-        candidate.priority_score = score.priority_score
-        candidate.priority_band = score.priority_band
-        candidate.signal_coverage = score.signal_coverage
+        candidate.priority_score = computation.score.priority_score
+        candidate.priority_band = computation.score.priority_band
+        candidate.signal_coverage = computation.score.signal_coverage
+        candidate.ai_confidence = computation.score.data_quality_score or 0
         candidate_status = update_assessment_state_if_mutable(
             session,
             candidate,
             tenant_id=tenant_id,
-            status=gate.disposition,
-            eligibility_code=gate.reason_codes[0] if gate.reason_codes else "eligible",
+            status=computation.gate.disposition,
+            eligibility_code=(
+                computation.gate.reason_codes[0] if computation.gate.reason_codes else "eligible"
+            ),
         )
         session.commit()
 
     return {
         "candidate_id": candidate_id,
-        "disposition": gate.disposition,
+        "disposition": computation.gate.disposition,
         "candidate_status": candidate_status,
-        "priority": score.priority_score,
-        "coverage": score.signal_coverage,
+        "priority": computation.score.priority_score,
+        "coverage": computation.score.signal_coverage,
         "stage": "assessed",
     }
 
@@ -852,7 +823,10 @@ def _save_error_evidence(
                     trust_tier="E",
                     source_url=source_url,
                     canonical_url=source_url,
-                    excerpt="Website evidence could not be retrieved",
+                    excerpt=_FETCH_ERROR_EXCERPTS.get(
+                        error_code,
+                        "Website evidence could not be retrieved",
+                    ),
                     content_hash=content_hash,
                     validation_status="unreachable",
                 ),

@@ -20,6 +20,61 @@ def _assessment_snapshot(assessment):
     }
 
 
+def _seed_candidate_with_search_evidence(app, mission_id: str, *, suffix: str) -> str:
+    from app.extensions import get_engine
+    from app.modules.acquisition.models import (
+        AcquisitionCandidate,
+        AcquisitionMission,
+        CandidateEvidence,
+    )
+
+    candidate_id = f"candidate-{suffix}"
+    website = f"https://{suffix}.example/"
+    with Session(get_engine(app)) as session:
+        mission = session.get(AcquisitionMission, mission_id)
+        assert mission is not None
+        mission.target_profile_json = json.dumps(
+            {
+                "country_codes": ["MX"],
+                "buyer_types": ["distributor"],
+                "exclude_terms": ["marketplace"],
+            }
+        )
+        session.add(
+            AcquisitionCandidate(
+                id=candidate_id,
+                tenant_id="t1",
+                mission_id=mission_id,
+                status="verifying",
+                company_name=f"Candidate {suffix}",
+                domain=f"{suffix}.example",
+                website=website,
+                country_resolution_status="unknown",
+                observed_facts_json="[]",
+                contact_json="{}",
+                dedupe_key=f"domain:{suffix}.example",
+            )
+        )
+        session.add(
+            CandidateEvidence(
+                id=f"evidence-{suffix}",
+                tenant_id="t1",
+                candidate_id=candidate_id,
+                provider="mimo",
+                source_type="web_search",
+                trust_tier="D",
+                source_url=website,
+                canonical_url=website,
+                title=f"Candidate {suffix}",
+                excerpt="Wholesale motorcycle parts in Mexico",
+                content_hash=suffix[0] * 64,
+                validation_status="unverified",
+            )
+        )
+        session.commit()
+    return candidate_id
+
+
 def test_acquisition_job_payload_contains_ids_not_secrets(acquisition_app, monkeypatch):
     from app.modules.jobs.service import create_and_enqueue
 
@@ -593,6 +648,148 @@ def test_plan_handler_persists_plan_and_queues_one_job_per_country(
         assert len(json.loads(mission.plan_json)["country_runs"]) == 2
 
 
+def test_fetch_failure_preserves_code_and_queues_provisional_assessment(
+    acquisition_app, seed_acquisition_mission, monkeypatch
+):
+    from app.extensions import get_engine
+    from app.integrations.web.fetcher import FetchError
+    from app.modules.acquisition.jobs import AcquisitionJobError, handle_website_verify
+    from app.modules.acquisition.models import CandidateEvidence
+    from app.modules.jobs.models import Job
+
+    mission_id = seed_acquisition_mission()
+    candidate_id = _seed_candidate_with_search_evidence(
+        acquisition_app, mission_id, suffix="large-page"
+    )
+
+    class FailingFetcher:
+        def fetch(self, _url):
+            raise FetchError("response_too_large", "Evidence page exceeds size limit")
+
+    monkeypatch.setattr(
+        "app.modules.acquisition.jobs.StaticFetcher",
+        SimpleNamespace(from_app=lambda _app: FailingFetcher()),
+    )
+    queued: list[dict] = []
+    monkeypatch.setattr(
+        "app.modules.acquisition.jobs.create_and_enqueue",
+        lambda _app, **kwargs: queued.append(kwargs),
+    )
+
+    with pytest.raises(AcquisitionJobError) as caught:
+        handle_website_verify(
+            acquisition_app,
+            Job(id="verify-large", tenant_id="t1", job_type="website_verify"),
+            {"candidate_id": candidate_id},
+        )
+
+    assert caught.value.code == "response_too_large"
+    assert [item["job_type"] for item in queued] == ["candidate_assess"]
+    with Session(get_engine(acquisition_app)) as session:
+        error_evidence = session.scalar(
+            select(CandidateEvidence).where(CandidateEvidence.source_type == "fetch_error")
+        )
+        assert error_evidence is not None
+        assert "size limit" in error_evidence.excerpt
+        assert "large-page.example" not in error_evidence.excerpt
+
+
+def test_extraction_failure_retains_official_evidence_and_queues_assessment(
+    acquisition_app, seed_acquisition_mission, monkeypatch
+):
+    from app.extensions import get_engine
+    from app.integrations.ai.mimo import ProviderResponseError
+    from app.integrations.web.fetcher import FetchResult
+    from app.modules.acquisition.jobs import AcquisitionJobError, handle_website_verify
+    from app.modules.acquisition.models import CandidateEvidence
+    from app.modules.jobs.models import Job
+
+    mission_id = seed_acquisition_mission()
+    candidate_id = _seed_candidate_with_search_evidence(
+        acquisition_app, mission_id, suffix="invalid-extract"
+    )
+    snapshot = FetchResult(
+        requested_url="https://invalid-extract.example/",
+        final_url="https://invalid-extract.example/",
+        status_code=200,
+        content_type="text/html",
+        title="Invalid Extract",
+        text="Wholesale motorcycle parts in Mexico",
+        content_hash="b" * 64,
+        retrieved_at=datetime.now(UTC),
+        redirect_chain=(),
+    )
+    monkeypatch.setattr(
+        "app.modules.acquisition.jobs.StaticFetcher",
+        SimpleNamespace(from_app=lambda _app: SimpleNamespace(fetch=lambda _url: snapshot)),
+    )
+    monkeypatch.setattr(
+        "app.modules.acquisition.jobs.build_mimo_provider",
+        lambda _app, tenant_id: SimpleNamespace(
+            extract=lambda _snapshot: (_ for _ in ()).throw(ProviderResponseError())
+        ),
+    )
+    queued: list[dict] = []
+    monkeypatch.setattr(
+        "app.modules.acquisition.jobs.create_and_enqueue",
+        lambda _app, **kwargs: queued.append(kwargs),
+    )
+
+    with pytest.raises(AcquisitionJobError) as caught:
+        handle_website_verify(
+            acquisition_app,
+            Job(id="verify-invalid", tenant_id="t1", job_type="website_verify"),
+            {"candidate_id": candidate_id},
+        )
+
+    assert caught.value.code == "invalid_response"
+    assert [item["job_type"] for item in queued] == ["candidate_assess"]
+    with Session(get_engine(acquisition_app)) as session:
+        official = session.scalar(
+            select(CandidateEvidence).where(
+                CandidateEvidence.candidate_id == candidate_id,
+                CandidateEvidence.source_type == "official_website",
+            )
+        )
+        assert official is not None
+        assert official.validation_status == "valid"
+        assert official.trust_tier == "A"
+
+
+def test_search_evidence_only_assessment_is_persisted_as_needs_evidence(
+    acquisition_app, seed_acquisition_mission
+):
+    from app.extensions import get_engine
+    from app.modules.acquisition.jobs import handle_candidate_assess
+    from app.modules.acquisition.models import AcquisitionCandidate, CandidateAssessment
+    from app.modules.jobs.models import Job
+
+    mission_id = seed_acquisition_mission()
+    candidate_id = _seed_candidate_with_search_evidence(
+        acquisition_app, mission_id, suffix="provisional"
+    )
+
+    result = handle_candidate_assess(
+        acquisition_app,
+        Job(id="assess-provisional", tenant_id="t1", job_type="candidate_assess"),
+        {"candidate_id": candidate_id},
+    )
+
+    assert result["candidate_status"] == "needs_evidence"
+    with Session(get_engine(acquisition_app)) as session:
+        candidate = session.get(AcquisitionCandidate, candidate_id)
+        assessment = session.scalar(
+            select(CandidateAssessment).where(CandidateAssessment.candidate_id == candidate_id)
+        )
+        assert candidate is not None
+        assert assessment is not None
+        assert candidate.priority_band == "B"
+        assert candidate.signal_coverage > 0
+        assert assessment.priority_mode == "evidence_only_provisional_v1"
+        assert assessment.model_provider == "deterministic"
+        assert assessment.model_id == "evidence-only-v1"
+
+
 def test_discovery_verify_and_assess_handlers_preserve_evidence_boundary(
     acquisition_app, seed_acquisition_mission, monkeypatch
 ):
@@ -763,6 +960,10 @@ def test_discovery_verify_and_assess_handlers_preserve_evidence_boundary(
         )
         assert assessment is not None
         assert assessment.score_version == "priority-v2"
+        assert (
+            candidate.ai_confidence
+            == json.loads(assessment.score_breakdown_json)["data_quality_score"]
+        )
         mission = session.get(AcquisitionMission, mission_id)
         costs = json.loads(mission.cost_summary_json)["providers"]
         assert costs["mimo"]["requests"] == 2

@@ -1317,6 +1317,68 @@ def test_current_assessment_preserves_historical_priority_v1_row(acquisition_app
         ]
 
 
+def test_synchronous_assessment_uses_same_evidence_only_semantics(acquisition_app):
+    from app.extensions import get_engine
+    from app.modules.acquisition.models import (
+        AcquisitionCandidate,
+        AcquisitionMission,
+        CandidateAssessment,
+        CandidateEvidence,
+    )
+    from app.modules.acquisition.service import _assess_candidate_in_session
+
+    candidate_id = _seed_mission_and_candidate(
+        acquisition_app,
+        status="verifying",
+        eligibility_code="",
+        suffix="sync-provisional",
+    )
+    with Session(get_engine(acquisition_app)) as session:
+        session.add(
+            CandidateEvidence(
+                tenant_id="t1",
+                candidate_id=candidate_id,
+                provider="mimo",
+                source_type="web_search",
+                trust_tier="D",
+                source_url="https://motosync-provisional.example",
+                canonical_url="https://motosync-provisional.example",
+                title="Moto provisional",
+                excerpt="Motorcycle parts distributor in Mexico",
+                content_hash="d" * 64,
+                validation_status="unverified",
+            )
+        )
+        session.commit()
+
+    with Session(get_engine(acquisition_app)) as session:
+        candidate = session.get(AcquisitionCandidate, candidate_id)
+        mission = session.get(AcquisitionMission, "m1")
+        assert candidate is not None
+        assert mission is not None
+        _assess_candidate_in_session(
+            session,
+            app=acquisition_app,
+            candidate=candidate,
+            mission=mission,
+            tenant_id="t1",
+        )
+        session.commit()
+
+    with Session(get_engine(acquisition_app)) as session:
+        candidate = session.get(AcquisitionCandidate, candidate_id)
+        assessment = session.scalar(
+            select(CandidateAssessment).where(CandidateAssessment.candidate_id == candidate_id)
+        )
+        assert candidate is not None
+        assert assessment is not None
+        assert candidate.status == "needs_evidence"
+        assert candidate.priority_band == "B"
+        assert assessment.priority_mode == "evidence_only_provisional_v1"
+        assert assessment.prompt_version == "evidence-only-v1"
+        assert assessment.model_provider == "deterministic"
+
+
 @pytest.mark.parametrize("status", ["accepted", "promoted", "rejected"])
 def test_manual_url_reassessment_preserves_human_decision_and_refreshes_score(
     acquisition_app, status
