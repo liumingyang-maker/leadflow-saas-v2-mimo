@@ -41,3 +41,16 @@ def canonical_json(value: Any) -> str:
 
 def evidence_hash(value: Any) -> str:
     return hashlib.sha256(canonical_json(value).encode("utf-8")).hexdigest()
+
+
+def parse_bounded_json_object(value: str, *, maximum_bytes: int = 20_000) -> dict[str, Any]:
+    raw = (value or "").strip()
+    if len(raw.encode("utf-8")) > maximum_bytes:
+        raise RadarPolicyError("Radar JSON exceeds the permitted size")
+    try:
+        parsed = json.loads(raw or "{}")
+    except json.JSONDecodeError as exc:
+        raise RadarPolicyError("Radar JSON must be an object") from exc
+    if not isinstance(parsed, dict):
+        raise RadarPolicyError("Radar JSON must be an object")
+    return parsed

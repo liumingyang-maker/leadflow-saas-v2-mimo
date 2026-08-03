@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Protocol
+from typing import TYPE_CHECKING, Annotated, Protocol
 
 from pydantic import BaseModel, ConfigDict, Field, HttpUrl
 
@@ -40,6 +40,31 @@ class SearchResults(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     search_hits: list[SearchHit] = Field(default_factory=list, max_length=100)
+
+
+class CompetitorEvidenceProposal(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    source_url: HttpUrl
+    excerpt: str = Field(min_length=1, max_length=1000)
+
+
+class CompetitorSuggestionProposal(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    company_name: str = Field(min_length=1, max_length=200)
+    official_url: HttpUrl
+    reason_codes: list[Annotated[str, Field(min_length=1, max_length=80)]] = Field(
+        min_length=1,
+        max_length=10,
+    )
+    evidence: list[CompetitorEvidenceProposal] = Field(min_length=1, max_length=2)
+
+
+class CompetitorSuggestionResults(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    suggestions: list[CompetitorSuggestionProposal] = Field(default_factory=list, max_length=10)
 
 
 class EvidenceClaim(BaseModel):

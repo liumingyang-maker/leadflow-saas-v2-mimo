@@ -11,6 +11,7 @@ from sqlalchemy.orm import Session
 
 from app.extensions import get_engine
 from app.integrations.ai.contracts import (
+    CompetitorSuggestionResults,
     CountryResearchPlan,
     ExtractedCompanyFacts,
     MissionPlan,
@@ -115,6 +116,31 @@ class MiMoProvider:
             web_search=True,
         )
         return output.search_hits
+
+    def suggest_competitors(
+        self,
+        *,
+        product_summary: str,
+        target_profile: dict[str, Any],
+    ) -> CompetitorSuggestionResults:
+        if not self.web_search_enabled:
+            raise ProviderError(
+                "provider_capability_missing",
+                "MiMo web search is unavailable",
+                retryable=False,
+            )
+        prompt = _load_prompt("competitor_suggestions_v1.txt")
+        payload = json.dumps(
+            {"product_summary": product_summary, "target_profile": target_profile},
+            ensure_ascii=False,
+            sort_keys=True,
+        )
+        return self._validated_request(
+            prompt,
+            payload,
+            CompetitorSuggestionResults,
+            web_search=True,
+        )
 
     def extract(self, snapshot: FetchResult) -> ExtractedCompanyFacts:
         prompt = _load_prompt("company_extract_v1.txt")

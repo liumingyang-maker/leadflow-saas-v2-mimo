@@ -197,6 +197,25 @@ def test_mimo_discovery_reports_missing_web_search_capability():
     assert caught.value.retryable is False
 
 
+def test_mimo_competitor_suggestions_use_strict_cited_web_search_contract():
+    from app.integrations.ai.mimo import MiMoProvider
+
+    client = FakeOpenAI(
+        '{"suggestions":[{"company_name":"Acme Rival",'
+        '"official_url":"https://rival.example/",'
+        '"reason_codes":["same-category"],'
+        '"evidence":[{"source_url":"https://source.example/directory",'
+        '"excerpt":"Lists Acme Rival as an engine supplier."}]}]}'
+    )
+    results = MiMoProvider(client=client, model="mimo-v2.5").suggest_competitors(
+        product_summary="motorcycle engines",
+        target_profile={"country_codes": ["MX"]},
+    )
+
+    assert results.suggestions[0].company_name == "Acme Rival"
+    assert client.responses.calls[0]["tools"] == [{"type": "web_search", "max_keyword": 3}]
+
+
 def test_official_chat_completion_path_enables_bounded_web_search():
     from app.integrations.ai.contracts import CountryResearchPlan
     from app.integrations.ai.mimo import MiMoProvider
