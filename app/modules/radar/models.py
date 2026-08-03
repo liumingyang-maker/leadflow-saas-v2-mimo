@@ -247,3 +247,56 @@ class RadarRelationship(Base):
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=_now, onupdate=_now, nullable=False
     )
+
+
+class RadarChangeSignal(Base):
+    __tablename__ = "radar_change_signals"
+    __table_args__ = (
+        UniqueConstraint(
+            "tenant_id",
+            "profile_id",
+            "run_id",
+            "current_snapshot_id",
+            name="uq_radar_signal_run_snapshot",
+        ),
+        CheckConstraint(
+            "change_type in ("
+            "'product','market','dealer_added','dealer_removed',"
+            "'partnership','contact','other')",
+            name="radar_signal_change_type",
+        ),
+        CheckConstraint(
+            "materiality in ('material','informational','noise')",
+            name="radar_signal_materiality",
+        ),
+        CheckConstraint(
+            "status in ('open','acknowledged','dismissed')", name="radar_signal_status"
+        ),
+    )
+
+    id: Mapped[str] = mapped_column(String(64), primary_key=True, default=_id)
+    tenant_id: Mapped[str] = mapped_column(String(36), nullable=False, index=True)
+    profile_id: Mapped[str] = mapped_column(
+        ForeignKey("competitor_profiles.id"), nullable=False, index=True
+    )
+    run_id: Mapped[str] = mapped_column(ForeignKey("radar_runs.id"), nullable=False, index=True)
+    previous_snapshot_id: Mapped[str | None] = mapped_column(
+        ForeignKey("radar_snapshots.id"), index=True
+    )
+    current_snapshot_id: Mapped[str] = mapped_column(
+        ForeignKey("radar_snapshots.id"), nullable=False, index=True
+    )
+    change_type: Mapped[str] = mapped_column(String(24), nullable=False)
+    materiality: Mapped[str] = mapped_column(String(24), default="informational", nullable=False)
+    before_json: Mapped[str] = mapped_column(Text, default="{}", nullable=False)
+    after_json: Mapped[str] = mapped_column(Text, default="{}", nullable=False)
+    reason_codes_json: Mapped[str] = mapped_column(Text, default="[]", nullable=False)
+    evidence_json: Mapped[str] = mapped_column(Text, default="[]", nullable=False)
+    status: Mapped[str] = mapped_column(String(24), default="open", nullable=False, index=True)
+    detector_version: Mapped[str] = mapped_column(String(40), nullable=False)
+    classifier_version: Mapped[str] = mapped_column(String(40), default="", nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=_now, nullable=False
+    )
+    decided_by: Mapped[str] = mapped_column(String(36), default="", nullable=False)
+    decided_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))

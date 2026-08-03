@@ -5,6 +5,7 @@ from dataclasses import dataclass
 
 from app.modules.radar.models import (
     CompetitorProfile,
+    RadarChangeSignal,
     RadarCompetitorSuggestion,
     RadarRelationship,
     RadarRun,
@@ -95,6 +96,16 @@ def relationship_view(value: RadarRelationship) -> dict[str, object]:
         "candidate_id": value.candidate_id,
         "source_url": str(first.get("source_url", ""))[:1000],
         "excerpt": str(first.get("excerpt", ""))[:1000],
+    }
+
+
+def signal_view(value: RadarChangeSignal) -> dict[str, object]:
+    return {
+        "id": value.id,
+        "change_type": value.change_type,
+        "materiality": value.materiality,
+        "status": value.status,
+        "reason_codes": _string_list(value.reason_codes_json, maximum=10, item_limit=80),
     }
 
 

@@ -6,12 +6,18 @@ from datetime import UTC, datetime
 from typing import Any
 
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.extensions import get_engine
 from app.integrations.web.fetcher import FetchError, StaticFetcher
 from app.modules.jobs.models import Job
-from app.modules.radar.models import CompetitorProfile, RadarRun, RadarSnapshot
+from app.modules.radar.models import (
+    CompetitorProfile,
+    RadarChangeSignal,
+    RadarRun,
+    RadarSnapshot,
+)
 from app.modules.radar.policies import canonical_json, parse_bounded_json_object
 from app.modules.radar.snapshots import (
     finalize_snapshot,
@@ -133,7 +139,9 @@ def handle_radar_scan(app: Any, job: Job, payload: dict[str, object]) -> dict[st
         nonvalid_count=nonvalid_count,
         reasons=reasons,
     )
-    if status in {"succeeded", "partial"}:
+    signal_summary = _reconcile_change_signals(app, run=run, profile=profile)
+    summary.update(signal_summary)
+    if status in {"succeeded", "partial"} and not signal_summary["possible_baseline_drift"]:
         relationship_summary = _resolve_relationships_and_candidates(
             app,
             run=run,
@@ -323,6 +331,136 @@ def _resolve_relationships_and_candidates(
             continue
         converted += 1
     return {"relationships": len(relationship_ids), "automatic_candidates": converted}
+
+
+def _reconcile_change_signals(
+    app: Any,
+    *,
+    run: RadarRun,
+    profile: CompetitorProfile,
+) -> dict[str, object]:
+    """Persist deterministic Diffs and one bounded in-app aggregate notification."""
+
+    from app.modules.acquisition.models import Notification
+    from app.modules.radar.diff import detect_baseline_drift, diff_snapshots
+
+    with Session(get_engine(app)) as session:
+        session.expire_on_commit = False
+        current = list(
+            session.scalars(
+                select(RadarSnapshot).where(
+                    RadarSnapshot.tenant_id == run.tenant_id,
+                    RadarSnapshot.run_id == run.id,
+                    RadarSnapshot.validation_status == "valid",
+                )
+            )
+        )
+        previous_run = session.scalar(
+            select(RadarRun)
+            .where(
+                RadarRun.tenant_id == run.tenant_id,
+                RadarRun.profile_id == profile.id,
+                RadarRun.id != run.id,
+                RadarRun.status.in_(("succeeded", "partial")),
+            )
+            .order_by(RadarRun.finished_at.desc(), RadarRun.id.desc())
+            .limit(1)
+        )
+        if previous_run is None:
+            return {"signals": 0, "possible_baseline_drift": False, "notification": False}
+        previous = list(
+            session.scalars(
+                select(RadarSnapshot).where(
+                    RadarSnapshot.tenant_id == run.tenant_id,
+                    RadarSnapshot.run_id == previous_run.id,
+                    RadarSnapshot.validation_status == "valid",
+                )
+            )
+        )
+        drift = detect_baseline_drift(
+            previous_run=previous_run,
+            current_run=run,
+            previous_pages=tuple(item.canonical_url for item in previous),
+            current_pages=tuple(item.canonical_url for item in current),
+            policy_version="radar-drift-v1",
+        )
+        previous_by_url = {item.canonical_url: item for item in previous}
+        created: list[RadarChangeSignal] = []
+        for snapshot in current:
+            baseline = previous_by_url.get(snapshot.canonical_url)
+            if baseline is None or baseline.content_hash == snapshot.content_hash:
+                continue
+            delta = diff_snapshots(
+                baseline.facts_json,
+                snapshot.facts_json,
+                detector_version="radar-diff-v1",
+            )
+            if (
+                delta
+                == b'{"added":{},"changed":{},"detector_version":"radar-diff-v1","removed":{}}'
+            ):
+                continue
+            signal = RadarChangeSignal(
+                tenant_id=run.tenant_id,
+                profile_id=profile.id,
+                run_id=run.id,
+                previous_snapshot_id=baseline.id,
+                current_snapshot_id=snapshot.id,
+                change_type="other",
+                materiality="informational" if drift.is_drift else "material",
+                before_json=baseline.facts_json,
+                after_json=snapshot.facts_json,
+                reason_codes_json=canonical_json(
+                    ["structural_diff", *drift.reason_codes]
+                    if drift.is_drift
+                    else ["structural_diff"]
+                ),
+                evidence_json=canonical_json(
+                    [{"source_url": snapshot.canonical_url, "excerpt": snapshot.excerpt[:1000]}]
+                ),
+                detector_version="radar-diff-v1",
+            )
+            try:
+                with session.begin_nested():
+                    session.add(signal)
+                    session.flush()
+            except IntegrityError:
+                continue
+            created.append(signal)
+        notified = False
+        if created and not drift.is_drift:
+            dedupe = f"radar-run:{profile.id}:{run.id}"
+            existing = session.scalar(
+                select(Notification).where(
+                    Notification.tenant_id == run.tenant_id,
+                    Notification.dedupe_key == dedupe,
+                )
+            )
+            if existing is None:
+                highlights = ", ".join(item.current_snapshot_id[:12] for item in created[:5])
+                session.add(
+                    Notification(
+                        tenant_id=run.tenant_id,
+                        kind="radar_change",
+                        title=f"{profile.company_name} changed",
+                        body=f"{len(created)} change(s) detected: {highlights}"[:1000],
+                        target_url=f"/radar/runs/{run.id}",
+                        dedupe_key=dedupe,
+                    )
+                )
+                notified = True
+        stored_run = session.get(RadarRun, run.id)
+        if stored_run is not None:
+            result = parse_bounded_json_object(stored_run.result_summary_json)
+            result["possible_baseline_drift"] = drift.is_drift
+            result["drift_reason_codes"] = list(drift.reason_codes)
+            stored_run.result_summary_json = canonical_json(result)
+        session.commit()
+    return {
+        "signals": len(created),
+        "possible_baseline_drift": drift.is_drift,
+        "notification": notified,
+    }
 
 
 RADAR_HANDLERS = {"radar_scan": handle_radar_scan}

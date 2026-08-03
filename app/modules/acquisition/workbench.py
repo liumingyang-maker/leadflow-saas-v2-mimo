@@ -39,6 +39,7 @@ ALLOWED_NOTIFICATION_KINDS = {
     "provider_failed",
     "job_stuck",
     "backup_stale",
+    "radar_change",
 }
 # Accepted candidates can still require promotion; rejected and promoted candidates have
 # ended that workflow, so their older candidate-scoped failures are no longer actionable.

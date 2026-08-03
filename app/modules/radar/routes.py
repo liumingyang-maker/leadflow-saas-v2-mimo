@@ -15,7 +15,7 @@ from app.modules.accounts.guards import tenant_required
 from app.modules.acquisition.repository import MissionRepository
 from app.modules.acquisition.service import AcquisitionError
 from app.modules.radar.conversion import convert_confirmed_relationship
-from app.modules.radar.models import RadarRelationship, RadarRun, RadarSnapshot
+from app.modules.radar.models import RadarChangeSignal, RadarRelationship, RadarRun, RadarSnapshot
 from app.modules.radar.policies import RadarPolicyError
 from app.modules.radar.repository import CompetitorProfileRepository, RadarSuggestionRepository
 from app.modules.radar.service import (
@@ -30,6 +30,7 @@ from app.modules.radar.views import (
     profile_view,
     relationship_view,
     run_view,
+    signal_view,
     snapshot_view,
     suggestion_view,
 )
@@ -214,6 +215,16 @@ def register_radar_routes(app: Flask) -> None:
                     .order_by(RadarRelationship.created_at.asc(), RadarRelationship.id.asc())
                 )
             )
+            signals = list(
+                db_session.scalars(
+                    select(RadarChangeSignal)
+                    .where(
+                        RadarChangeSignal.run_id == run.id,
+                        RadarChangeSignal.tenant_id == tenant_id,
+                    )
+                    .order_by(RadarChangeSignal.created_at.asc(), RadarChangeSignal.id.asc())
+                )
+            )
             view = run_view(run)
             profile_data = profile_view(profile)
         return render_template(
@@ -222,6 +233,7 @@ def register_radar_routes(app: Flask) -> None:
             profile=profile_data,
             snapshots=[snapshot_view(item) for item in snapshots],
             relationships=[relationship_view(item) for item in relationships],
+            signals=[signal_view(item) for item in signals],
         )
 
     @app.post("/radar/runs/<run_id>/cancel")

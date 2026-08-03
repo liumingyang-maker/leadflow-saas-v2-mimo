@@ -68,4 +68,20 @@
   <div class="lf-empty-state"><strong>No relationships observed</strong><span>Only cited, same-run evidence is shown here.</span></div>
   {% endif %}
 </section>
+<section class="lf-section">
+  <h2>Deterministic changes</h2>
+  {% if signals %}
+  <div class="lf-card-list">
+    {% for signal in signals %}
+    <article class="lf-panel">
+      <strong>{{ signal.change_type }}</strong>
+      <p>{{ signal.materiality }} · {{ signal.status }}</p>
+      {% if signal.reason_codes %}<p>Reason: {{ signal.reason_codes|join(', ') }}</p>{% endif %}
+    </article>
+    {% endfor %}
+  </div>
+  {% else %}
+  <div class="lf-empty-state"><strong>No change signal</strong><span>First snapshots and identical content do not notify.</span></div>
+  {% endif %}
+</section>
 {% endcall %}
