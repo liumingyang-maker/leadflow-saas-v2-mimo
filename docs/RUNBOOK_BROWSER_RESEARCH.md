@@ -34,14 +34,14 @@ python -m pytest tests/browser tests/test_capabilities.py tests/test_migration_p
 powershell -ExecutionPolicy Bypass -File scripts/smoke_browser_runtime.ps1
 ```
 
-The smoke intentionally exits with code `2` after proving only provisional container isolation. This
-is not a release pass: the exact raw MCP tool-list contract is still open.
+The smoke exits with code `0` only after proving container isolation and the exact restricted MCP
+tool-list contract. It does not create a page or make a public navigation.
 
-## Open MCP compatibility gate
+## Restricted MCP compatibility gate
 
-The pinned `@playwright/mcp@0.0.78` CLI accepts the required process flags, but its default tool list
-contains additional dangerous tools such as JavaScript evaluation, form entry, upload and download.
-The gateway therefore fails closed when its raw tool list is not exactly:
+The pinned `@playwright/mcp@0.0.78` CLI exposes additional dangerous tools such as JavaScript
+evaluation, form entry, upload and download. The local `restricted_playwright_mcp.cjs` stdio facade
+is the only process started by the Python gateway; it validates requests and exposes exactly:
 
 ```text
 browser_navigate
@@ -51,9 +51,9 @@ browser_take_screenshot
 browser_close
 ```
 
-Do not weaken that equality check. Before enabling Browser research, use a reviewed MCP wrapper or a
-version that can enforce this exact exposed tool set, then capture a real tool-list result without a
-public navigation. Update this runbook and repeat the full smoke after the compatibility fix.
+Do not weaken that equality check or invoke Playwright MCP directly. The smoke captures the actual
+facade tool list without a public navigation. Browser research remains disabled until all other
+operator and tenant-policy gates are also satisfied.
 
 ## Operator boundaries
 

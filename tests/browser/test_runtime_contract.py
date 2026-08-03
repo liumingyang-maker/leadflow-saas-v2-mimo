@@ -40,3 +40,12 @@ def test_browser_images_are_minimal_and_sandboxed() -> None:
     assert 'CMD ["python", "run_browser_worker.py", "browser"]' in worker
     assert "USER browserproxy" in egress
     assert 'CMD ["python", "run_browser_egress.py"]' in egress
+
+
+def test_browser_smoke_proves_exact_restricted_mcp_contract() -> None:
+    smoke = (ROOT / "scripts" / "smoke_browser_runtime.ps1").read_text(encoding="utf-8")
+
+    assert "assert_raw_tool_contract()" in smoke
+    assert "PASS exact restricted MCP tool contract" in smoke
+    assert "OPEN GATE" not in smoke
+    assert "exit 2" not in smoke
