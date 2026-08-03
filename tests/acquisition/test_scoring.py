@@ -20,6 +20,44 @@ def test_unknown_country_needs_evidence_not_rejection():
     assert result.reason_codes == ("country_unknown",)
 
 
+def test_unknown_product_and_contact_require_evidence_instead_of_rejection():
+    from app.modules.acquisition.scoring import EligibilityFacts, evaluate_gate
+
+    result = evaluate_gate(
+        EligibilityFacts(
+            country_status="unknown",
+            buyer_type_match=None,
+            excluded_business=False,
+            independent_identity=True,
+            product_evidence=None,
+            contact_path=None,
+        )
+    )
+
+    assert result.disposition == "needs_evidence"
+    assert "buyer_type_unknown" in result.reason_codes
+    assert "product_evidence_unknown" in result.reason_codes
+    assert "contact_path_unknown" in result.reason_codes
+
+
+def test_confirmed_missing_product_evidence_is_rejected():
+    from app.modules.acquisition.scoring import EligibilityFacts, evaluate_gate
+
+    result = evaluate_gate(
+        EligibilityFacts(
+            country_status="confirmed",
+            buyer_type_match=True,
+            excluded_business=False,
+            independent_identity=True,
+            product_evidence=False,
+            contact_path=True,
+        )
+    )
+
+    assert result.disposition == "rejected"
+    assert result.reason_codes == ("insufficient_product_evidence",)
+
+
 def test_missing_intent_is_provisional_not_zero():
     from app.modules.acquisition.scoring import ScoreInput, score_candidate
 
@@ -70,7 +108,34 @@ def test_provisional_priority_cannot_receive_s_band():
     )
 
     assert result.priority_mode == "fit_quality_provisional_v1"
-    assert result.priority_band == "A"
+    assert result.priority_band == "B"
+
+
+def test_evidence_only_priority_is_provisional_and_capped_at_b():
+    from app.modules.acquisition.scoring import ScoreInput, score_candidate
+
+    result = score_candidate(
+        ScoreInput(
+            product_relevance=None,
+            buyer_role=None,
+            country_match=None,
+            company_size=None,
+            industry_match=None,
+            direct_purchase=None,
+            recent_activity=None,
+            competitor_signal=None,
+            signal_recency=None,
+            identity_quality=100,
+            source_trust=100,
+            contactability=None,
+            independent_evidence=100,
+            data_recency=100,
+        )
+    )
+
+    assert result.priority_mode == "evidence_only_provisional_v1"
+    assert result.priority_score == 100
+    assert result.priority_band == "B"
 
 
 def test_full_priority_can_receive_s_band():
@@ -117,7 +182,7 @@ def test_signal_out_of_range_is_rejected():
         score_candidate(values)
 
 
-def test_low_coverage_cannot_receive_s_band():
+def test_low_coverage_provisional_is_capped_at_b():
     from app.modules.acquisition.scoring import ScoreInput, score_candidate
 
     values = ScoreInput(
@@ -139,4 +204,4 @@ def test_low_coverage_cannot_receive_s_band():
     result = score_candidate(values)
     assert result.priority_score == 100
     assert result.signal_coverage < 60
-    assert result.priority_band == "A"
+    assert result.priority_band == "B"

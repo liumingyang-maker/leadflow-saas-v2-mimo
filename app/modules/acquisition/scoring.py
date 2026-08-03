@@ -6,17 +6,21 @@ from dataclasses import dataclass
 from typing import Literal
 
 Disposition = Literal["eligible", "needs_evidence", "rejected"]
-PriorityMode = Literal["full_v1", "fit_quality_provisional_v1"]
+PriorityMode = Literal[
+    "full_v1",
+    "fit_quality_provisional_v1",
+    "evidence_only_provisional_v1",
+]
 
 
 @dataclass(frozen=True)
 class EligibilityFacts:
     country_status: Literal["confirmed", "unknown", "conflicting", "mismatch"]
-    buyer_type_match: bool
+    buyer_type_match: bool | None
     excluded_business: bool
     independent_identity: bool
-    product_evidence: bool
-    contact_path: bool
+    product_evidence: bool | None
+    contact_path: bool | None
     duplicate: bool = False
     suppressed: bool = False
     policy_blocked: bool = False
@@ -70,22 +74,31 @@ def evaluate_gate(facts: EligibilityFacts) -> GateResult:
         rejected.append("duplicate")
     if facts.country_status == "mismatch":
         rejected.append("wrong_country")
-    if not facts.buyer_type_match:
+    if facts.buyer_type_match is False:
         rejected.append("wrong_buyer_type")
     if facts.excluded_business:
         rejected.append("excluded_business")
     if not facts.independent_identity:
         rejected.append("no_independent_identity")
-    if not facts.product_evidence:
+    if facts.product_evidence is False:
         rejected.append("insufficient_product_evidence")
-    if not facts.contact_path:
+    if facts.contact_path is False:
         rejected.append("no_contact_path")
     if facts.stale_source:
         rejected.append("stale_source")
     if rejected:
         return GateResult("rejected", tuple(rejected))
+    unknown: list[str] = []
     if facts.country_status in {"unknown", "conflicting"}:
-        return GateResult("needs_evidence", (f"country_{facts.country_status}",))
+        unknown.append(f"country_{facts.country_status}")
+    if facts.buyer_type_match is None:
+        unknown.append("buyer_type_unknown")
+    if facts.product_evidence is None:
+        unknown.append("product_evidence_unknown")
+    if facts.contact_path is None:
+        unknown.append("contact_path_unknown")
+    if unknown:
+        return GateResult("needs_evidence", tuple(unknown))
     return GateResult("eligible", ())
 
 
@@ -108,6 +121,8 @@ def _weighted_known(
 def _band(score: int | None, coverage: int, mode: PriorityMode) -> str:
     if score is None:
         return "unknown"
+    if mode != "full_v1":
+        return "B" if score >= 55 else "C"
     if score >= 85 and coverage >= 60 and mode == "full_v1":
         return "S"
     if score >= 70:
@@ -148,7 +163,12 @@ def score_candidate(value: ScoreInput) -> ScoreResult:
     )
     priority, _dimension_coverage = _weighted_known(((fit, 50), (intent, 30), (quality, 20)))
     total_coverage = round((fit_coverage * 50 + intent_coverage * 30 + quality_coverage * 20) / 100)
-    mode: PriorityMode = "full_v1" if intent is not None else "fit_quality_provisional_v1"
+    if intent is not None:
+        mode: PriorityMode = "full_v1"
+    elif fit is not None:
+        mode = "fit_quality_provisional_v1"
+    else:
+        mode = "evidence_only_provisional_v1"
     return ScoreResult(
         fit_score=fit,
         intent_score=intent,
