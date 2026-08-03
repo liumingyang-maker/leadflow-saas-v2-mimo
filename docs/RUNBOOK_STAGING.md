@@ -58,6 +58,16 @@ Web, Worker and reconciler use Docker JSON log rotation of 10 MB with five files
 
 `StaticFetcher` retains a DNS-validation-to-connect TOCTOU residual risk even though it validates redirects and compares resolved addresses. Before public SaaS exposure, run fetching in an isolated Worker and enforce network-layer egress denial for private, loopback, link-local, reserved and metadata address ranges. Verify the denial in the real hosted network. Local fetcher unit tests do not satisfy this gate.
 
+### Browser research isolation and MCP gate (open)
+
+Browser research remains disabled in staging until its dedicated Redis, artifact volume, internal
+control network, resolving HTTPS egress proxy and Browser Worker isolation smoke all pass. The
+Browser Worker must not receive application database/Redis/secrets or be able to reach Web, database,
+application Redis or private/metadata networks. In addition, the raw Playwright MCP tool list must be
+an exact reviewed allowlist; the currently pinned package exposes additional tools and therefore fails
+closed. See `docs/RUNBOOK_BROWSER_RESEARCH.md`. Do not set `BROWSER_RESEARCH_ENABLED=true` merely to
+test container startup.
+
 ## Performance sampling
 
 Capture a 15-minute window before changing Worker count. Keep the output with the release evidence and record the database type, MiMo model, sample size and Mission ID.

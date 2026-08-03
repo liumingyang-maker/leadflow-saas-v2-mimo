@@ -2,7 +2,7 @@
 
 ## Recovery objective and data ownership
 
-Phase 1A is a single-operator deployment with a daily backup target: **RPO 24 hours, RTO 4 hours**. Product knowledge, Mission, Candidate, Evidence, Assessment, Suggestion, Notification, Lead and Job records live in SQL and must be backed up together. Redis is transient queue transport, not a source of truth; it does not need a durable restore.
+Phase 1A is a single-operator deployment with a daily backup target: **RPO 24 hours, RTO 4 hours**. Product knowledge, Mission, Candidate, Evidence, Assessment, Suggestion, Notification, Lead, Job and Browser Site Policy/Research Run records live in SQL and must be backed up together. Redis is transient queue transport, not a source of truth; it does not need a durable restore. Browser artifacts are bounded derived data: preserve their manifest hashes and evidence metadata in SQL, but never treat a raw Redis result or one-time run token as backup material.
 
 Store backups outside the application volume and test a restore at least monthly. A backup is not considered successful until its file size is non-zero and the latest restore drill passes.
 

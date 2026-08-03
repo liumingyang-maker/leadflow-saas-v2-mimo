@@ -62,6 +62,13 @@ class BaseConfig:
     FETCH_MAX_PAGES_PER_SITE: ClassVar[int] = 5
     FETCH_MAX_BYTES: ClassVar[int] = 1024 * 1024
     FETCH_TIMEOUT_SECONDS: ClassVar[int] = 10
+    BROWSER_MAX_PAGES: ClassVar[int] = 10
+    BROWSER_MAX_SECONDS: ClassVar[int] = 120
+    BROWSER_MAX_TOOL_CALLS: ClassVar[int] = 12
+    BROWSER_MAX_ARTIFACT_BYTES: ClassVar[int] = 5 * 1024 * 1024
+    BROWSER_REDIS_URL: ClassVar[str] = os.environ.get(
+        "BROWSER_REDIS_URL", "redis://localhost:6380/0"
+    )
 
 
 class DevelopmentConfig(BaseConfig):
@@ -127,6 +134,21 @@ def resolve_config(config_name: str | None = None) -> type[BaseConfig]:
     config_class.FETCH_MAX_PAGES_PER_SITE = _bounded_int(
         "FETCH_MAX_PAGES_PER_SITE", 5, minimum=1, maximum=10
     )
+    config_class.BROWSER_MAX_PAGES = _bounded_int(
+        "BROWSER_MAX_PAGES", 10, minimum=1, maximum=25
+    )
+    config_class.BROWSER_MAX_SECONDS = _bounded_int(
+        "BROWSER_MAX_SECONDS", 120, minimum=10, maximum=300
+    )
+    config_class.BROWSER_MAX_TOOL_CALLS = _bounded_int(
+        "BROWSER_MAX_TOOL_CALLS", 12, minimum=1, maximum=30
+    )
+    config_class.BROWSER_MAX_ARTIFACT_BYTES = _bounded_int(
+        "BROWSER_MAX_ARTIFACT_BYTES",
+        5 * 1024 * 1024,
+        minimum=1024,
+        maximum=20 * 1024 * 1024,
+    )
     if _is_file_sqlite_uri(config_class.SQLALCHEMY_DATABASE_URI):
         config_class.SQLITE_BUSY_TIMEOUT_MS = _bounded_int(
             "SQLITE_BUSY_TIMEOUT_MS", 5000, minimum=1000, maximum=30000
@@ -134,6 +156,9 @@ def resolve_config(config_name: str | None = None) -> type[BaseConfig]:
     else:
         config_class.SQLITE_BUSY_TIMEOUT_MS = 5000
     config_class.REDIS_URL = os.environ.get("REDIS_URL", "redis://localhost:6379/0")
+    config_class.BROWSER_REDIS_URL = os.environ.get(
+        "BROWSER_REDIS_URL", "redis://localhost:6380/0"
+    )
     config_class.MIMO_BASE_URL = os.environ.get("MIMO_BASE_URL", "")
     config_class.MIMO_MODEL = os.environ.get("MIMO_MODEL", "mimo-v2.5")
 

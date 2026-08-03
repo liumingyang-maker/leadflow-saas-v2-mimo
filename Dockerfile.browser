@@ -1,0 +1,36 @@
+FROM node:22.15.1-bookworm-slim AS node_runtime
+
+FROM python:3.12.10-slim-bookworm
+
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    PLAYWRIGHT_BROWSERS_PATH=/ms-playwright
+
+WORKDIR /browser-runtime
+
+COPY --from=node_runtime /usr/local /usr/local
+COPY requirements.txt requirements.lock ./
+RUN pip install --no-cache-dir -r requirements.lock
+
+COPY package.json package-lock.json ./
+RUN npm ci --omit=dev \
+    && npx playwright install --with-deps chromium \
+    && npm cache clean --force
+
+COPY app/integrations/browser/__init__.py ./app/integrations/browser/__init__.py
+COPY app/integrations/browser/contracts.py ./app/integrations/browser/contracts.py
+COPY app/integrations/browser/gateway.py ./app/integrations/browser/gateway.py
+COPY app/integrations/browser/mcp_client.py ./app/integrations/browser/mcp_client.py
+COPY app/integrations/browser/policy.py ./app/integrations/browser/policy.py
+COPY app/integrations/browser/sanitizer.py ./app/integrations/browser/sanitizer.py
+COPY app/integrations/browser/worker.py ./app/integrations/browser/worker.py
+COPY app/integrations/web/sanitizer.py app/integrations/web/url_safety.py ./app/integrations/web/
+COPY run_browser_worker.py ./
+
+RUN groupadd --gid 10001 browser \
+    && useradd --uid 10001 --gid browser --create-home --shell /usr/sbin/nologin browser \
+    && mkdir -p /artifacts /tmp/playwright \
+    && chown -R browser:browser /browser-runtime /artifacts /tmp/playwright /ms-playwright
+
+USER browser
+CMD ["python", "run_browser_worker.py", "browser"]

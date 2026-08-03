@@ -10,3 +10,4 @@ leadflow-v2-dev.db
 *.db-wal
 *.db-shm
 .env
+node_modules/

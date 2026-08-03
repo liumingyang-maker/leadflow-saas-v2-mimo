@@ -243,3 +243,32 @@ def test_acquisition_core_tables_and_crm_columns_exist_at_head() -> None:
         engine = create_engine(f"sqlite:///{db_path}")
         assert "acquisition_candidates" in set(inspect(engine).get_table_names())
         engine.dispose()
+
+
+def test_browser_foundation_roundtrip_0014_to_0015() -> None:
+    with tempfile.TemporaryDirectory() as tmpdir:
+        db_path = os.path.join(tmpdir, "browser.db")
+        cfg = _alembic_cfg(db_path)
+
+        command.upgrade(cfg, "0014_acquisition_core")
+        engine = create_engine(f"sqlite:///{db_path}")
+        assert "browser_research_runs" not in set(inspect(engine).get_table_names())
+        engine.dispose()
+
+        command.upgrade(cfg, "0015_browser_foundation")
+        engine = create_engine(f"sqlite:///{db_path}")
+        assert {"browser_site_policies", "browser_research_runs"} <= set(
+            inspect(engine).get_table_names()
+        )
+        engine.dispose()
+
+        command.downgrade(cfg, "0014_acquisition_core")
+        engine = create_engine(f"sqlite:///{db_path}")
+        assert "browser_research_runs" not in set(inspect(engine).get_table_names())
+        assert "browser_site_policies" not in set(inspect(engine).get_table_names())
+        engine.dispose()
+
+        command.upgrade(cfg, "0015_browser_foundation")
+        engine = create_engine(f"sqlite:///{db_path}")
+        assert "browser_research_runs" in set(inspect(engine).get_table_names())
+        engine.dispose()

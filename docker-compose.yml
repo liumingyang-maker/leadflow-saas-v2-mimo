@@ -62,8 +62,14 @@ services:
       - SECRET_KEY=dev-only-change-me
       - DATABASE_URL=sqlite:////data/leadflow-v2.db
       - REDIS_URL=redis://redis:6379/0
+      - BROWSER_REDIS_URL=redis://browser-redis:6379/0
+      - BROWSER_ARTIFACT_DIR=/browser-artifacts
     volumes:
       - leadflow_data:/data
+      - leadflow_browser_artifacts:/browser-artifacts
+    networks:
+      - default
+      - browser-control
     depends_on:
       redis:
         condition: service_healthy
@@ -76,6 +82,51 @@ services:
       options:
         max-size: "10m"
         max-file: "5"
+
+  browser-redis:
+    image: redis:7.4.2-alpine
+    networks: [browser-control]
+    command: ["redis-server", "--save", "", "--appendonly", "no"]
+    read_only: true
+    tmpfs: [/tmp]
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+
+  browser-egress:
+    build:
+      context: .
+      dockerfile: Dockerfile.browser-egress
+    networks: [browser-control, browser-public]
+    read_only: true
+    tmpfs: [/tmp]
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    pids_limit: 128
+    mem_limit: 256m
+    cpus: 0.25
+
+  browser-worker:
+    build:
+      context: .
+      dockerfile: Dockerfile.browser
+    environment:
+      - BROWSER_REDIS_URL=redis://browser-redis:6379/0
+      - BROWSER_ARTIFACT_DIR=/artifacts
+      - HTTPS_PROXY=http://browser-egress:8080
+    networks: [browser-control]
+    volumes: [leadflow_browser_artifacts:/artifacts]
+    depends_on:
+      browser-redis:
+        condition: service_started
+      browser-egress:
+        condition: service_started
+    read_only: true
+    tmpfs: [/tmp]
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    pids_limit: 256
+    mem_limit: 1536m
+    cpus: 1.0
 
   reconciler:
     build: .
@@ -107,3 +158,9 @@ services:
 volumes:
   leadflow_data:
   redis_data:
+  leadflow_browser_artifacts:
+
+networks:
+  browser-control:
+    internal: true
+  browser-public: {}

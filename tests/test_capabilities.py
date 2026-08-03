@@ -157,3 +157,36 @@ def test_testing_app_keeps_browser_research_disabled_by_default(monkeypatch):
 
     app = create_app("testing")
     assert app.config["CAPABILITIES"][Capability.BROWSER_RESEARCH] is False
+
+
+def test_browser_runtime_is_disabled_and_bounded(monkeypatch):
+    for name in (
+        "BROWSER_RESEARCH_ENABLED",
+        "BROWSER_MAX_PAGES",
+        "BROWSER_MAX_SECONDS",
+        "BROWSER_MAX_TOOL_CALLS",
+        "BROWSER_MAX_ARTIFACT_BYTES",
+        "BROWSER_REDIS_URL",
+    ):
+        monkeypatch.delenv(name, raising=False)
+
+    from app.config import resolve_config
+    from app.core.capabilities import Capability, resolve_capabilities
+
+    config = resolve_config("development")
+
+    assert resolve_capabilities("internal")[Capability.BROWSER_RESEARCH] is False
+    assert config.BROWSER_MAX_PAGES == 10
+    assert config.BROWSER_MAX_SECONDS == 120
+    assert config.BROWSER_MAX_TOOL_CALLS == 12
+    assert config.BROWSER_MAX_ARTIFACT_BYTES == 5 * 1024 * 1024
+    assert config.BROWSER_REDIS_URL == "redis://localhost:6380/0"
+
+
+def test_browser_budget_rejects_oversized_value(monkeypatch):
+    from app.config import resolve_config
+
+    monkeypatch.setenv("BROWSER_MAX_SECONDS", "301")
+
+    with pytest.raises(RuntimeError, match="BROWSER_MAX_SECONDS"):
+        resolve_config("development")

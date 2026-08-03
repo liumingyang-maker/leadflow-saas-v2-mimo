@@ -20,6 +20,10 @@ class SafeUrl:
     port: int
     resolved_ips: tuple[str, ...]
 
+    @property
+    def origin(self) -> str:
+        return f"https://{self.host}" if self.port == 443 else f"http://{self.host}"
+
 
 Resolver = Callable[[str], list[str]]
 
@@ -96,3 +100,18 @@ def validate_public_url(url: str, *, resolver: Resolver = system_resolver) -> Sa
     netloc = host_for_url if default_port else f"{host_for_url}:{port}"
     canonical = urlunsplit((scheme, netloc, parsed.path or "/", parsed.query, ""))
     return SafeUrl(canonical, host, port, addresses)
+
+
+def validate_browser_public_url(url: str, *, resolver: Resolver = system_resolver) -> SafeUrl:
+    """Resolve a Browser navigation URL under the stricter HTTPS-only policy."""
+
+    try:
+        parsed = urlsplit(url.strip())
+    except (TypeError, ValueError) as exc:
+        raise UnsafeUrlError("blocked invalid URL") from exc
+    if parsed.scheme.lower() != "https" or parsed.port not in {None, 443}:
+        raise UnsafeUrlError("blocked Browser URL scheme or port")
+    # Fragments do not affect network navigation but can carry secrets into artifacts/logs.
+    if parsed.fragment:
+        raise UnsafeUrlError("blocked Browser URL fragment")
+    return validate_public_url(url, resolver=resolver)

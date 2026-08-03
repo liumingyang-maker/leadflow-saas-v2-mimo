@@ -1,0 +1,16 @@
+FROM python:3.12.10-slim-bookworm
+
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1
+
+WORKDIR /browser-egress
+
+COPY app/integrations/browser/egress_proxy.py ./app/integrations/browser/egress_proxy.py
+COPY run_browser_egress.py ./
+
+RUN groupadd --gid 10002 browserproxy \
+    && useradd --uid 10002 --gid browserproxy --create-home --shell /usr/sbin/nologin browserproxy
+
+USER browserproxy
+EXPOSE 8080
+CMD ["python", "run_browser_egress.py"]

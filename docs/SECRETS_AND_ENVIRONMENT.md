@@ -38,6 +38,21 @@ MIMO_BASE_URL=<OpenAI-compatible-base-url-from-the-MiMo-console>
 MIMO_MODEL=mimo-v2.5
 ```
 
+## Browser research transport
+
+Browser research remains disabled unless `BROWSER_RESEARCH_ENABLED=true` is explicitly set after the
+Browser runbook gates pass. Its transport is isolated from the application queue:
+
+```text
+BROWSER_REDIS_URL=redis://browser-redis:6379/0
+BROWSER_ARTIFACT_DIR=/browser-artifacts
+```
+
+These are non-secret runtime coordinates. Do not set `DATABASE_URL`, `REDIS_URL`, `SECRET_KEY`,
+`TENANT_SECRET_KEY`, `MIMO_API_KEY`, `MIMO_BASE_URL`, user tokens, browser storage state, cookies, or
+provider credentials in the Browser Worker environment. The worker uses an internal `HTTPS_PROXY` set
+by Compose; it is not an operator-supplied general-purpose proxy.
+
 Pay-as-you-go and Token Plan keys use different base URLs and cannot be mixed. Use the exact base URL
 shown with the key in the MiMo console. The live web-search smoke is disabled by default. To run it
 locally, provide `MIMO_API_KEY` only in the process environment and execute:
