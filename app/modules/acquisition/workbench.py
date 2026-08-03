@@ -31,6 +31,7 @@ from app.modules.acquisition.repository import (
 from app.modules.jobs.models import Job
 from app.modules.jobs.repository import JobRepository
 from app.modules.leads.models import Activity, Lead
+from app.modules.radar.models import RadarChangeSignal, RadarRelationship, RadarRun
 
 ALLOWED_NOTIFICATION_KINDS = {
     "mission_completed",
@@ -94,6 +95,9 @@ class WorkbenchView:
     has_product_knowledge: bool
     terminal_history_truncated: bool
     recent_missions: tuple[MissionResultSummary, ...]
+    radar_open_changes: int
+    radar_proposed_relationships: int
+    radar_incomplete_runs: int
 
 
 def _session(app) -> Session:
@@ -189,6 +193,25 @@ def load_workbench(app, *, tenant_id: str, now: datetime | None = None) -> Workb
             tenant_id=tenant_id,
             limit=5,
         )
+        radar_open_changes = _count(
+            db_session,
+            RadarChangeSignal,
+            RadarChangeSignal.tenant_id == tenant_id,
+            RadarChangeSignal.status == "open",
+            RadarChangeSignal.materiality == "material",
+        )
+        radar_proposed_relationships = _count(
+            db_session,
+            RadarRelationship,
+            RadarRelationship.tenant_id == tenant_id,
+            RadarRelationship.status == "proposed",
+        )
+        radar_incomplete_runs = _count(
+            db_session,
+            RadarRun,
+            RadarRun.tenant_id == tenant_id,
+            RadarRun.status.in_(("partial", "failed")),
+        )
 
     acquisition_start_url = (
         "/acquisition/missions/new" if has_product_knowledge else "/acquisition/products"
@@ -234,6 +257,9 @@ def load_workbench(app, *, tenant_id: str, now: datetime | None = None) -> Workb
         has_product_knowledge=has_product_knowledge,
         terminal_history_truncated=terminal_projection.truncated,
         recent_missions=recent_missions,
+        radar_open_changes=radar_open_changes,
+        radar_proposed_relationships=radar_proposed_relationships,
+        radar_incomplete_runs=radar_incomplete_runs,
     )
 
 

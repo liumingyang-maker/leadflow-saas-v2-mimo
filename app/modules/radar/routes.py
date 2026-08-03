@@ -4,7 +4,7 @@ from collections.abc import Callable
 from functools import wraps
 from typing import Any
 
-from flask import Flask, abort, redirect, render_template, session, url_for
+from flask import Flask, abort, redirect, render_template, request, session, url_for
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
@@ -21,7 +21,9 @@ from app.modules.radar.repository import CompetitorProfileRepository, RadarSugge
 from app.modules.radar.service import (
     RadarNotFoundError,
     RadarServiceError,
+    accept_run_baseline,
     cancel_manual_run,
+    decide_change_signal,
     decide_competitor_suggestion,
     request_competitor_suggestions,
     request_manual_run,
@@ -227,11 +229,26 @@ def register_radar_routes(app: Flask) -> None:
             )
             view = run_view(run)
             profile_data = profile_view(profile)
+            raw_pages = view["summary"].get("pages", [])
+            if isinstance(raw_pages, list) and raw_pages:
+                page_results = [
+                    {
+                        "page_kind": str(item.get("page_kind", "other"))[:24],
+                        "canonical_url": str(item.get("canonical_url", ""))[:300],
+                        "source_method": "static",
+                        "validation_status": str(item.get("validation_status", ""))[:24],
+                        "reason_codes": (),
+                    }
+                    for item in raw_pages[:25]
+                    if isinstance(item, dict)
+                ]
+            else:
+                page_results = [snapshot_view(item) for item in snapshots]
         return render_template(
             "radar/run_detail.html",
             run=view,
             profile=profile_data,
-            snapshots=[snapshot_view(item) for item in snapshots],
+            snapshots=page_results,
             relationships=[relationship_view(item) for item in relationships],
             signals=[signal_view(item) for item in signals],
         )
@@ -244,6 +261,23 @@ def register_radar_routes(app: Flask) -> None:
             cancel_manual_run(app, tenant_id=tenant_id, actor_id=actor_id, run_id=run_id)
         except RadarNotFoundError:
             abort(404)
+        return redirect(url_for("radar_run_detail", run_id=run_id))
+
+    @app.post("/radar/runs/<run_id>/baseline/accept")
+    @radar_required
+    def radar_accept_run_baseline(run_id: str):
+        tenant_id, actor_id = _identity()
+        try:
+            accept_run_baseline(
+                app,
+                tenant_id=tenant_id,
+                actor_id=actor_id,
+                run_id=run_id,
+            )
+        except RadarNotFoundError:
+            abort(404)
+        except RadarServiceError:
+            abort(409)
         return redirect(url_for("radar_run_detail", run_id=run_id))
 
     @app.post("/radar/relationships/<relationship_id>/convert")
@@ -280,6 +314,24 @@ def register_radar_routes(app: Flask) -> None:
         except AcquisitionError:
             abort(409)
         return redirect(url_for("radar_run_detail", run_id=run_id))
+
+    @app.post("/radar/signals/<signal_id>/decision")
+    @radar_required
+    def radar_decide_signal(signal_id: str):
+        tenant_id, actor_id = _identity()
+        try:
+            signal = decide_change_signal(
+                app,
+                tenant_id=tenant_id,
+                actor_id=actor_id,
+                signal_id=signal_id,
+                action=request.form.get("action", ""),
+            )
+        except RadarNotFoundError:
+            abort(404)
+        except RadarServiceError:
+            abort(400)
+        return redirect(url_for("radar_run_detail", run_id=signal.run_id))
 
 
 def _render_suggestions(

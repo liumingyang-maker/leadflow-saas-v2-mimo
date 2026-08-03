@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from typing import Any
 
 from sqlalchemy import select
@@ -23,6 +24,15 @@ _TYPE_MARKERS = (
     ("dealer", ("dealer", "dealership", "经销")),
     ("service_network", ("service network", "service centre", "service center", "维修")),
     ("partner", ("partner", "partnership", "socio", "合作伙伴")),
+)
+_GENERIC_ANCHOR_MARKERS = (
+    "read more",
+    "read the",
+    "learn more",
+    "click here",
+    "download",
+    "view",
+    "report",
 )
 
 
@@ -53,6 +63,7 @@ def extract_relationships(
         or profile.tenant_id != run.tenant_id
         or snapshot.tenant_id != profile.tenant_id
         or snapshot.validation_status != "valid"
+        or run.status == "cancelled"
     ):
         raise RadarRelationshipError("Radar snapshot is not eligible for relationship extraction")
     if not _is_official_competitor_source(snapshot, profile, resolver=resolver):
@@ -149,12 +160,18 @@ def _proposal_from_target(
     company_name = " ".join(target["anchor_text"].split())[:300]
     if len(company_name) < 3:
         return None
-    relationship_type = _relationship_type(snapshot.excerpt)
+    claim = _claim_for_target(snapshot.excerpt, company_name)
+    relationship_type = _relationship_type(claim or "")
     reason_codes = ["official_source", "outbound_company_url", RELATIONSHIP_DETECTOR_VERSION]
     target_is_directory = any(marker in target_url.host for marker in _DIRECTORY_MARKERS)
-    if target_is_directory:
+    target_identity_unconfirmed = target_is_directory or _is_generic_anchor(company_name)
+    if target_identity_unconfirmed:
         reason_codes.append("target_identity_unconfirmed")
-    if relationship_type in {"dealer", "distributor"} and not target_is_directory:
+    if (
+        claim is not None
+        and relationship_type in {"dealer", "distributor"}
+        and not target_identity_unconfirmed
+    ):
         strength = "confirmed"
         reason_codes.append("relationship_claim_confirmed")
     elif relationship_type == "unknown":
@@ -163,7 +180,7 @@ def _proposal_from_target(
     else:
         strength = "likely"
         reason_codes.append("relationship_claim_likely")
-    excerpt = _claim_excerpt(snapshot.excerpt)
+    excerpt = _claim_excerpt(claim or snapshot.excerpt)
     return {
         "company_name": company_name,
         "canonical_domain": target_url.host,
@@ -189,6 +206,27 @@ def _relationship_type(excerpt: str) -> str:
         if any(marker in text for marker in markers):
             return relation
     return "unknown"
+
+
+def _claim_for_target(excerpt: str, company_name: str) -> str | None:
+    """Return the bounded sentence which names this outbound target and a relationship."""
+
+    normalized_name = " ".join(company_name.casefold().split())
+    if not normalized_name:
+        return None
+    for sentence in re.split(r"(?<=[.!?])\s+|\n+", excerpt):
+        normalized_sentence = " ".join(sentence.casefold().split())
+        if (
+            normalized_name in normalized_sentence
+            and _relationship_type(normalized_sentence) != "unknown"
+        ):
+            return " ".join(sentence.split())[:1000]
+    return None
+
+
+def _is_generic_anchor(value: str) -> bool:
+    normalized = " ".join(value.casefold().split())
+    return any(marker in normalized for marker in _GENERIC_ANCHOR_MARKERS)
 
 
 def _claim_excerpt(value: str) -> str:

@@ -28,3 +28,38 @@ def test_baseline_drift_requires_three_comparable_pages_and_detects_parser_chang
 
     assert result.is_drift is True
     assert result.reason_codes == ("parser_version_changed",)
+
+
+def test_snapshot_diff_keeps_each_observed_link_and_drift_detects_fact_disappearance() -> None:
+    from app.modules.radar.diff import detect_baseline_drift, diff_snapshots
+
+    previous = (
+        '{"facts":['
+        '{"key":"page.observed_link","value":{"url":"https://one.example/"}}'
+        ',{"key":"page.observed_link","value":{"url":"https://two.example/"}}]}'
+    )
+    changed = '{"facts":[{"key":"page.observed_link","value":{"url":"https://one.example/"}}]}'
+    delta = diff_snapshots(previous, changed, detector_version="radar-diff-v1")
+    assert b"two.example" in delta
+
+    result = detect_baseline_drift(
+        previous_run={"parser_version": "v1"},
+        current_run={"parser_version": "v1"},
+        previous_pages=("home", "dealers", "products"),
+        current_pages=("home", "dealers", "products"),
+        previous_facts_by_page={
+            "home": ("page.title=Acme", "page.visible_text=Products"),
+            "dealers": ("page.visible_text=Dealer list",),
+            "products": ("page.visible_text=Engines",),
+        },
+        current_facts_by_page={
+            "home": (),
+            "dealers": (),
+            "products": ("page.visible_text=Engines",),
+        },
+        page_kinds={"home": "home", "dealers": "dealers", "products": "product"},
+        policy_version="radar-drift-v1",
+    )
+
+    assert result.is_drift is True
+    assert "stable_fact_disappearance" in result.reason_codes

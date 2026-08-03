@@ -4,7 +4,7 @@ import uuid
 from datetime import UTC, datetime
 
 from flask import Flask
-from sqlalchemy import select
+from sqlalchemy import select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -17,7 +17,12 @@ from app.modules.jobs.models import Job
 from app.modules.jobs.repository import JobRepository
 from app.modules.jobs.service import JobServiceError, enqueue_existing_job
 from app.modules.radar import suggestions as suggestion_policy
-from app.modules.radar.models import CompetitorProfile, RadarCompetitorSuggestion, RadarRun
+from app.modules.radar.models import (
+    CompetitorProfile,
+    RadarChangeSignal,
+    RadarCompetitorSuggestion,
+    RadarRun,
+)
 from app.modules.radar.policies import (
     RadarPolicyError,
     canonical_json,
@@ -282,6 +287,8 @@ _DEFAULT_RUN_BUDGET = {
     "wall_seconds": 300,
     "excerpt_chars": 4000,
     "artifacts": 10,
+    "material_signals": 50,
+    "automatic_conversions": 10,
 }
 
 
@@ -309,7 +316,7 @@ def request_manual_run(
             select(RadarRun).where(
                 RadarRun.tenant_id == tenant_id,
                 RadarRun.profile_id == profile.id,
-                RadarRun.status.in_(_ACTIVE_RUN_STATUSES),
+                RadarRun.active_key == "active",
             )
         )
         if existing is not None:
@@ -324,6 +331,7 @@ def request_manual_run(
             profile_id=profile.id,
             root_job_id=job_id,
             requested_by=actor_id,
+            active_key="active",
             budget_json=canonical_json(_DEFAULT_RUN_BUDGET),
             created_at=now,
         )
@@ -347,7 +355,7 @@ def request_manual_run(
                 select(RadarRun).where(
                     RadarRun.tenant_id == tenant_id,
                     RadarRun.profile_id == profile.id,
-                    RadarRun.status.in_(_ACTIVE_RUN_STATUSES),
+                    RadarRun.active_key == "active",
                 )
             )
             if existing is None:
@@ -372,6 +380,7 @@ def request_manual_run(
             if stored is not None and stored.status == "queued":
                 stored.status = "failed"
                 stored.stage = "enqueue_failed"
+                stored.active_key = None
                 stored.result_summary_json = canonical_json({"reason_codes": ["enqueue_failed"]})
                 stored.finished_at = datetime.now(UTC)
                 session.commit()
@@ -399,11 +408,23 @@ def cancel_manual_run(
         if run.status in _ACTIVE_RUN_STATUSES:
             run.status = "cancelled"
             run.stage = "cancelled"
+            run.active_key = None
             run.finished_at = datetime.now(UTC)
             job = JobRepository(session).get_for_tenant(run.root_job_id, tenant_id=tenant_id)
-            if job is not None and job.status == "queued":
+            if job is not None and job.status in {"queued", "running", "retrying"}:
                 job.status = "cancelled"
                 job.finished_at = run.finished_at
+            from app.modules.acquisition.models import Notification
+
+            session.execute(
+                update(Notification)
+                .where(
+                    Notification.tenant_id == tenant_id,
+                    Notification.dedupe_key == f"radar-run:{run.profile_id}:{run.id}",
+                    Notification.status != "archived",
+                )
+                .values(status="archived")
+            )
             add_event(
                 session,
                 tenant_id=tenant_id,
@@ -412,6 +433,95 @@ def cancel_manual_run(
                 target_type="radar_run",
                 target_id=run.id,
                 safe_summary="Cancelled manual competitor Radar run",
+            )
+            session.commit()
+        return run
+
+
+def decide_change_signal(
+    app: Flask,
+    *,
+    tenant_id: str,
+    actor_id: str,
+    signal_id: str,
+    action: str,
+) -> RadarChangeSignal:
+    """Record an idempotent, tenant-scoped decision for a Radar signal."""
+
+    require_capability(app, Capability.COMPETITOR_RADAR)
+    target_status = {"acknowledge": "acknowledged", "dismiss": "dismissed"}.get(action)
+    if target_status is None:
+        raise RadarServiceError("Radar signal action is invalid")
+    with _session(app) as session:
+        signal = session.scalar(
+            select(RadarChangeSignal).where(
+                RadarChangeSignal.id == signal_id,
+                RadarChangeSignal.tenant_id == tenant_id,
+            )
+        )
+        if signal is None:
+            raise RadarNotFoundError("Radar change signal was not found")
+        now = datetime.now(UTC)
+        transitioned = session.execute(
+            update(RadarChangeSignal)
+            .where(
+                RadarChangeSignal.id == signal.id,
+                RadarChangeSignal.tenant_id == tenant_id,
+                RadarChangeSignal.status == "open",
+            )
+            .values(status=target_status, decided_by=actor_id, decided_at=now)
+        )
+        if transitioned.rowcount == 1:
+            add_event(
+                session,
+                tenant_id=tenant_id,
+                actor_user_id=actor_id,
+                action=f"radar.signal_{target_status}",
+                target_type="radar_change_signal",
+                target_id=signal.id,
+                safe_summary=f"Radar change signal marked {target_status}",
+            )
+            session.commit()
+            session.refresh(signal)
+        else:
+            session.refresh(signal)
+        return signal
+
+
+def accept_run_baseline(
+    app: Flask,
+    *,
+    tenant_id: str,
+    actor_id: str,
+    run_id: str,
+) -> RadarRun:
+    """Make an inspected drifted Run eligible as the next comparison baseline."""
+
+    require_capability(app, Capability.COMPETITOR_RADAR)
+    with _session(app) as session:
+        run = session.scalar(
+            select(RadarRun).where(RadarRun.id == run_id, RadarRun.tenant_id == tenant_id)
+        )
+        if run is None:
+            raise RadarNotFoundError("Radar Run was not found")
+        if run.status not in {"succeeded", "partial"}:
+            raise RadarServiceError("Only completed Radar Runs can become a baseline")
+        try:
+            summary = parse_bounded_json_object(run.result_summary_json)
+        except RadarPolicyError:
+            summary = {}
+        if summary.get("possible_baseline_drift") is not True:
+            raise RadarServiceError("Radar Run does not require baseline acceptance")
+        if not run.baseline_accepted:
+            run.baseline_accepted = True
+            add_event(
+                session,
+                tenant_id=tenant_id,
+                actor_user_id=actor_id,
+                action="radar.run_baseline_accepted",
+                target_type="radar_run",
+                target_id=run.id,
+                safe_summary="Accepted inspected Radar baseline",
             )
             session.commit()
         return run

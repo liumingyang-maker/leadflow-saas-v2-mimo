@@ -16,6 +16,12 @@
     <button class="lf-button lf-button-secondary" type="submit">Cancel run</button>
   </form>
   {% endif %}
+  {% if run.summary.get('possible_baseline_drift') and not run.baseline_accepted %}
+  <form method="post" action="{{ url_for('radar_accept_run_baseline', run_id=run.id) }}">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+    <button class="lf-button lf-button-secondary" type="submit">Accept inspected baseline</button>
+  </form>
+  {% endif %}
 </header>
 <section class="lf-panel lf-section">
   <h2>Bounded execution</h2>
@@ -77,6 +83,13 @@
       <strong>{{ signal.change_type }}</strong>
       <p>{{ signal.materiality }} · {{ signal.status }}</p>
       {% if signal.reason_codes %}<p>Reason: {{ signal.reason_codes|join(', ') }}</p>{% endif %}
+      {% if signal.status == 'open' %}
+      <form method="post" action="{{ url_for('radar_decide_signal', signal_id=signal.id) }}">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+        <button class="lf-button lf-button-secondary" type="submit" name="action" value="acknowledge">Acknowledge</button>
+        <button class="lf-button lf-button-secondary" type="submit" name="action" value="dismiss">Dismiss</button>
+      </form>
+      {% endif %}
     </article>
     {% endfor %}
   </div>

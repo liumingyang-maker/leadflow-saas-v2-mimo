@@ -101,3 +101,117 @@ def test_terminal_mission_cannot_start_manual_radar_run(monkeypatch, radar_app) 
             actor_id="actor-a",
             profile_id="profile-tenant-a",
         )
+
+
+def test_database_allows_only_one_active_run_per_profile(radar_app) -> None:
+    import pytest
+    from sqlalchemy.exc import IntegrityError
+
+    from app.extensions import get_engine
+    from app.modules.radar.models import RadarRun
+
+    _seed_profile(radar_app)
+    with Session(get_engine(radar_app)) as session:
+        session.add_all(
+            (
+                RadarRun(
+                    id="active-run-a",
+                    tenant_id="tenant-a",
+                    profile_id="profile-tenant-a",
+                    root_job_id="job-a",
+                    requested_by="actor-a",
+                    active_key="active",
+                    budget_json='{"pages":10}',
+                ),
+                RadarRun(
+                    id="active-run-b",
+                    tenant_id="tenant-a",
+                    profile_id="profile-tenant-a",
+                    root_job_id="job-b",
+                    requested_by="actor-a",
+                    active_key="active",
+                    budget_json='{"pages":10}',
+                ),
+            )
+        )
+        with pytest.raises(IntegrityError):
+            session.commit()
+
+
+def test_cancelling_an_active_run_cancels_its_job_and_archives_its_notification(
+    monkeypatch,
+    radar_app,
+) -> None:
+    import app.modules.radar.service as service
+    from app.extensions import get_engine
+    from app.modules.acquisition.models import Notification
+    from app.modules.jobs.models import Job
+
+    _enable_radar(radar_app)
+    _seed_profile(radar_app)
+    monkeypatch.setattr(service, "enqueue_existing_job", lambda *_args, **_kwargs: None)
+    run = service.request_manual_run(
+        radar_app,
+        tenant_id="tenant-a",
+        actor_id="actor-a",
+        profile_id="profile-tenant-a",
+    )
+    with Session(get_engine(radar_app)) as session:
+        session.add(
+            Notification(
+                tenant_id="tenant-a",
+                kind="radar_change",
+                title="Radar update",
+                target_url=f"/radar/runs/{run.id}",
+                dedupe_key=f"radar-run:profile-tenant-a:{run.id}",
+            )
+        )
+        session.commit()
+
+    service.cancel_manual_run(
+        radar_app,
+        tenant_id="tenant-a",
+        actor_id="actor-a",
+        run_id=run.id,
+    )
+
+    with Session(get_engine(radar_app)) as session:
+        job = session.get(Job, run.root_job_id)
+        notification = session.scalar(
+            session.query(Notification).filter_by(tenant_id="tenant-a").statement
+        )
+        assert job is not None and job.status == "cancelled"
+        assert notification is not None and notification.status == "archived"
+
+
+def test_user_must_explicitly_accept_a_drifted_baseline(radar_app) -> None:
+    import app.modules.radar.service as service
+    from app.extensions import get_engine
+    from app.modules.radar.models import RadarRun
+
+    _enable_radar(radar_app)
+    _seed_profile(radar_app)
+    with Session(get_engine(radar_app)) as session:
+        session.add(
+            RadarRun(
+                id="drifted-run",
+                tenant_id="tenant-a",
+                profile_id="profile-tenant-a",
+                root_job_id="drifted-job",
+                requested_by="actor-a",
+                status="succeeded",
+                baseline_accepted=False,
+                budget_json='{"pages":10}',
+                result_summary_json='{"possible_baseline_drift":true}',
+            )
+        )
+        session.commit()
+
+    run = service.accept_run_baseline(
+        radar_app,
+        tenant_id="tenant-a",
+        actor_id="actor-a",
+        run_id="drifted-run",
+    )
+
+    assert run.baseline_accepted is True

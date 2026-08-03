@@ -148,6 +148,8 @@ def execute_job(job_id: str) -> dict[str, Any]:
                 stored = _get_job_for_update(session, job_id, tenant_id)
                 if stored is None:
                     return {"ok": False, "error": "job_not_found"}
+                if stored.status == "cancelled":
+                    return {"ok": False, "error": "cancelled", **summary}
                 _update_job(
                     session,
                     stored,
@@ -197,6 +199,10 @@ def execute_job(job_id: str) -> dict[str, Any]:
 
     except Exception as exc:
         _handle_worker_error(app, job_id, tenant_id, exc)
+        if job_type == "radar_scan":
+            from app.modules.radar.jobs import finalize_radar_worker_failure
+
+            finalize_radar_worker_failure(app, job_id=job_id, tenant_id=tenant_id)
         return {"ok": False, "error": "worker_error"}
 
 
@@ -290,6 +296,8 @@ def _handle_adapter_error(app: Any, job_id: str, tenant_id: str, result: Any) ->
         job = _get_job_for_update(session, job_id, tenant_id)
         if job is None:
             return
+        if job.status == "cancelled":
+            return
         if result.is_transient and job.attempt < job.max_attempts:
             status = "retrying"
             next_retry = now + timedelta(seconds=min(30 * (2**job.attempt), 600))
@@ -322,6 +330,8 @@ def _handle_worker_error(app: Any, job_id: str, tenant_id: str, exc: Exception) 
     with Session(get_engine(app)) as session:
         job = _get_job_for_update(session, job_id, tenant_id)
         if job is None:
+            return
+        if job.status == "cancelled":
             return
         if retryable and job.attempt < job.max_attempts:
             status = "retrying"

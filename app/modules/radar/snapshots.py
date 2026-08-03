@@ -144,6 +144,22 @@ def finalize_snapshot(
         raise RadarSnapshotError("Radar Run does not own this profile")
     if profile.tenant_id != run.tenant_id:
         raise RadarSnapshotError("Radar Run tenant does not match its profile")
+    final = urlsplit(fetched_page.final_url)
+    try:
+        final_port = final.port
+    except ValueError:
+        final_port = 0
+    final_host = (final.hostname or "").rstrip(".").casefold()
+    if (
+        final.scheme not in {"http", "https"}
+        or not final_host
+        or final.username is not None
+        or final.password is not None
+        or final_port not in {80, 443, None}
+    ):
+        raise RadarSnapshotError("Radar final URL is not a safe official competitor domain")
+    if final_host != profile.canonical_domain:
+        raise RadarSnapshotError("Radar final URL is outside the official competitor domain")
 
     facts_json, excerpt, validation_status = _structured_snapshot(fetched_page)
     existing = session.scalar(

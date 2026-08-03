@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+import json
 from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -127,7 +128,23 @@ class StaticFetcher:
                 raise FetchError("unsupported_content_type", "Evidence page type is not supported")
             text = _decode_body(body, headers.get("content-type", ""))
             snapshot = sanitize_text(text) if content_type == "text/plain" else sanitize_html(text)
-            content_hash = hashlib.sha256(snapshot.text.encode("utf-8")).hexdigest()
+            observed_links = (
+                _extract_observed_links(text)
+                if content_type in {"text/html", "application/xhtml+xml"}
+                else ()
+            )
+            content_hash = hashlib.sha256(
+                json.dumps(
+                    {
+                        "observed_links": observed_links,
+                        "text": snapshot.text,
+                        "title": snapshot.title,
+                    },
+                    ensure_ascii=False,
+                    separators=(",", ":"),
+                    sort_keys=True,
+                ).encode("utf-8")
+            ).hexdigest()
             return FetchResult(
                 requested_url=requested_url,
                 final_url=safe.canonical_url,
@@ -139,11 +156,7 @@ class StaticFetcher:
                 retrieved_at=self.now(),
                 redirect_chain=tuple(redirect_chain),
                 detected_prompt_injection=snapshot.detected_prompt_injection,
-                observed_links=(
-                    _extract_observed_links(text)
-                    if content_type in {"text/html", "application/xhtml+xml"}
-                    else ()
-                ),
+                observed_links=observed_links,
             )
 
         raise FetchError("too_many_redirects", "Redirect limit exceeded")

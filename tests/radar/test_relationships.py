@@ -105,3 +105,26 @@ def test_partner_or_directory_like_target_never_becomes_confirmed(radar_app) -> 
     assert len(relationships) == 1
     assert relationships[0].relationship_type == "partner"
     assert relationships[0].evidence_strength != "confirmed"
+
+
+def test_unrelated_outbound_link_cannot_borrow_a_page_wide_dealer_claim(radar_app) -> None:
+    from app.extensions import get_engine
+    from app.modules.radar.relationships import extract_relationships
+
+    _seed_snapshot(
+        radar_app,
+        excerpt="Our dealer programme is open. Read the latest industry report.",
+        link_url="https://media.example/report",
+        anchor_text="Read the report",
+    )
+    with Session(get_engine(radar_app)) as session:
+        relationships = extract_relationships(
+            session,
+            profile_id="profile-a",
+            run_id="run-a",
+            snapshot_id="radar-snapshot-a",
+            resolver=_resolver,
+        )
+
+    assert len(relationships) == 1
+    assert relationships[0].evidence_strength != "confirmed"

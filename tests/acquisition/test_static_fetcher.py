@@ -86,6 +86,25 @@ def test_fetcher_returns_bounded_visible_anchor_metadata_for_radar_planning():
     )
 
 
+def test_fetcher_content_hash_changes_when_observed_link_target_changes():
+    from app.integrations.web.fetcher import StaticFetcher
+
+    def fetch_hash(body: bytes) -> str:
+        with StaticFetcher(
+            transport=httpx.MockTransport(
+                lambda _request: httpx.Response(
+                    200, headers={"content-type": "text/html"}, content=body
+                )
+            ),
+            resolver=lambda _host: ["93.184.216.34"],
+        ) as fetcher:
+            return fetcher.fetch("https://rival.example/").content_hash
+
+    assert fetch_hash(b'<a href="https://one.example/">Dealer</a>') != fetch_hash(
+        b'<a href="https://two.example/">Dealer</a>'
+    )
+
+
 def test_sanitizer_removes_scripts_hidden_text_and_instructions():
     from app.integrations.web.sanitizer import sanitize_html
 

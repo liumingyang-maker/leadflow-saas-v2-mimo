@@ -59,7 +59,10 @@ def upgrade() -> None:
         sa.CheckConstraint(
             "status in ('proposed','converted','dismissed')", name="radar_relationship_status"
         ),
-        sa.CheckConstraint("length(evidence_json) <= 20000", name="radar_relationship_evidence_size"),
+        sa.CheckConstraint(
+            "length(evidence_json) <= 20000",
+            name="radar_relationship_evidence_size",
+        ),
         sa.ForeignKeyConstraint(["profile_id"], ["competitor_profiles.id"]),
         sa.ForeignKeyConstraint(["run_id"], ["radar_runs.id"]),
         sa.ForeignKeyConstraint(["source_snapshot_id"], ["radar_snapshots.id"]),

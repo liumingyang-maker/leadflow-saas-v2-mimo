@@ -148,3 +148,53 @@ def test_acquisition_boundary_rejects_nonconvertible_radar_relationships(
             relationship_id="relationship-a",
             expected_domain="rider.example",
         )
+
+
+def test_acquisition_boundary_rejects_a_relationship_from_a_drifted_run(acquisition_app) -> None:
+    from app.extensions import get_engine
+    from app.modules.acquisition.service import (
+        AcquisitionStateError,
+        create_candidate_from_radar_relationship,
+    )
+    from app.modules.radar.models import RadarRun
+
+    _seed_relationship(acquisition_app)
+    with Session(get_engine(acquisition_app)) as session:
+        run = session.get(RadarRun, "run-a")
+        assert run is not None
+        run.result_summary_json = '{"possible_baseline_drift":true}'
+        session.commit()
+
+    with pytest.raises(AcquisitionStateError, match="baseline drift"):
+        create_candidate_from_radar_relationship(
+            acquisition_app,
+            tenant_id="tenant-a",
+            actor_id="actor-a",
+            mission_id="mission-a",
+            relationship_id="relationship-a",
+            expected_domain="rider.example",
+        )
+
+
+def test_converting_an_already_converted_relationship_is_idempotent(acquisition_app) -> None:
+    from app.modules.acquisition.service import create_candidate_from_radar_relationship
+
+    _seed_relationship(acquisition_app)
+    first = create_candidate_from_radar_relationship(
+        acquisition_app,
+        tenant_id="tenant-a",
+        actor_id="actor-a",
+        mission_id="mission-a",
+        relationship_id="relationship-a",
+        expected_domain="rider.example",
+    )
+    second = create_candidate_from_radar_relationship(
+        acquisition_app,
+        tenant_id="tenant-a",
+        actor_id="actor-b",
+        mission_id="mission-a",
+        relationship_id="relationship-a",
+        expected_domain="rider.example",
+    )
+
+    assert second.id == first.id

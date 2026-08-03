@@ -62,6 +62,7 @@ def run_view(value: RadarRun) -> dict[str, object]:
         "stage": value.stage,
         "budget": _safe_object(value.budget_json),
         "summary": _safe_object(value.result_summary_json),
+        "baseline_accepted": value.baseline_accepted,
         "created_at": value.created_at,
         "started_at": value.started_at,
         "finished_at": value.finished_at,

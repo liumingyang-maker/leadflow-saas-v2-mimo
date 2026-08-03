@@ -125,6 +125,56 @@ def test_execute_job_refuses_terminal_job(monkeypatch) -> None:
     assert result == {"error": "invalid_status:succeeded", "ok": False}
 
 
+def test_execute_job_preserves_cancellation_reported_while_a_handler_runs(monkeypatch) -> None:
+    import app.modules.jobs.worker as worker
+    from app.modules.jobs.models import Job
+
+    app, engine = _app(monkeypatch)
+    with Session(engine) as session:
+        job = Job(tenant_id="t1", job_type="radar_scan", payload_json='{"run_id":"run-a"}')
+        session.add(job)
+        session.commit()
+        job_id = job.id
+
+    def cancelled_handler(_app, _job, _payload):
+        with Session(engine) as session:
+            current = session.get(Job, job_id)
+            assert current is not None
+            current.status = "cancelled"
+            session.commit()
+        return {"run_status": "cancelled"}
+
+    monkeypatch.setattr(worker, "_make_app", lambda: app)
+    monkeypatch.setattr(worker, "_get_job_handler", lambda _job_type: cancelled_handler)
+
+    assert worker.execute_job(job_id) == {
+        "ok": False,
+        "error": "cancelled",
+        "run_status": "cancelled",
+    }
+    with Session(engine) as session:
+        current = session.get(Job, job_id)
+        assert current is not None and current.status == "cancelled"
+
+
+def test_worker_error_does_not_resurrect_a_cancelled_job(monkeypatch) -> None:
+    import app.modules.jobs.worker as worker
+    from app.modules.jobs.models import Job
+
+    app, engine = _app(monkeypatch)
+    with Session(engine) as session:
+        job = Job(tenant_id="t1", job_type="radar_scan", status="cancelled")
+        session.add(job)
+        session.commit()
+        job_id = job.id
+
+    worker._handle_worker_error(app, job_id, "t1", RuntimeError("interrupted"))
+
+    with Session(engine) as session:
+        stored = session.get(Job, job_id)
+        assert stored is not None and stored.status == "cancelled"
+
+
 def test_stale_recovery_is_atomic(monkeypatch) -> None:
     from app.modules.jobs.models import Job
     from app.modules.jobs.repository import JobRepository

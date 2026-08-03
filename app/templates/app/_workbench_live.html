@@ -11,6 +11,17 @@
     <a class="lf-stat-card" href="/leads?follow_up_due=1"><span>今日跟进</span><strong>{{ view.follow_ups_due }}</strong><small>到期且尚未结束的客户</small></a>
   </div>
 
+  {% if view.radar_open_changes or view.radar_proposed_relationships or view.radar_incomplete_runs %}
+  <section class="lf-section" aria-labelledby="radar-attention-title">
+    <div class="lf-page-header"><div><span class="lf-eyebrow">Competitor Radar</span><h2 id="radar-attention-title">Manual review needed</h2></div><a class="lf-button" href="/radar">Open Radar</a></div>
+    <div class="lf-card-list">
+      <article class="lf-panel"><strong>{{ view.radar_open_changes }}</strong><p>open material changes</p></article>
+      <article class="lf-panel"><strong>{{ view.radar_proposed_relationships }}</strong><p>proposed relationships</p></article>
+      <article class="lf-panel"><strong>{{ view.radar_incomplete_runs }}</strong><p>partial or failed manual runs</p></article>
+    </div>
+  </section>
+  {% endif %}
+
   <section class="lf-section" id="recent-missions" aria-labelledby="recent-missions-title">
     <div class="lf-page-header"><div><span class="lf-eyebrow">获客进展</span><h2 id="recent-missions-title">最近任务</h2></div><a class="lf-button" href="/acquisition/missions">查看全部</a></div>
     {% if view.recent_missions %}

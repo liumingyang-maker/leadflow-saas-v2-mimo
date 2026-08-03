@@ -3,7 +3,15 @@ from __future__ import annotations
 import uuid
 from datetime import UTC, datetime
 
-from sqlalchemy import CheckConstraint, DateTime, ForeignKey, String, Text, UniqueConstraint
+from sqlalchemy import (
+    Boolean,
+    CheckConstraint,
+    DateTime,
+    ForeignKey,
+    String,
+    Text,
+    UniqueConstraint,
+)
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.extensions import Base
@@ -118,6 +126,12 @@ class RadarRun(Base):
         ),
         CheckConstraint("length(budget_json) <= 5000", name="radar_run_budget_size"),
         CheckConstraint("length(result_summary_json) <= 20000", name="radar_run_summary_size"),
+        UniqueConstraint(
+            "tenant_id",
+            "profile_id",
+            "active_key",
+            name="uq_radar_run_profile_active",
+        ),
     )
 
     id: Mapped[str] = mapped_column(String(64), primary_key=True, default=_id)
@@ -127,10 +141,13 @@ class RadarRun(Base):
     )
     root_job_id: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
     requested_by: Mapped[str] = mapped_column(String(36), nullable=False)
+    # NULL terminal Runs do not participate in the unique key; queued/running use "active".
+    active_key: Mapped[str | None] = mapped_column(String(16), nullable=True)
     status: Mapped[str] = mapped_column(String(24), default="queued", nullable=False, index=True)
     stage: Mapped[str] = mapped_column(String(80), default="queued", nullable=False)
     budget_json: Mapped[str] = mapped_column(Text, nullable=False)
     result_summary_json: Mapped[str] = mapped_column(Text, default="{}", nullable=False)
+    baseline_accepted: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
     parser_version: Mapped[str] = mapped_column(
         String(40), default="radar-static-v1", nullable=False
     )

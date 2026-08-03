@@ -5,7 +5,7 @@ from __future__ import annotations
 from datetime import UTC, datetime
 from typing import Any
 
-from sqlalchemy import select
+from sqlalchemy import select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -20,6 +20,7 @@ from app.modules.radar.models import (
 )
 from app.modules.radar.policies import canonical_json, parse_bounded_json_object
 from app.modules.radar.snapshots import (
+    RadarSnapshotError,
     finalize_snapshot,
     finalize_unreachable_snapshot,
     plan_radar_pages,
@@ -50,17 +51,30 @@ def handle_radar_scan(app: Any, job: Job, payload: dict[str, object]) -> dict[st
     budget = parse_bounded_json_object(run.budget_json)
     page_limit = _bounded_int(budget.get("pages"), default=10, minimum=1, maximum=25)
     fetcher = StaticFetcher.from_app(app)
-    planned = plan_radar_pages(
-        official_url=profile.official_url,
-        canonical_domain=profile.canonical_domain,
-        tracking_config_json=profile.tracking_config_json,
-        page_limit=page_limit,
-        resolver=fetcher.resolver,
-    )
     valid_count = 0
     nonvalid_count = 0
     reasons: set[str] = set()
+    page_records: list[dict[str, str]] = []
     try:
+        try:
+            planned = plan_radar_pages(
+                official_url=profile.official_url,
+                canonical_domain=profile.canonical_domain,
+                tracking_config_json=profile.tracking_config_json,
+                page_limit=page_limit,
+                resolver=fetcher.resolver,
+            )
+        except (RadarSnapshotError, ValueError):
+            return _finish_run(
+                app,
+                run_id=run.id,
+                tenant_id=run.tenant_id,
+                status="failed",
+                stage="planning_failed",
+                nonvalid_count=1,
+                reasons={"planning_failed"},
+                page_records=page_records,
+            )
         index = 0
         while index < len(planned):
             page = planned[index]
@@ -75,13 +89,14 @@ def handle_radar_scan(app: Any, job: Job, payload: dict[str, object]) -> dict[st
                     valid_count=valid_count,
                     nonvalid_count=nonvalid_count,
                     reasons=reasons,
+                    page_records=page_records,
                 )
             try:
                 fetched = fetcher.fetch(page.requested_url)
             except FetchError as exc:
                 reason = exc.code if exc.code in _SAFE_FETCH_CODES else "source_unreachable"
                 with Session(get_engine(app)) as session:
-                    finalize_unreachable_snapshot(
+                    snapshot = finalize_unreachable_snapshot(
                         session,
                         profile_id=profile.id,
                         run_id=run.id,
@@ -90,21 +105,29 @@ def handle_radar_scan(app: Any, job: Job, payload: dict[str, object]) -> dict[st
                         canonical_url=page.canonical_url,
                         reason_code=reason,
                     )
+                    page_records.append(_page_record(snapshot, page_kind=page.page_kind))
                     session.commit()
                 nonvalid_count += 1
                 reasons.add(reason)
                 continue
-            with Session(get_engine(app)) as session:
-                snapshot = finalize_snapshot(
-                    session,
-                    profile_id=profile.id,
-                    run_id=run.id,
-                    page_kind=page.page_kind,
-                    fetched_page=fetched,
-                )
-                validation_status = snapshot.validation_status
-                facts_json = snapshot.facts_json
-                session.commit()
+            try:
+                with Session(get_engine(app)) as session:
+                    snapshot = finalize_snapshot(
+                        session,
+                        profile_id=profile.id,
+                        run_id=run.id,
+                        page_kind=page.page_kind,
+                        fetched_page=fetched,
+                    )
+                    validation_status = snapshot.validation_status
+                    facts_json = snapshot.facts_json
+                    page_records.append(_page_record(snapshot, page_kind=page.page_kind))
+                    session.commit()
+            except RadarSnapshotError:
+                nonvalid_count += 1
+                reasons.add("final_url_rejected")
+                page_records.append(_planned_page_record(page, validation_status="rejected"))
+                continue
             if validation_status == "valid":
                 valid_count += 1
             else:
@@ -134,14 +157,23 @@ def handle_radar_scan(app: Any, job: Job, payload: dict[str, object]) -> dict[st
         run_id=run.id,
         tenant_id=run.tenant_id,
         status=status,
-        stage="completed",
+        stage="reconciling",
         valid_count=valid_count,
         nonvalid_count=nonvalid_count,
         reasons=reasons,
+        page_records=page_records,
+        terminal=False,
     )
+    if _is_cancelled(app, run_id=run.id, tenant_id=run.tenant_id):
+        return {**summary, "run_status": "cancelled"}
     signal_summary = _reconcile_change_signals(app, run=run, profile=profile)
     summary.update(signal_summary)
-    if status in {"succeeded", "partial"} and not signal_summary["possible_baseline_drift"]:
+    relationship_summary = {"relationships": 0, "automatic_candidates": 0, "confirmed": 0}
+    if (
+        status in {"succeeded", "partial"}
+        and not signal_summary["possible_baseline_drift"]
+        and not _is_cancelled(app, run_id=run.id, tenant_id=run.tenant_id)
+    ):
         relationship_summary = _resolve_relationships_and_candidates(
             app,
             run=run,
@@ -149,7 +181,26 @@ def handle_radar_scan(app: Any, job: Job, payload: dict[str, object]) -> dict[st
             budget=budget,
         )
         summary.update(relationship_summary)
-    return summary
+    if not _is_cancelled(app, run_id=run.id, tenant_id=run.tenant_id):
+        summary.update(
+            _aggregate_run_notification(
+                app,
+                run=run,
+                profile=profile,
+                run_status=status,
+                signals=int(signal_summary["signals"]),
+                confirmed_relationships=int(relationship_summary["confirmed"]),
+                drift=bool(signal_summary["possible_baseline_drift"]),
+            )
+        )
+    return _finish_run(
+        app,
+        run_id=run.id,
+        tenant_id=run.tenant_id,
+        status=status,
+        stage="completed",
+        summary_override=summary,
+    )
 
 
 def _start_run(app: Any, *, job: Job, run_id: str) -> tuple[RadarRun, CompetitorProfile]:
@@ -170,14 +221,35 @@ def _start_run(app: Any, *, job: Job, run_id: str) -> tuple[RadarRun, Competitor
             raise ValueError("Radar profile was not found")
         if run.status == "cancelled":
             return run, profile
-        if run.status not in {"queued", "running"}:
+        if run.status == "running":
+            run.heartbeat_at = datetime.now(UTC)
+            session.commit()
+            return run, profile
+        if run.status != "queued":
             raise ValueError("Radar Run is not active")
         now = datetime.now(UTC)
-        run.status = "running"
-        run.stage = "static_fetch"
-        run.started_at = run.started_at or now
-        run.heartbeat_at = now
+        started = session.execute(
+            update(RadarRun)
+            .where(
+                RadarRun.id == run.id,
+                RadarRun.tenant_id == job.tenant_id,
+                RadarRun.status == "queued",
+                RadarRun.active_key == "active",
+            )
+            .values(
+                status="running",
+                stage="static_fetch",
+                started_at=now,
+                heartbeat_at=now,
+            )
+        )
+        if started.rowcount != 1:
+            session.expire(run)
+            if run.status == "cancelled":
+                return run, profile
+            raise ValueError("Radar Run was not available to start")
         session.commit()
+        session.refresh(run)
         return run, profile
 
 
@@ -199,12 +271,16 @@ def _finish_run(
     valid_count: int = 0,
     nonvalid_count: int = 0,
     reasons: set[str] | None = None,
+    page_records: list[dict[str, str]] | None = None,
+    terminal: bool = True,
+    summary_override: dict[str, object] | None = None,
 ) -> dict[str, object]:
-    summary = {
+    summary = summary_override or {
         "valid_snapshots": valid_count,
         "nonvalid_pages": nonvalid_count,
         "reason_codes": sorted(reasons or set())[:20],
         "browser_jobs": 0,
+        "pages": list((page_records or [])[:25]),
         "run_status": status,
     }
     with Session(get_engine(app)) as session:
@@ -216,13 +292,33 @@ def _finish_run(
         if run.status == "cancelled":
             summary["run_status"] = "cancelled"
             return summary
-        run.status = status
         run.stage = stage
         run.heartbeat_at = datetime.now(UTC)
-        run.finished_at = run.heartbeat_at
         run.result_summary_json = canonical_json(summary)
+        if terminal:
+            run.status = status
+            run.active_key = None
+            run.finished_at = run.heartbeat_at
         session.commit()
     return summary
+
+
+def _page_record(snapshot: RadarSnapshot, *, page_kind: str) -> dict[str, str]:
+    return {
+        "canonical_url": snapshot.canonical_url[:300],
+        "page_kind": page_kind[:24],
+        "snapshot_id": snapshot.id[:64],
+        "validation_status": snapshot.validation_status[:24],
+    }
+
+
+def _planned_page_record(page: object, *, validation_status: str) -> dict[str, str]:
+    return {
+        "canonical_url": str(getattr(page, "canonical_url", ""))[:300],
+        "page_kind": str(getattr(page, "page_kind", "other"))[:24],
+        "snapshot_id": "",
+        "validation_status": validation_status[:24],
+    }
 
 
 def _required_run_id(payload: dict[str, object]) -> str:
@@ -281,6 +377,13 @@ def _resolve_relationships_and_candidates(
     relationship_ids: list[tuple[str, str, str, str]] = []
     with Session(get_engine(app)) as session:
         session.expire_on_commit = False
+        locked_run = session.scalar(
+            select(RadarRun)
+            .where(RadarRun.id == run.id, RadarRun.tenant_id == run.tenant_id)
+            .with_for_update()
+        )
+        if locked_run is None or locked_run.status == "cancelled":
+            return {"relationships": 0, "automatic_candidates": 0, "confirmed": 0}
         snapshots = list(
             session.scalars(
                 select(RadarSnapshot).where(
@@ -309,6 +412,11 @@ def _resolve_relationships_and_candidates(
                         relationship.canonical_domain,
                     )
                 )
+        session.expire_all()
+        stored_run = session.get(RadarRun, run.id)
+        if stored_run is None or stored_run.status == "cancelled":
+            session.rollback()
+            return {"relationships": 0, "automatic_candidates": 0, "confirmed": 0}
         session.commit()
 
     maximum = _bounded_int(budget.get("automatic_conversions"), default=10, minimum=0, maximum=20)
@@ -330,7 +438,16 @@ def _resolve_relationships_and_candidates(
         except AcquisitionError:
             continue
         converted += 1
-    return {"relationships": len(relationship_ids), "automatic_candidates": converted}
+    confirmed = sum(
+        1
+        for _relationship_id, relationship_type, strength, _domain in relationship_ids
+        if relationship_type in {"dealer", "distributor"} and strength == "confirmed"
+    )
+    return {
+        "relationships": len(relationship_ids),
+        "automatic_candidates": converted,
+        "confirmed": confirmed,
+    }
 
 
 def _reconcile_change_signals(
@@ -341,53 +458,49 @@ def _reconcile_change_signals(
 ) -> dict[str, object]:
     """Persist deterministic Diffs and one bounded in-app aggregate notification."""
 
-    from app.modules.acquisition.models import Notification
     from app.modules.radar.diff import detect_baseline_drift, diff_snapshots
 
     with Session(get_engine(app)) as session:
-        session.expire_on_commit = False
-        current = list(
-            session.scalars(
-                select(RadarSnapshot).where(
-                    RadarSnapshot.tenant_id == run.tenant_id,
-                    RadarSnapshot.run_id == run.id,
-                    RadarSnapshot.validation_status == "valid",
-                )
-            )
-        )
-        previous_run = session.scalar(
+        locked_run = session.scalar(
             select(RadarRun)
-            .where(
-                RadarRun.tenant_id == run.tenant_id,
-                RadarRun.profile_id == profile.id,
-                RadarRun.id != run.id,
-                RadarRun.status.in_(("succeeded", "partial")),
-            )
-            .order_by(RadarRun.finished_at.desc(), RadarRun.id.desc())
-            .limit(1)
+            .where(RadarRun.id == run.id, RadarRun.tenant_id == run.tenant_id)
+            .with_for_update()
+        )
+        if locked_run is None or locked_run.status == "cancelled":
+            return {"signals": 0, "possible_baseline_drift": False, "notification": False}
+        session.expire_on_commit = False
+        current_records = _valid_snapshot_records(session, run)
+        previous_run = _previous_accepted_run(
+            session,
+            tenant_id=run.tenant_id,
+            profile_id=profile.id,
+            current_run_id=run.id,
         )
         if previous_run is None:
             return {"signals": 0, "possible_baseline_drift": False, "notification": False}
-        previous = list(
-            session.scalars(
-                select(RadarSnapshot).where(
-                    RadarSnapshot.tenant_id == run.tenant_id,
-                    RadarSnapshot.run_id == previous_run.id,
-                    RadarSnapshot.validation_status == "valid",
-                )
-            )
-        )
+        previous_records = _valid_snapshot_records(session, previous_run)
         drift = detect_baseline_drift(
             previous_run=previous_run,
             current_run=run,
-            previous_pages=tuple(item.canonical_url for item in previous),
-            current_pages=tuple(item.canonical_url for item in current),
+            previous_pages=tuple(item[1] for item in previous_records),
+            current_pages=tuple(item[1] for item in current_records),
+            previous_facts_by_page={
+                url: _fact_fingerprints(snapshot.facts_json)
+                for snapshot, url, _kind in previous_records
+            },
+            current_facts_by_page={
+                url: _fact_fingerprints(snapshot.facts_json)
+                for snapshot, url, _kind in current_records
+            },
+            page_kinds={
+                url: kind for _snapshot, url, kind in (*previous_records, *current_records)
+            },
             policy_version="radar-drift-v1",
         )
-        previous_by_url = {item.canonical_url: item for item in previous}
+        previous_by_url = {url: item for item, url, _kind in previous_records}
         created: list[RadarChangeSignal] = []
-        for snapshot in current:
-            baseline = previous_by_url.get(snapshot.canonical_url)
+        for snapshot, canonical_url, _kind in current_records:
+            baseline = previous_by_url.get(canonical_url)
             if baseline is None or baseline.content_hash == snapshot.content_hash:
                 continue
             delta = diff_snapshots(
@@ -427,40 +540,199 @@ def _reconcile_change_signals(
             except IntegrityError:
                 continue
             created.append(signal)
-        notified = False
-        if created and not drift.is_drift:
-            dedupe = f"radar-run:{profile.id}:{run.id}"
-            existing = session.scalar(
-                select(Notification).where(
-                    Notification.tenant_id == run.tenant_id,
-                    Notification.dedupe_key == dedupe,
-                )
-            )
-            if existing is None:
-                highlights = ", ".join(item.current_snapshot_id[:12] for item in created[:5])
-                session.add(
-                    Notification(
-                        tenant_id=run.tenant_id,
-                        kind="radar_change",
-                        title=f"{profile.company_name} changed",
-                        body=f"{len(created)} change(s) detected: {highlights}"[:1000],
-                        target_url=f"/radar/runs/{run.id}",
-                        dedupe_key=dedupe,
-                    )
-                )
-                notified = True
+        session.expire_all()
         stored_run = session.get(RadarRun, run.id)
-        if stored_run is not None:
-            result = parse_bounded_json_object(stored_run.result_summary_json)
-            result["possible_baseline_drift"] = drift.is_drift
-            result["drift_reason_codes"] = list(drift.reason_codes)
-            stored_run.result_summary_json = canonical_json(result)
+        if stored_run is None or stored_run.status == "cancelled":
+            session.rollback()
+            return {"signals": 0, "possible_baseline_drift": False, "notification": False}
+        result = parse_bounded_json_object(stored_run.result_summary_json)
+        result["possible_baseline_drift"] = drift.is_drift
+        result["drift_reason_codes"] = list(drift.reason_codes)
+        stored_run.result_summary_json = canonical_json(result)
+        stored_run.baseline_accepted = not drift.is_drift
         session.commit()
     return {
         "signals": len(created),
         "possible_baseline_drift": drift.is_drift,
-        "notification": notified,
+        "notification": False,
     }
+
+
+def _aggregate_run_notification(
+    app: Any,
+    *,
+    run: RadarRun,
+    profile: CompetitorProfile,
+    run_status: str,
+    signals: int,
+    confirmed_relationships: int,
+    drift: bool,
+) -> dict[str, bool]:
+    """Create one bounded, tenant-owned in-app notification for actionable Run outcomes."""
+
+    if (
+        run_status not in {"partial", "failed"}
+        and not confirmed_relationships
+        and (not signals or drift)
+    ):
+        return {"notification": False}
+    from app.modules.acquisition.models import Notification
+
+    reasons: list[str] = []
+    if run_status in {"partial", "failed"}:
+        reasons.append(run_status)
+    if confirmed_relationships:
+        reasons.append(f"{confirmed_relationships} confirmed relationship(s)")
+    if signals and not drift:
+        reasons.append(f"{signals} material change(s)")
+    with Session(get_engine(app)) as session:
+        stored_run = session.scalar(
+            select(RadarRun)
+            .where(RadarRun.id == run.id, RadarRun.tenant_id == run.tenant_id)
+            .with_for_update()
+        )
+        if stored_run is None or stored_run.status == "cancelled":
+            return {"notification": False}
+        existing = session.scalar(
+            select(Notification).where(
+                Notification.tenant_id == run.tenant_id,
+                Notification.dedupe_key == f"radar-run:{profile.id}:{run.id}",
+            )
+        )
+        if existing is not None:
+            return {"notification": False}
+        session.add(
+            Notification(
+                tenant_id=run.tenant_id,
+                kind="radar_change",
+                title=f"{profile.company_name} Radar update",
+                body="; ".join(reasons[:5])[:1000],
+                target_url=f"/radar/runs/{run.id}",
+                dedupe_key=f"radar-run:{profile.id}:{run.id}",
+            )
+        )
+        session.commit()
+    return {"notification": True}
+
+
+def _valid_snapshot_records(
+    session: Session,
+    run: RadarRun,
+) -> list[tuple[RadarSnapshot, str, str]]:
+    """Resolve this Run's logical pages, including immutable snapshots reused from a prior Run."""
+
+    stored = session.get(RadarRun, run.id)
+    if stored is None:
+        return []
+    try:
+        result = parse_bounded_json_object(stored.result_summary_json)
+    except ValueError:
+        result = {}
+    raw_pages = result.get("pages")
+    if isinstance(raw_pages, list):
+        entries = [item for item in raw_pages[:25] if isinstance(item, dict)]
+        snapshot_ids = [
+            item.get("snapshot_id")
+            for item in entries
+            if item.get("validation_status") == "valid"
+            and isinstance(item.get("snapshot_id"), str)
+            and item["snapshot_id"]
+        ]
+        if snapshot_ids:
+            by_id = {
+                snapshot.id: snapshot
+                for snapshot in session.scalars(
+                    select(RadarSnapshot).where(
+                        RadarSnapshot.tenant_id == run.tenant_id,
+                        RadarSnapshot.id.in_(snapshot_ids),
+                        RadarSnapshot.validation_status == "valid",
+                    )
+                )
+            }
+            records: list[tuple[RadarSnapshot, str, str]] = []
+            for entry in entries:
+                snapshot_id = entry.get("snapshot_id")
+                canonical_url = entry.get("canonical_url")
+                page_kind = entry.get("page_kind")
+                snapshot = by_id.get(snapshot_id) if isinstance(snapshot_id, str) else None
+                if (
+                    snapshot is not None
+                    and isinstance(canonical_url, str)
+                    and isinstance(page_kind, str)
+                ):
+                    records.append((snapshot, canonical_url, page_kind))
+            return records
+    return [
+        (snapshot, snapshot.canonical_url, snapshot.page_kind)
+        for snapshot in session.scalars(
+            select(RadarSnapshot).where(
+                RadarSnapshot.tenant_id == run.tenant_id,
+                RadarSnapshot.run_id == run.id,
+                RadarSnapshot.validation_status == "valid",
+            )
+        )
+    ]
+
+
+def _previous_accepted_run(
+    session: Session,
+    *,
+    tenant_id: str,
+    profile_id: str,
+    current_run_id: str,
+) -> RadarRun | None:
+    return session.scalar(
+        select(RadarRun)
+        .where(
+            RadarRun.tenant_id == tenant_id,
+            RadarRun.profile_id == profile_id,
+            RadarRun.id != current_run_id,
+            RadarRun.status.in_(("succeeded", "partial")),
+            RadarRun.baseline_accepted.is_(True),
+        )
+        .order_by(RadarRun.finished_at.desc(), RadarRun.id.desc())
+        .limit(1)
+    )
+
+
+def _fact_fingerprints(value: str) -> tuple[str, ...]:
+    try:
+        parsed = parse_bounded_json_object(value)
+    except ValueError:
+        return ()
+    facts = parsed.get("facts")
+    if not isinstance(facts, list):
+        return ()
+    fingerprints: list[str] = []
+    for fact in facts[:100]:
+        if isinstance(fact, dict) and isinstance(fact.get("key"), str):
+            fingerprints.append(canonical_json({"key": fact["key"], "value": fact.get("value")}))
+    return tuple(sorted(fingerprints))
+
+
+def finalize_radar_worker_failure(app: Any, *, job_id: str, tenant_id: str) -> None:
+    """Release a Run only when its root Job exhausted retries or otherwise failed."""
+
+    with Session(get_engine(app)) as session:
+        job = session.get(Job, job_id)
+        if job is None or job.tenant_id != tenant_id or job.status != "failed":
+            return
+        run = session.scalar(
+            select(RadarRun).where(
+                RadarRun.root_job_id == job.id,
+                RadarRun.tenant_id == tenant_id,
+                RadarRun.status.in_(("queued", "running")),
+            )
+        )
+        if run is None:
+            return
+        run.status = "failed"
+        run.stage = "worker_failed"
+        run.active_key = None
+        run.heartbeat_at = datetime.now(UTC)
+        run.finished_at = run.heartbeat_at
+        run.result_summary_json = canonical_json({"reason_codes": ["worker_failed"]})
+        session.commit()
 
 
 RADAR_HANDLERS = {"radar_scan": handle_radar_scan}

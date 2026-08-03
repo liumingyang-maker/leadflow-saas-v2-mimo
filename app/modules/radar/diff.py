@@ -46,6 +46,9 @@ def detect_baseline_drift(
     current_run: object,
     previous_pages: tuple[str, ...],
     current_pages: tuple[str, ...],
+    previous_facts_by_page: dict[str, tuple[str, ...]] | None = None,
+    current_facts_by_page: dict[str, tuple[str, ...]] | None = None,
+    page_kinds: dict[str, str] | None = None,
     policy_version: str,
 ) -> DriftResult:
     """Detect coverage/version risk without resetting any historical baseline."""
@@ -62,6 +65,26 @@ def detect_baseline_drift(
     missing = len(previous - current)
     if previous and missing / len(previous) >= 0.5:
         reasons.append("page_identity_loss")
+    if (
+        previous_facts_by_page is not None
+        and current_facts_by_page is not None
+        and page_kinds is not None
+    ):
+        stable = 0
+        disappeared = 0
+        disappeared_kinds: set[str] = set()
+        for page in previous & current:
+            before = set(previous_facts_by_page.get(page, ()))
+            if not before:
+                continue
+            after = set(current_facts_by_page.get(page, ()))
+            stable += len(before)
+            missing_facts = before - after
+            disappeared += len(missing_facts)
+            if missing_facts:
+                disappeared_kinds.add(page_kinds.get(page, "other"))
+        if stable and disappeared / stable >= 0.6 and len(disappeared_kinds) >= 2:
+            reasons.append("stable_fact_disappearance")
     return DriftResult(bool(reasons), tuple(reasons), comparable, missing)
 
 
@@ -70,13 +93,25 @@ def _fact_map(value: object) -> dict[str, Any]:
     facts = parsed.get("facts", [])
     if not isinstance(facts, list):
         return {}
-    output: dict[str, Any] = {}
+    grouped: dict[str, list[Any]] = {}
     for item in facts:
         if not isinstance(item, dict):
             continue
         key = item.get("key")
         if isinstance(key, str) and key:
-            output[key] = item.get("value")
+            grouped.setdefault(key, []).append(item.get("value"))
+    output: dict[str, Any] = {}
+    for key, values in grouped.items():
+        canonical = sorted(
+            values,
+            key=lambda item: json.dumps(
+                item,
+                ensure_ascii=False,
+                separators=(",", ":"),
+                sort_keys=True,
+            ),
+        )
+        output[key] = canonical[0] if len(canonical) == 1 else canonical
     return output
 
 

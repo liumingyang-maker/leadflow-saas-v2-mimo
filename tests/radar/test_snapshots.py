@@ -107,3 +107,25 @@ def test_finalize_snapshot_rejects_injection_and_marks_dynamic_shell(radar_app) 
         assert json.loads(rejected.facts_json)["reason_codes"] == ["prompt_injection_detected"]
         assert dynamic.validation_status == "partial"
         assert json.loads(dynamic.facts_json)["reason_codes"] == ["requires_browser"]
+
+
+def test_finalize_snapshot_rejects_final_url_outside_the_approved_competitor_domain(
+    radar_app,
+) -> None:
+    import pytest
+
+    from app.extensions import get_engine
+    from app.modules.radar.snapshots import RadarSnapshotError, finalize_snapshot
+
+    _seed_profile(radar_app)
+    page = _page(text="Redirected page")
+    page = page.__class__(**{**page.__dict__, "final_url": "https://attacker.example/redirected"})
+    with Session(get_engine(radar_app)) as session:
+        with pytest.raises(RadarSnapshotError, match="official competitor domain"):
+            finalize_snapshot(
+                session,
+                profile_id="profile-a",
+                run_id="run-a",
+                page_kind="home",
+                fetched_page=page,
+            )

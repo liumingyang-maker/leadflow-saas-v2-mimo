@@ -166,10 +166,12 @@ def create_candidate_from_radar_relationship(
         if mission.status not in _RADAR_ACTIVE_MISSION_STATUSES:
             raise AcquisitionStateError("mission is not active for Radar conversion")
         relationship = session.scalar(
-            select(RadarRelationship).where(
+            select(RadarRelationship)
+            .where(
                 RadarRelationship.id == relationship_id,
                 RadarRelationship.tenant_id == tenant_id,
             )
+            .with_for_update()
         )
         if relationship is None:
             raise AcquisitionNotFoundError("Radar relationship was not found")
@@ -180,10 +182,12 @@ def create_candidate_from_radar_relationship(
             )
         )
         run = session.scalar(
-            select(RadarRun).where(
+            select(RadarRun)
+            .where(
                 RadarRun.id == relationship.run_id,
                 RadarRun.tenant_id == tenant_id,
             )
+            .with_for_update()
         )
         snapshot = session.scalar(
             select(RadarSnapshot).where(
@@ -201,6 +205,15 @@ def create_candidate_from_radar_relationship(
         )
         assert profile is not None and run is not None and snapshot is not None
         candidate_repo = CandidateRepository(session)
+        if relationship.status == "converted":
+            if relationship.candidate_id:
+                existing_converted = candidate_repo.get(
+                    relationship.candidate_id,
+                    tenant_id=tenant_id,
+                )
+                if existing_converted is not None:
+                    return existing_converted
+            raise AcquisitionStateError("Converted Radar relationship has no Candidate")
         dedupe_key = f"domain:{relationship.canonical_domain}"
         candidate = candidate_repo.find_by_dedupe_key(
             mission.id,
@@ -292,6 +305,12 @@ def _validate_radar_conversion_context(
         raise AcquisitionStateError("Radar relationship evidence is not confirmed")
     if relationship.status == "dismissed" or run.status == "cancelled":
         raise AcquisitionStateError("Cancelled or dismissed Radar relationships cannot convert")
+    try:
+        run_summary = json.loads(run.result_summary_json or "{}")
+    except (TypeError, json.JSONDecodeError):
+        run_summary = {}
+    if isinstance(run_summary, dict) and run_summary.get("possible_baseline_drift") is True:
+        raise AcquisitionStateError("Radar relationship conversion is blocked by baseline drift")
     snapshot_domain = _normalise_domain(snapshot.canonical_url)
     if snapshot.validation_status != "valid" or snapshot_domain != profile.canonical_domain:
         raise AcquisitionStateError("Radar relationship lacks official-source evidence")
