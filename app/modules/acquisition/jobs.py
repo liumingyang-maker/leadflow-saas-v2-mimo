@@ -19,6 +19,7 @@ from app.integrations.ai.contracts import CountryResearchPlan
 from app.integrations.ai.mimo import ProviderError, build_mimo_provider
 from app.integrations.web.fetcher import FetchError, StaticFetcher
 from app.modules.acquisition.assessment import compute_candidate_assessment
+from app.modules.acquisition.mission_results import resolve_mission_result
 from app.modules.acquisition.models import (
     AcquisitionCandidate,
     AcquisitionMission,
@@ -37,10 +38,7 @@ from app.modules.acquisition.repository import (
     ProductKnowledgeRepository,
     ProviderStatusRepository,
 )
-from app.modules.acquisition.states import (
-    USABLE_CANDIDATE_STATUSES,
-    update_assessment_state_if_mutable,
-)
+from app.modules.acquisition.states import update_assessment_state_if_mutable
 from app.modules.acquisition.versions import (
     ELIGIBILITY_POLICY_VERSION,
     PRIORITY_SCORE_VERSION,
@@ -648,22 +646,52 @@ def reconcile_missions(app, *, tenant_id: str | None = None, now: datetime) -> i
                 for item in candidates
                 if item.tenant_id == mission.tenant_id and item.mission_id == mission.id
             ]
-            usable = [
-                item for item in mission_candidates if item.status in USABLE_CANDIDATE_STATUSES
-            ]
-            failed_count = sum(item.status in {"failed", "cancelled"} for item in mission_jobs)
-            next_status = "completed" if usable else "failed"
-            partial = bool(usable and failed_count)
             from app.modules.acquisition.service import mission_retrospective_payload
 
             retrospective = _json_object(mission.retrospective_json)
-            retrospective.update(
-                mission_retrospective_payload(mission_candidates, failed_job_count=failed_count)
+            previous_execution_status = mission.status
+            previous_business_result = retrospective.get("business_result")
+            previous_result_code = (
+                previous_business_result.get("code")
+                if isinstance(previous_business_result, dict)
+                else None
             )
+            result = resolve_mission_result(
+                session,
+                mission,
+                tenant_id=mission.tenant_id,
+                candidates=mission_candidates,
+                jobs=mission_jobs,
+            )
+            next_status = "failed" if result.counts.failed_jobs else "completed"
+            if mission.status != next_status:
+                mission.status = next_status
+                result = resolve_mission_result(
+                    session,
+                    mission,
+                    tenant_id=mission.tenant_id,
+                    candidates=mission_candidates,
+                    jobs=mission_jobs,
+                )
+            retrospective.update(mission_retrospective_payload(result, mission_candidates))
             mission.retrospective_json = canonical_json(retrospective)
-            mission.status = next_status
             mission.finished_at = now
             changed += 1
+
+            if previous_execution_status != next_status or previous_result_code != result.code:
+                add_event(
+                    session,
+                    tenant_id=mission.tenant_id,
+                    actor_type="system",
+                    action="acquisition_mission.result_resolved",
+                    target_type="acquisition_mission",
+                    target_id=mission.id,
+                    safe_summary=(
+                        f"execution={next_status}; result={result.code}; "
+                        f"discovered={result.counts.discovered}; "
+                        f"failed_jobs={result.counts.failed_jobs}"
+                    ),
+                )
 
             notification_key = f"mission-terminal:{mission.id}:{next_status}"
             notifications = NotificationRepository(session)
@@ -674,17 +702,12 @@ def reconcile_missions(app, *, tenant_id: str | None = None, now: datetime) -> i
             )
             if stale_notification is not None:
                 stale_notification.status = "archived"
-            kind = (
-                "mission_partial"
-                if partial
-                else ("mission_completed" if next_status == "completed" else "mission_failed")
-            )
-            title = (
-                "Acquisition mission completed"
-                if next_status == "completed"
-                else "Acquisition mission failed"
-            )
-            body = f"{mission.name}: {len(usable)} usable candidates"
+            kind = {
+                "partial": "mission_partial",
+                "failed": "mission_failed",
+            }.get(result.code, "mission_completed")
+            title = f"找客户任务{result.label}"
+            body = f"{mission.name}：{result.summary}。下一步：{result.action_label}。"
             target_url = f"/acquisition/missions/{mission.id}"
             current_notification = notifications.find_by_dedupe_key(
                 notification_key,

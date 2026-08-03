@@ -6,7 +6,7 @@ import hashlib
 import json
 import re
 from collections import Counter
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
 from datetime import UTC, datetime
 from typing import Any
 from urllib.parse import urlsplit
@@ -57,7 +57,7 @@ from app.modules.acquisition.repository import (
     SuggestionRepository,
 )
 from app.modules.acquisition.states import (
-    USABLE_CANDIDATE_STATUSES,
+    BusinessResult,
     update_assessment_state_if_mutable,
 )
 from app.modules.acquisition.versions import (
@@ -620,16 +620,18 @@ def retry_candidate_verification(
             raise AcquisitionRetryConflictError("candidate status changed before retry claim")
 
         now = datetime.now(UTC)
+        notifications = NotificationRepository(session)
+        for terminal_status in ("failed", "completed"):
+            terminal_notification = notifications.find_by_dedupe_key(
+                f"mission-terminal:{mission.id}:{terminal_status}",
+                tenant_id=tenant_id,
+            )
+            if terminal_notification is not None:
+                terminal_notification.status = "archived"
+                terminal_notification.read_at = now
         if mission.status == "failed":
             mission.status = "running"
             mission.finished_at = None
-            failed_notification = NotificationRepository(session).find_by_dedupe_key(
-                f"mission-terminal:{mission.id}:failed",
-                tenant_id=tenant_id,
-            )
-            if failed_notification is not None:
-                failed_notification.status = "archived"
-                failed_notification.read_at = now
 
         add_event(
             session,
@@ -1210,7 +1212,8 @@ def record_mission_cost(
 
 
 def mission_retrospective_payload(
-    candidates: list[AcquisitionCandidate], *, failed_job_count: int
+    result: BusinessResult,
+    candidates: list[AcquisitionCandidate],
 ) -> dict[str, Any]:
     rejected = Counter(
         item.decision_reason_code or item.eligibility_code
@@ -1218,19 +1221,26 @@ def mission_retrospective_payload(
         if item.status == "rejected"
     )
     return {
-        "discovered": len(candidates),
-        "eligible": sum(item.status == "eligible" for item in candidates),
-        "needs_evidence": sum(item.status == "needs_evidence" for item in candidates),
-        "rejected": sum(item.status == "rejected" for item in candidates),
+        "business_result": {
+            "code": result.code,
+            "label": result.label,
+            "tone": result.tone,
+            "action_code": result.action_code,
+            "action_label": result.action_label,
+            "summary": result.summary,
+            "reason_codes": list(result.reason_codes),
+            "counts": asdict(result.counts),
+        },
+        "discovered": result.counts.discovered,
+        "eligible": result.counts.ready_to_review,
+        "needs_evidence": result.counts.needs_review,
+        "rejected": result.counts.excluded,
         "rejected_by_reason": dict(sorted(rejected.items())),
-        "accepted": sum(item.status in {"accepted", "promoted"} for item in candidates),
+        "accepted": result.counts.crm_ready,
         "contactable": sum(bool(_candidate_email(item)) for item in candidates),
-        "partial_failures": failed_job_count,
-        "partial_success": bool(
-            failed_job_count
-            and any(item.status in USABLE_CANDIDATE_STATUSES for item in candidates)
-        ),
-        "candidate_count": len(candidates),
+        "partial_failures": result.counts.failed_jobs,
+        "partial_success": result.code == "partial",
+        "candidate_count": result.counts.discovered,
     }
 
 

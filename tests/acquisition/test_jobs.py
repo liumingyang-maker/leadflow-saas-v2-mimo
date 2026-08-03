@@ -168,6 +168,7 @@ def test_reconciler_marks_partial_success_and_dedupes_notification(
         AcquisitionMission,
         Notification,
     )
+    from app.modules.audit.models import AuditEvent
     from app.modules.jobs.models import Job
 
     mission_id = seed_acquisition_mission()
@@ -177,6 +178,7 @@ def test_reconciler_marks_partial_success_and_dedupes_notification(
         mission.status = "running"
         session.add(
             AcquisitionCandidate(
+                id="c1",
                 tenant_id="t1",
                 mission_id=mission_id,
                 status="eligible",
@@ -192,6 +194,15 @@ def test_reconciler_marks_partial_success_and_dedupes_notification(
                 payload_json=json.dumps({"mission_id": mission_id, "candidate_id": "c1"}),
             )
         )
+        session.add(
+            Job(
+                tenant_id="t2",
+                job_type="candidate_assess",
+                status="failed",
+                error_code="provider_unavailable",
+                payload_json=json.dumps({"candidate_id": "c1"}),
+            )
+        )
         session.commit()
 
     now = datetime.now(UTC)
@@ -201,8 +212,30 @@ def test_reconciler_marks_partial_success_and_dedupes_notification(
         mission = session.get(AcquisitionMission, mission_id)
         assert mission is not None
         assert json.loads(mission.retrospective_json)["partial_success"] is True
-        notices = list(session.scalars(select(Notification)))
+        notices = list(session.scalars(select(Notification).where(Notification.tenant_id == "t1")))
+        audits = list(
+            session.scalars(
+                select(AuditEvent).where(
+                    AuditEvent.tenant_id == "t1",
+                    AuditEvent.action == "acquisition_mission.result_resolved",
+                    AuditEvent.target_id == mission_id,
+                )
+            )
+        )
         assert len(notices) == 1
+        assert len(audits) == 1
+        assert "result=partial" in audits[0].safe_summary
+        assert (
+            session.scalar(
+                select(func.count())
+                .select_from(AuditEvent)
+                .where(
+                    AuditEvent.tenant_id == "t2",
+                    AuditEvent.action == "acquisition_mission.result_resolved",
+                )
+            )
+            == 0
+        )
 
 
 def test_reconciler_failed_verification_marks_candidate_unusable(
@@ -253,10 +286,83 @@ def test_reconciler_failed_verification_marks_candidate_unusable(
         assert candidate.status == "needs_evidence"
         assert mission is not None
         assert mission.status == "failed"
-        assert json.loads(mission.retrospective_json)["partial_success"] is False
+        retrospective = json.loads(mission.retrospective_json)
+        assert retrospective["business_result"]["code"] == "partial"
+        assert retrospective["business_result"]["counts"]["needs_review"] == 1
+        assert retrospective["business_result"]["counts"]["verification_failed"] == 1
         assert notification is not None
-        assert notification.kind == "mission_failed"
-        assert notification.body == "Mission 1: 0 usable candidates"
+        assert notification.kind == "mission_partial"
+        assert notification.title == "找客户任务部分完成"
+        assert "已发现 1" in notification.body
+        assert "待补证 1" in notification.body
+        assert "查看部分结果" in notification.body
+
+
+def test_reconciler_distinguishes_no_results_from_execution_failure(
+    acquisition_app, seed_acquisition_mission
+) -> None:
+    from app.extensions import get_engine
+    from app.modules.acquisition.jobs import reconcile_missions
+    from app.modules.acquisition.models import AcquisitionMission, Notification
+    from app.modules.jobs.models import Job
+
+    empty_id = seed_acquisition_mission(tenant_id="t1", suffix="empty-success")
+    failed_id = seed_acquisition_mission(tenant_id="t1", suffix="empty-failed")
+    with Session(get_engine(acquisition_app)) as session:
+        empty = session.get(AcquisitionMission, empty_id)
+        failed = session.get(AcquisitionMission, failed_id)
+        assert empty is not None
+        assert failed is not None
+        empty.status = "running"
+        failed.status = "running"
+        session.add_all(
+            [
+                Job(
+                    tenant_id="t1",
+                    job_type="acquisition_plan",
+                    status="succeeded",
+                    payload_json=json.dumps({"mission_id": empty_id}),
+                ),
+                Job(
+                    tenant_id="t1",
+                    job_type="web_discovery",
+                    status="succeeded",
+                    payload_json=json.dumps({"mission_id": empty_id, "country_code": "MX"}),
+                ),
+                Job(
+                    tenant_id="t1",
+                    job_type="acquisition_plan",
+                    status="failed",
+                    error_code="provider_unavailable",
+                    payload_json=json.dumps({"mission_id": failed_id}),
+                ),
+            ]
+        )
+        session.commit()
+
+    assert reconcile_missions(acquisition_app, tenant_id="t1", now=datetime.now(UTC)) == 2
+
+    with Session(get_engine(acquisition_app)) as session:
+        empty = session.get(AcquisitionMission, empty_id)
+        failed = session.get(AcquisitionMission, failed_id)
+        notifications = {
+            item.target_url: item
+            for item in session.scalars(select(Notification).where(Notification.tenant_id == "t1"))
+        }
+
+    assert empty is not None
+    assert empty.status == "completed"
+    assert json.loads(empty.retrospective_json)["business_result"]["code"] == "no_results"
+    empty_notice = notifications[f"/acquisition/missions/{empty_id}"]
+    assert empty_notice.kind == "mission_completed"
+    assert empty_notice.title == "找客户任务未找到结果"
+
+    assert failed is not None
+    assert failed.status == "failed"
+    assert json.loads(failed.retrospective_json)["business_result"]["code"] == "failed"
+    failed_notice = notifications[f"/acquisition/missions/{failed_id}"]
+    assert failed_notice.kind == "mission_failed"
+    assert failed_notice.title == "找客户任务执行失败"
 
 
 def test_reconciler_resolves_failed_verification_from_loaded_candidates(
@@ -379,8 +485,11 @@ def test_reconciler_repairs_inconsistent_completed_mission_and_notification(
         assert stale.status == "archived"
         current = [item for item in notifications if item.status == "unread"]
         assert len(current) == 1
-        assert current[0].kind == "mission_failed"
-        assert current[0].body == "Mission stale: 0 usable candidates"
+        assert current[0].kind == "mission_partial"
+        assert current[0].title == "找客户任务部分完成"
+        assert "已发现 1" in current[0].body
+        assert "待补证 1" in current[0].body
+        assert "验证失败 1" in current[0].body
 
 
 def test_reconciler_refreshes_existing_current_terminal_notification(
@@ -398,7 +507,7 @@ def test_reconciler_refreshes_existing_current_terminal_notification(
     mission_id = seed_acquisition_mission(suffix="same-status")
     verifying_id = "candidate-same-status-verifying"
     notification_id = "notification-stale-same-status"
-    completed_key = f"mission-terminal:{mission_id}:completed"
+    failed_key = f"mission-terminal:{mission_id}:failed"
     with Session(get_engine(acquisition_app)) as session:
         mission = session.get(AcquisitionMission, mission_id)
         assert mission is not None
@@ -429,12 +538,12 @@ def test_reconciler_refreshes_existing_current_terminal_notification(
                 Notification(
                     id=notification_id,
                     tenant_id="t1",
-                    kind="mission_completed",
-                    title="Stale completed title",
+                    kind="mission_failed",
+                    title="Stale failed title",
                     body="Mission same-status: 2 usable candidates",
                     target_url="/workbench",
                     status="unread",
-                    dedupe_key=completed_key,
+                    dedupe_key=failed_key,
                 ),
             ]
         )
@@ -451,16 +560,19 @@ def test_reconciler_refreshes_existing_current_terminal_notification(
         assert repaired is not None
         assert repaired.status == "needs_evidence"
         assert mission is not None
-        assert mission.status == "completed"
+        assert mission.status == "failed"
         assert len(notifications) == 1
         current = notifications[0]
         assert current.id == notification_id
         assert current.status == "unread"
         assert current.kind == "mission_partial"
-        assert current.title == "Acquisition mission completed"
-        assert current.body == "Mission same-status: 1 usable candidates"
+        assert current.title == "找客户任务部分完成"
+        assert "已发现 2" in current.body
+        assert "待补证 1" in current.body
+        assert "可审核 1" in current.body
+        assert "查看部分结果" in current.body
         assert current.target_url == f"/acquisition/missions/{mission_id}"
-        assert current.dedupe_key == completed_key
+        assert current.dedupe_key == failed_key
 
 
 @pytest.mark.parametrize(
@@ -521,14 +633,14 @@ def test_reconciler_skips_consistent_terminal_missions(
 
 
 @pytest.mark.parametrize(
-    ("candidate_status", "expected_candidate_status", "expected_mission_status", "usable_count"),
+    ("candidate_status", "expected_candidate_status", "summary_clause"),
     [
-        ("discovered", "needs_evidence", "failed", 0),
-        ("needs_evidence", "needs_evidence", "failed", 0),
-        ("rejected", "rejected", "failed", 0),
-        ("eligible", "eligible", "completed", 1),
-        ("accepted", "accepted", "completed", 1),
-        ("promoted", "promoted", "completed", 1),
+        ("discovered", "needs_evidence", "待补证 1"),
+        ("needs_evidence", "needs_evidence", "待补证 1"),
+        ("rejected", "rejected", "已排除 1"),
+        ("eligible", "eligible", "可审核 1"),
+        ("accepted", "accepted", "可进入 CRM 1"),
+        ("promoted", "promoted", "可进入 CRM 1"),
     ],
 )
 def test_reconciler_uses_only_actionable_candidates_after_failed_verification(
@@ -536,8 +648,7 @@ def test_reconciler_uses_only_actionable_candidates_after_failed_verification(
     seed_acquisition_mission,
     candidate_status,
     expected_candidate_status,
-    expected_mission_status,
-    usable_count,
+    summary_clause,
 ):
     from app.extensions import get_engine
     from app.modules.acquisition.jobs import reconcile_missions
@@ -583,9 +694,12 @@ def test_reconciler_uses_only_actionable_candidates_after_failed_verification(
         assert candidate is not None
         assert candidate.status == expected_candidate_status
         assert mission is not None
-        assert mission.status == expected_mission_status
+        assert mission.status == "failed"
+        retrospective = json.loads(mission.retrospective_json)
+        assert retrospective["business_result"]["code"] == "partial"
         assert notification is not None
-        assert notification.body.endswith(f": {usable_count} usable candidates")
+        assert notification.kind == "mission_partial"
+        assert summary_clause in notification.body
 
 
 def test_required_job_payload_rejects_extra_fields():

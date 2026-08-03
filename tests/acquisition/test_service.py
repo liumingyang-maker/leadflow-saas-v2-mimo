@@ -2088,6 +2088,28 @@ def test_retry_reopens_failed_mission_and_reconcile_can_complete_it(
                 dedupe_key="mission-terminal:m1:failed",
             )
         )
+        session.add_all(
+            [
+                Notification(
+                    id="retry-completed-notification",
+                    tenant_id="t1",
+                    kind="mission_completed",
+                    title="Old completion",
+                    target_url="/acquisition/missions/m1",
+                    status="unread",
+                    dedupe_key="mission-terminal:m1:completed",
+                ),
+                Notification(
+                    id="retry-other-tenant-notification",
+                    tenant_id="t2",
+                    kind="mission_failed",
+                    title="Other tenant failure",
+                    target_url="/acquisition/missions/m1",
+                    status="unread",
+                    dedupe_key="mission-terminal:m1:failed",
+                ),
+            ]
+        )
         assert session.scalar(select(func.count()).select_from(Job)) == 0
         session.commit()
 
@@ -2120,6 +2142,8 @@ def test_retry_reopens_failed_mission_and_reconcile_can_complete_it(
         candidate = session.get(AcquisitionCandidate, candidate_id)
         mission = session.get(AcquisitionMission, "m1")
         failed_notification = session.get(Notification, "retry-failed-notification")
+        completed_notification = session.get(Notification, "retry-completed-notification")
+        other_notification = session.get(Notification, "retry-other-tenant-notification")
         retry_job = session.scalar(
             select(Job).where(Job.job_type == "website_verify", Job.tenant_id == "t1")
         )
@@ -2136,6 +2160,12 @@ def test_retry_reopens_failed_mission_and_reconcile_can_complete_it(
         assert failed_notification is not None
         assert failed_notification.status == "archived"
         assert failed_notification.read_at is not None
+        assert completed_notification is not None
+        assert completed_notification.status == "archived"
+        assert completed_notification.read_at is not None
+        assert other_notification is not None
+        assert other_notification.status == "unread"
+        assert other_notification.read_at is None
         assert retry_job is not None
         assert json.loads(retry_job.payload_json) == {"candidate_id": candidate_id}
         assert audit is not None
@@ -2181,7 +2211,9 @@ def test_retry_reopens_failed_mission_and_reconcile_can_complete_it(
         assert completion is not None
         assert completion.kind == "mission_completed"
         assert completion.status == "unread"
-        assert completion.body == "Mexico dealers: 1 usable candidates"
+        assert completion.title == "找客户任务可审核"
+        assert "已发现 1" in completion.body
+        assert "审核候选" in completion.body
 
 
 def test_retry_does_not_demote_completed_mission_with_usable_candidate(
