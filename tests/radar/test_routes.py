@@ -139,3 +139,61 @@ def test_approve_and_dismiss_posts_are_tenant_scoped_and_idempotent(
     assert dismissed_again.status_code in {302, 303}
     assert dismissed.headers["Location"] == dismissed_again.headers["Location"]
     assert client.post("/radar/suggestions/foreign/approve").status_code == 404
+
+
+def test_manual_run_routes_are_csrf_protected_and_do_not_offer_scheduling(
+    monkeypatch, radar_app, radar_logged_in_client, seed_radar_mission
+) -> None:
+    from types import SimpleNamespace
+
+    import app.modules.radar.routes as routes
+    from app.extensions import get_engine
+    from app.modules.radar.models import CompetitorProfile, RadarRun
+
+    client, tenant_id, _actor_id = radar_logged_in_client
+    _enable_radar(radar_app)
+    radar_app.config["WTF_CSRF_ENABLED"] = True
+    seed_radar_mission(tenant_id=tenant_id, mission_id="mission-a")
+    with Session(get_engine(radar_app)) as db_session:
+        db_session.add(
+            CompetitorProfile(
+                id="profile-a",
+                tenant_id=tenant_id,
+                mission_id="mission-a",
+                product_snapshot_id="snapshot-mission-a",
+                company_name="Acme Rival",
+                canonical_domain="rival.example",
+                official_url="https://rival.example/",
+            )
+        )
+        db_session.add(
+            RadarRun(
+                id="run-a",
+                tenant_id=tenant_id,
+                profile_id="profile-a",
+                root_job_id="job-a",
+                requested_by="actor-a",
+                budget_json='{"pages":10,"wall_seconds":300}',
+            )
+        )
+        db_session.commit()
+    monkeypatch.setattr(
+        routes,
+        "request_manual_run",
+        lambda *_args, **_kwargs: SimpleNamespace(id="run-a"),
+    )
+
+    assert client.post("/radar/profiles/profile-a/runs").status_code == 400
+    detail = client.get("/radar/profiles/profile-a")
+    html = detail.get_data(as_text=True)
+    response = client.post(
+        "/radar/profiles/profile-a/runs",
+        data={"csrf_token": _csrf_token(html)},
+    )
+
+    assert response.status_code in {302, 303}
+    assert response.headers["Location"].endswith("/radar/runs/run-a")
+    run_page = client.get("/radar/runs/run-a")
+    assert run_page.status_code == 200
+    assert "Manual run" in run_page.get_data(as_text=True)
+    assert "schedule" not in html.casefold()

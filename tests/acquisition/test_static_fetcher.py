@@ -61,6 +61,31 @@ def test_fetcher_maps_initial_private_url_to_safe_policy_error():
     assert "127.0.0.1" not in str(caught.value)
 
 
+def test_fetcher_returns_bounded_visible_anchor_metadata_for_radar_planning():
+    from app.integrations.web.fetcher import StaticFetcher
+
+    def handler(_request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            headers={"content-type": "text/html"},
+            content=(
+                b'<a href="/dealers">Distribuidores oficiales</a>'
+                b'<a href="https://foreign.example/">External</a>'
+                b'<script><a href="/hidden">hidden</a></script>'
+            ),
+        )
+
+    with StaticFetcher(
+        transport=httpx.MockTransport(handler), resolver=lambda _host: ["93.184.216.34"]
+    ) as fetcher:
+        result = fetcher.fetch("https://rival.example/")
+
+    assert result.observed_links == (
+        ("/dealers", "Distribuidores oficiales"),
+        ("https://foreign.example/", "External"),
+    )
+
+
 def test_sanitizer_removes_scripts_hidden_text_and_instructions():
     from app.integrations.web.sanitizer import sanitize_html
 

@@ -1,8 +1,10 @@
 from __future__ import annotations
 
+import uuid
 from datetime import UTC, datetime
 
 from flask import Flask
+from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -11,8 +13,11 @@ from app.extensions import get_engine
 from app.integrations.ai.mimo import build_mimo_provider
 from app.modules.acquisition.repository import MissionRepository, ProductKnowledgeRepository
 from app.modules.audit.service import add_event
+from app.modules.jobs.models import Job
+from app.modules.jobs.repository import JobRepository
+from app.modules.jobs.service import JobServiceError, enqueue_existing_job
 from app.modules.radar import suggestions as suggestion_policy
-from app.modules.radar.models import CompetitorProfile, RadarCompetitorSuggestion
+from app.modules.radar.models import CompetitorProfile, RadarCompetitorSuggestion, RadarRun
 from app.modules.radar.policies import (
     RadarPolicyError,
     canonical_json,
@@ -268,3 +273,145 @@ def decide_competitor_suggestion(
             )
         session.commit()
         return profile
+
+
+_ACTIVE_RUN_STATUSES = ("queued", "running")
+_DEFAULT_RUN_BUDGET = {
+    "pages": 10,
+    "browser_pages": 3,
+    "wall_seconds": 300,
+    "excerpt_chars": 4000,
+    "artifacts": 10,
+}
+
+
+def request_manual_run(
+    app: Flask,
+    *,
+    tenant_id: str,
+    actor_id: str,
+    profile_id: str,
+) -> RadarRun:
+    """Persist and enqueue exactly one explicitly requested manual Radar Run."""
+
+    require_capability(app, Capability.COMPETITOR_RADAR)
+    with _session(app) as session:
+        profile = CompetitorProfileRepository(session).get(profile_id, tenant_id=tenant_id)
+        if profile is None:
+            raise RadarNotFoundError("Competitor profile was not found")
+        if profile.status != "active":
+            raise RadarServiceError("Only active competitor profiles can run")
+        try:
+            _load_mission_context(session, tenant_id=tenant_id, mission_id=profile.mission_id)
+        except RadarPolicyError as exc:
+            raise RadarServiceError("Mission must be active for competitor Radar") from exc
+        existing = session.scalar(
+            select(RadarRun).where(
+                RadarRun.tenant_id == tenant_id,
+                RadarRun.profile_id == profile.id,
+                RadarRun.status.in_(_ACTIVE_RUN_STATUSES),
+            )
+        )
+        if existing is not None:
+            return existing
+
+        run_id = uuid.uuid4().hex
+        job_id = uuid.uuid4().hex
+        now = datetime.now(UTC)
+        run = RadarRun(
+            id=run_id,
+            tenant_id=tenant_id,
+            profile_id=profile.id,
+            root_job_id=job_id,
+            requested_by=actor_id,
+            budget_json=canonical_json(_DEFAULT_RUN_BUDGET),
+            created_at=now,
+        )
+        job = Job(
+            id=job_id,
+            tenant_id=tenant_id,
+            job_type="radar_scan",
+            status="queued",
+            payload_json=canonical_json({"run_id": run_id}),
+            queue_name="default",
+            created_at=now,
+            queued_at=now,
+        )
+        try:
+            with session.begin_nested():
+                session.add(run)
+                JobRepository(session).create_for_tenant(job, tenant_id=tenant_id)
+                session.flush()
+        except IntegrityError:
+            existing = session.scalar(
+                select(RadarRun).where(
+                    RadarRun.tenant_id == tenant_id,
+                    RadarRun.profile_id == profile.id,
+                    RadarRun.status.in_(_ACTIVE_RUN_STATUSES),
+                )
+            )
+            if existing is None:
+                raise RadarServiceError("Manual Radar Run could not be created") from None
+            return existing
+        add_event(
+            session,
+            tenant_id=tenant_id,
+            actor_user_id=actor_id,
+            action="radar.run_requested",
+            target_type="radar_run",
+            target_id=run.id,
+            safe_summary="Requested manual competitor Radar run",
+        )
+        session.commit()
+
+    try:
+        enqueue_existing_job(app, job_id=job.id, tenant_id=tenant_id)
+    except JobServiceError:
+        with _session(app) as session:
+            stored = session.get(RadarRun, run.id)
+            if stored is not None and stored.status == "queued":
+                stored.status = "failed"
+                stored.stage = "enqueue_failed"
+                stored.result_summary_json = canonical_json({"reason_codes": ["enqueue_failed"]})
+                stored.finished_at = datetime.now(UTC)
+                session.commit()
+                return stored
+        raise RadarServiceError("Manual Radar Run could not be queued") from None
+    return run
+
+
+def cancel_manual_run(
+    app: Flask,
+    *,
+    tenant_id: str,
+    actor_id: str,
+    run_id: str,
+) -> RadarRun:
+    """Cancel a caller-owned active Run while retaining completed snapshots."""
+
+    require_capability(app, Capability.COMPETITOR_RADAR)
+    with _session(app) as session:
+        run = session.scalar(
+            select(RadarRun).where(RadarRun.id == run_id, RadarRun.tenant_id == tenant_id)
+        )
+        if run is None:
+            raise RadarNotFoundError("Radar Run was not found")
+        if run.status in _ACTIVE_RUN_STATUSES:
+            run.status = "cancelled"
+            run.stage = "cancelled"
+            run.finished_at = datetime.now(UTC)
+            job = JobRepository(session).get_for_tenant(run.root_job_id, tenant_id=tenant_id)
+            if job is not None and job.status == "queued":
+                job.status = "cancelled"
+                job.finished_at = run.finished_at
+            add_event(
+                session,
+                tenant_id=tenant_id,
+                actor_user_id=actor_id,
+                action="radar.run_cancelled",
+                target_type="radar_run",
+                target_id=run.id,
+                safe_summary="Cancelled manual competitor Radar run",
+            )
+            session.commit()
+        return run

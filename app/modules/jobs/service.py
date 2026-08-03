@@ -118,6 +118,33 @@ def create_and_enqueue(
     return job
 
 
+def enqueue_existing_job(app: Flask, *, job_id: str, tenant_id: str) -> None:
+    """Enqueue a committed tenant Job without changing its SQL business record."""
+
+    with _session(app) as session:
+        stored = JobRepository(session).get_for_tenant(job_id, tenant_id=tenant_id)
+        if stored is None or stored.status != "queued":
+            raise JobServiceError("Job is not queued for this tenant")
+        queue_name = stored.queue_name
+    try:
+        rq_job = _queue(app, queue_name).enqueue(JOB_HANDLER, job_id, result_ttl=86400)
+    except Exception:
+        with _session(app) as session:
+            stored = JobRepository(session).get_for_tenant(job_id, tenant_id=tenant_id)
+            if stored is not None and stored.status == "queued":
+                stored.status = "failed"
+                stored.error_code = "enqueue_failed"
+                stored.error_summary = "Failed to queue job"
+                stored.finished_at = datetime.now(UTC)
+                session.commit()
+        raise JobServiceError("Failed to queue job") from None
+    with _session(app) as session:
+        stored = JobRepository(session).get_for_tenant(job_id, tenant_id=tenant_id)
+        if stored is not None and stored.status == "queued":
+            stored.rq_job_id = rq_job.id or ""
+            session.commit()
+
+
 def _contains_forbidden_key(value: object) -> bool:
     if isinstance(value, dict):
         for key, nested in value.items():

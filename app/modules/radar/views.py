@@ -3,7 +3,13 @@ from __future__ import annotations
 import json
 from dataclasses import dataclass
 
-from app.modules.radar.models import CompetitorProfile, RadarCompetitorSuggestion
+from app.modules.radar.models import (
+    CompetitorProfile,
+    RadarCompetitorSuggestion,
+    RadarRun,
+    RadarSnapshot,
+)
+from app.modules.radar.policies import parse_bounded_json_object
 
 
 @dataclass(frozen=True)
@@ -46,6 +52,34 @@ def profile_view(value: CompetitorProfile) -> dict[str, str]:
     }
 
 
+def run_view(value: RadarRun) -> dict[str, object]:
+    return {
+        "id": value.id,
+        "profile_id": value.profile_id,
+        "status": value.status,
+        "stage": value.stage,
+        "budget": _safe_object(value.budget_json),
+        "summary": _safe_object(value.result_summary_json),
+        "created_at": value.created_at,
+        "started_at": value.started_at,
+        "finished_at": value.finished_at,
+    }
+
+
+def snapshot_view(value: RadarSnapshot) -> dict[str, object]:
+    facts = _safe_object(value.facts_json)
+    return {
+        "id": value.id,
+        "page_kind": value.page_kind,
+        "requested_url": value.requested_url,
+        "canonical_url": value.canonical_url,
+        "source_method": value.source_method,
+        "validation_status": value.validation_status,
+        "reason_codes": _safe_strings(facts.get("reason_codes", []), maximum=10),
+        "observed_at": value.observed_at,
+    }
+
+
 def _string_list(value: str, *, maximum: int, item_limit: int) -> tuple[str, ...]:
     parsed = _json_list(value)
     return tuple(item.strip()[:item_limit] for item in parsed[:maximum] if isinstance(item, str))
@@ -69,3 +103,16 @@ def _json_list(value: str) -> list[object]:
     except (TypeError, ValueError):
         return []
     return parsed if isinstance(parsed, list) else []
+
+
+def _safe_object(value: str) -> dict[str, object]:
+    try:
+        return parse_bounded_json_object(value)
+    except ValueError:
+        return {}
+
+
+def _safe_strings(value: object, *, maximum: int) -> tuple[str, ...]:
+    if not isinstance(value, list):
+        return ()
+    return tuple(item[:80] for item in value[:maximum] if isinstance(item, str))

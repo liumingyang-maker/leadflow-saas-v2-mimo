@@ -1,0 +1,45 @@
+{% from "components/_shell.html" import shell %}
+{% call shell("Manual Radar Run · LeadFlow") %}
+<nav class="lf-top-nav" aria-label="Workspace navigation">
+  <a href="{{ url_for('radar_profile_detail', profile_id=profile.id) }}">Back to competitor profile</a>
+  <a href="/radar">Competitor Radar</a>
+</nav>
+<header class="lf-page-header">
+  <div>
+    <span class="lf-eyebrow">Manual run</span>
+    <h1 class="lf-page-title">{{ profile.company_name }}</h1>
+    <p>Status: {{ run.status }} · Stage: {{ run.stage }}</p>
+  </div>
+  {% if run.status in ('queued', 'running') %}
+  <form method="post" action="{{ url_for('radar_cancel_manual_run', run_id=run.id) }}">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+    <button class="lf-button lf-button-secondary" type="submit">Cancel run</button>
+  </form>
+  {% endif %}
+</header>
+<section class="lf-panel lf-section">
+  <h2>Bounded execution</h2>
+  <dl class="lf-dl">
+    <dt>Page budget</dt><dd>{{ run.budget.get('pages', '—') }}</dd>
+    <dt>Wall-time budget (seconds)</dt><dd>{{ run.budget.get('wall_seconds', '—') }}</dd>
+    <dt>Static snapshots</dt><dd>{{ run.summary.get('valid_snapshots', 0) }}</dd>
+  </dl>
+</section>
+<section class="lf-section">
+  <h2>Page results</h2>
+  {% if snapshots %}
+  <div class="lf-card-list">
+    {% for snapshot in snapshots %}
+    <article class="lf-panel">
+      <strong>{{ snapshot.page_kind }}</strong>
+      <p>{{ snapshot.validation_status }} · {{ snapshot.source_method }}</p>
+      <p><a href="{{ snapshot.canonical_url }}" rel="noreferrer">{{ snapshot.canonical_url }}</a></p>
+      {% if snapshot.reason_codes %}<p>Reason: {{ snapshot.reason_codes|join(', ') }}</p>{% endif %}
+    </article>
+    {% endfor %}
+  </div>
+  {% else %}
+  <div class="lf-empty-state"><strong>No completed pages</strong><span>Queued or failed pages will show safe status when available.</span></div>
+  {% endif %}
+</section>
+{% endcall %}

@@ -6,6 +6,7 @@ import hashlib
 from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime
+from html.parser import HTMLParser
 from urllib.parse import urljoin
 
 import httpx
@@ -22,6 +23,9 @@ from app.integrations.web.url_safety import (
 _ALLOWED_CONTENT_TYPES = {"text/html", "text/plain", "application/xhtml+xml"}
 _REDIRECT_STATUSES = {301, 302, 303, 307, 308}
 DEFAULT_FETCH_MAX_BYTES = 1024 * 1024
+_OBSERVED_LINK_LIMIT = 50
+_OBSERVED_LINK_URL_LIMIT = 1000
+_OBSERVED_LINK_TEXT_LIMIT = 200
 
 
 class FetchError(RuntimeError):
@@ -43,6 +47,7 @@ class FetchResult:
     retrieved_at: datetime
     redirect_chain: tuple[str, ...]
     detected_prompt_injection: bool = False
+    observed_links: tuple[tuple[str, str], ...] = ()
 
 
 class StaticFetcher:
@@ -134,6 +139,11 @@ class StaticFetcher:
                 retrieved_at=self.now(),
                 redirect_chain=tuple(redirect_chain),
                 detected_prompt_injection=snapshot.detected_prompt_injection,
+                observed_links=(
+                    _extract_observed_links(text)
+                    if content_type in {"text/html", "application/xhtml+xml"}
+                    else ()
+                ),
             )
 
         raise FetchError("too_many_redirects", "Redirect limit exceeded")
@@ -187,3 +197,60 @@ def _decode_body(body: bytes, content_type: str) -> str:
         return body.decode(encoding, errors="replace")
     except LookupError:
         return body.decode("utf-8", errors="replace")
+
+
+class _ObservedAnchorParser(HTMLParser):
+    """Extract only bounded visible anchor metadata; URL policy runs later."""
+
+    _SKIPPED_TAGS = {"script", "style", "noscript", "svg", "iframe", "form"}
+
+    def __init__(self) -> None:
+        super().__init__(convert_charrefs=True)
+        self._skip_depth = 0
+        self._href = ""
+        self._text_parts: list[str] = []
+        self.links: list[tuple[str, str]] = []
+
+    def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
+        tag = tag.lower()
+        if self._skip_depth:
+            self._skip_depth += 1
+            return
+        attributes = {name.lower(): value or "" for name, value in attrs}
+        style = "".join(str(attributes.get("style", "")).casefold().split())
+        if (
+            tag in self._SKIPPED_TAGS
+            or "hidden" in attributes
+            or attributes.get("aria-hidden", "").casefold() == "true"
+            or "display:none" in style
+            or "visibility:hidden" in style
+        ):
+            self._skip_depth = 1
+            return
+        if tag == "a" and not self._href and len(self.links) < _OBSERVED_LINK_LIMIT:
+            self._href = str(attributes.get("href", ""))[:_OBSERVED_LINK_URL_LIMIT]
+            self._text_parts = []
+
+    def handle_endtag(self, tag: str) -> None:
+        if self._skip_depth:
+            self._skip_depth -= 1
+            return
+        if tag.lower() == "a" and self._href:
+            anchor = " ".join(" ".join(self._text_parts).split())[:_OBSERVED_LINK_TEXT_LIMIT]
+            self.links.append((self._href, anchor))
+            self._href = ""
+            self._text_parts = []
+
+    def handle_data(self, data: str) -> None:
+        if not self._skip_depth and self._href:
+            self._text_parts.append(data)
+
+
+def _extract_observed_links(html: str) -> tuple[tuple[str, str], ...]:
+    parser = _ObservedAnchorParser()
+    try:
+        parser.feed(html)
+        parser.close()
+    except Exception:
+        return ()
+    return tuple((url, text) for url, text in parser.links if url)

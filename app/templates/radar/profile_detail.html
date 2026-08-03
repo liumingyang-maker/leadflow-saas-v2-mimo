@@ -16,7 +16,27 @@
   <dl class="lf-dl">
     <dt>Official URL</dt><dd><a href="{{ profile.official_url }}" rel="noreferrer">{{ profile.official_url }}</a></dd>
     <dt>Canonical domain</dt><dd>{{ profile.canonical_domain }}</dd>
-    <dt>Monitoring state</dt><dd>No monitoring run has been started. This profile is only an approved manual record.</dd>
+    <dt>Monitoring state</dt><dd>Runs are started only by an explicit manual action. No recurring runs are configured.</dd>
   </dl>
+  <form method="post" action="{{ url_for('radar_request_manual_run', profile_id=profile.id) }}">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+    <button class="lf-button" type="submit">Run now</button>
+  </form>
+</section>
+<section class="lf-section">
+  <h2>Manual run history</h2>
+  {% if runs %}
+  <div class="lf-card-list">
+    {% for run in runs %}
+    <article class="lf-panel">
+      <strong>Manual run</strong>
+      <p>Status: {{ run.status }} · Stage: {{ run.stage }}</p>
+      <a class="lf-button" href="{{ url_for('radar_run_detail', run_id=run.id) }}">View run</a>
+    </article>
+    {% endfor %}
+  </div>
+  {% else %}
+  <div class="lf-empty-state"><strong>No runs yet</strong><span>Use Run now to create one bounded static scan.</span></div>
+  {% endif %}
 </section>
 {% endcall %}

@@ -69,8 +69,11 @@ def _ensure_acquisition_handlers() -> None:
     if _acquisition_handlers_loaded:
         return
     from app.modules.acquisition.jobs import ACQUISITION_HANDLERS
+    from app.modules.radar.jobs import RADAR_HANDLERS
 
     for job_type, handler in ACQUISITION_HANDLERS.items():
+        register_job_handler(job_type, handler)
+    for job_type, handler in RADAR_HANDLERS.items():
         register_job_handler(job_type, handler)
     _acquisition_handlers_loaded = True
 
