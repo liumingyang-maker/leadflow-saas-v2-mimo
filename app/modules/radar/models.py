@@ -193,3 +193,57 @@ class RadarSnapshot(Base):
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=_now, nullable=False
     )
+
+
+class RadarRelationship(Base):
+    """A cited company relationship observed on an approved competitor website."""
+
+    __tablename__ = "radar_relationships"
+    __table_args__ = (
+        UniqueConstraint(
+            "tenant_id",
+            "profile_id",
+            "canonical_domain",
+            "relationship_type",
+            name="uq_radar_relationship_profile_domain_type",
+        ),
+        CheckConstraint(
+            "relationship_type in ('dealer','distributor','partner','service_network','unknown')",
+            name="radar_relationship_type",
+        ),
+        CheckConstraint(
+            "evidence_strength in ('confirmed','likely','unknown')",
+            name="radar_relationship_strength",
+        ),
+        CheckConstraint(
+            "status in ('proposed','converted','dismissed')", name="radar_relationship_status"
+        ),
+        CheckConstraint("length(evidence_json) <= 20000", name="radar_relationship_evidence_size"),
+    )
+
+    id: Mapped[str] = mapped_column(String(64), primary_key=True, default=_id)
+    tenant_id: Mapped[str] = mapped_column(String(36), nullable=False, index=True)
+    profile_id: Mapped[str] = mapped_column(
+        ForeignKey("competitor_profiles.id"), nullable=False, index=True
+    )
+    run_id: Mapped[str] = mapped_column(ForeignKey("radar_runs.id"), nullable=False, index=True)
+    source_snapshot_id: Mapped[str] = mapped_column(
+        ForeignKey("radar_snapshots.id"), nullable=False, index=True
+    )
+    company_name: Mapped[str] = mapped_column(String(300), nullable=False)
+    canonical_domain: Mapped[str] = mapped_column(String(253), nullable=False)
+    official_url: Mapped[str] = mapped_column(String(1000), nullable=False)
+    relationship_type: Mapped[str] = mapped_column(String(24), nullable=False, index=True)
+    evidence_strength: Mapped[str] = mapped_column(String(24), nullable=False, index=True)
+    reason_codes_json: Mapped[str] = mapped_column(Text, default="[]", nullable=False)
+    evidence_json: Mapped[str] = mapped_column(Text, default="[]", nullable=False)
+    status: Mapped[str] = mapped_column(String(24), default="proposed", nullable=False, index=True)
+    candidate_id: Mapped[str] = mapped_column(String(64), default="", nullable=False, index=True)
+    decided_by: Mapped[str] = mapped_column(String(36), default="", nullable=False)
+    decided_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=_now, nullable=False
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=_now, onupdate=_now, nullable=False
+    )

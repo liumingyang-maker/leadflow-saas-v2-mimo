@@ -13,7 +13,9 @@ from app.extensions import get_engine
 from app.integrations.ai.mimo import ProviderError
 from app.modules.accounts.guards import tenant_required
 from app.modules.acquisition.repository import MissionRepository
-from app.modules.radar.models import RadarRun, RadarSnapshot
+from app.modules.acquisition.service import AcquisitionError
+from app.modules.radar.conversion import convert_confirmed_relationship
+from app.modules.radar.models import RadarRelationship, RadarRun, RadarSnapshot
 from app.modules.radar.policies import RadarPolicyError
 from app.modules.radar.repository import CompetitorProfileRepository, RadarSuggestionRepository
 from app.modules.radar.service import (
@@ -24,7 +26,13 @@ from app.modules.radar.service import (
     request_competitor_suggestions,
     request_manual_run,
 )
-from app.modules.radar.views import profile_view, run_view, snapshot_view, suggestion_view
+from app.modules.radar.views import (
+    profile_view,
+    relationship_view,
+    run_view,
+    snapshot_view,
+    suggestion_view,
+)
 
 
 def register_radar_routes(app: Flask) -> None:
@@ -196,6 +204,16 @@ def register_radar_routes(app: Flask) -> None:
                     .order_by(RadarSnapshot.created_at.asc(), RadarSnapshot.id.asc())
                 )
             )
+            relationships = list(
+                db_session.scalars(
+                    select(RadarRelationship)
+                    .where(
+                        RadarRelationship.run_id == run.id,
+                        RadarRelationship.tenant_id == tenant_id,
+                    )
+                    .order_by(RadarRelationship.created_at.asc(), RadarRelationship.id.asc())
+                )
+            )
             view = run_view(run)
             profile_data = profile_view(profile)
         return render_template(
@@ -203,6 +221,7 @@ def register_radar_routes(app: Flask) -> None:
             run=view,
             profile=profile_data,
             snapshots=[snapshot_view(item) for item in snapshots],
+            relationships=[relationship_view(item) for item in relationships],
         )
 
     @app.post("/radar/runs/<run_id>/cancel")
@@ -213,6 +232,41 @@ def register_radar_routes(app: Flask) -> None:
             cancel_manual_run(app, tenant_id=tenant_id, actor_id=actor_id, run_id=run_id)
         except RadarNotFoundError:
             abort(404)
+        return redirect(url_for("radar_run_detail", run_id=run_id))
+
+    @app.post("/radar/relationships/<relationship_id>/convert")
+    @radar_required
+    def radar_convert_relationship(relationship_id: str):
+        tenant_id, actor_id = _identity()
+        with Session(get_engine(app)) as db_session:
+            relationship = db_session.scalar(
+                select(RadarRelationship).where(
+                    RadarRelationship.id == relationship_id,
+                    RadarRelationship.tenant_id == tenant_id,
+                )
+            )
+            if relationship is None:
+                abort(404)
+            profile = CompetitorProfileRepository(db_session).get(
+                relationship.profile_id,
+                tenant_id=tenant_id,
+            )
+            if profile is None:
+                abort(404)
+            run_id = relationship.run_id
+            mission_id = profile.mission_id
+            expected_domain = relationship.canonical_domain
+        try:
+            convert_confirmed_relationship(
+                app,
+                tenant_id=tenant_id,
+                actor_id=actor_id,
+                mission_id=mission_id,
+                relationship_id=relationship_id,
+                expected_domain=expected_domain,
+            )
+        except AcquisitionError:
+            abort(409)
         return redirect(url_for("radar_run_detail", run_id=run_id))
 
 

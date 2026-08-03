@@ -11,7 +11,7 @@ from sqlalchemy.orm import Session
 from app.extensions import get_engine
 from app.integrations.web.fetcher import FetchError, StaticFetcher
 from app.modules.jobs.models import Job
-from app.modules.radar.models import CompetitorProfile, RadarRun
+from app.modules.radar.models import CompetitorProfile, RadarRun, RadarSnapshot
 from app.modules.radar.policies import canonical_json, parse_bounded_json_object
 from app.modules.radar.snapshots import (
     finalize_snapshot,
@@ -123,7 +123,7 @@ def handle_radar_scan(app: Any, job: Job, payload: dict[str, object]) -> dict[st
         status = "partial"
     else:
         status = "failed"
-    return _finish_run(
+    summary = _finish_run(
         app,
         run_id=run.id,
         tenant_id=run.tenant_id,
@@ -133,6 +133,15 @@ def handle_radar_scan(app: Any, job: Job, payload: dict[str, object]) -> dict[st
         nonvalid_count=nonvalid_count,
         reasons=reasons,
     )
+    if status in {"succeeded", "partial"}:
+        relationship_summary = _resolve_relationships_and_candidates(
+            app,
+            run=run,
+            profile=profile,
+            budget=budget,
+        )
+        summary.update(relationship_summary)
+    return summary
 
 
 def _start_run(app: Any, *, job: Job, run_id: str) -> tuple[RadarRun, CompetitorProfile]:
@@ -244,6 +253,76 @@ def _merge_plans(existing, observed, *, page_limit: int):
             merged.append(item)
             seen.add(item.canonical_url)
     return tuple(merged)
+
+
+def _resolve_relationships_and_candidates(
+    app: Any,
+    *,
+    run: RadarRun,
+    profile: CompetitorProfile,
+    budget: dict[str, object],
+) -> dict[str, object]:
+    """Resolve deterministic proposals; only confirmed dealers/distributors may convert."""
+
+    from app.modules.acquisition.service import (
+        AcquisitionError,
+        create_candidate_from_radar_relationship,
+    )
+    from app.modules.radar.relationships import extract_relationships
+
+    relationship_ids: list[tuple[str, str, str, str]] = []
+    with Session(get_engine(app)) as session:
+        session.expire_on_commit = False
+        snapshots = list(
+            session.scalars(
+                select(RadarSnapshot).where(
+                    RadarSnapshot.tenant_id == run.tenant_id,
+                    RadarSnapshot.run_id == run.id,
+                    RadarSnapshot.validation_status == "valid",
+                )
+            )
+        )
+        for snapshot in snapshots:
+            try:
+                relationships = extract_relationships(
+                    session,
+                    profile_id=profile.id,
+                    run_id=run.id,
+                    snapshot_id=snapshot.id,
+                )
+            except ValueError:
+                continue
+            for relationship in relationships:
+                relationship_ids.append(
+                    (
+                        relationship.id,
+                        relationship.relationship_type,
+                        relationship.evidence_strength,
+                        relationship.canonical_domain,
+                    )
+                )
+        session.commit()
+
+    maximum = _bounded_int(budget.get("automatic_conversions"), default=10, minimum=0, maximum=20)
+    converted = 0
+    for relationship_id, relationship_type, strength, domain in relationship_ids:
+        if converted >= maximum:
+            break
+        if relationship_type not in {"dealer", "distributor"} or strength != "confirmed":
+            continue
+        try:
+            create_candidate_from_radar_relationship(
+                app,
+                tenant_id=run.tenant_id,
+                actor_id=run.requested_by,
+                mission_id=profile.mission_id,
+                relationship_id=relationship_id,
+                expected_domain=domain,
+            )
+        except AcquisitionError:
+            continue
+        converted += 1
+    return {"relationships": len(relationship_ids), "automatic_candidates": converted}
 
 
 RADAR_HANDLERS = {"radar_scan": handle_radar_scan}

@@ -5,7 +5,7 @@ from __future__ import annotations
 import hashlib
 from dataclasses import dataclass
 from typing import Any
-from urllib.parse import urljoin
+from urllib.parse import urljoin, urlsplit, urlunsplit
 
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
@@ -363,6 +363,16 @@ def _structured_snapshot(fetched_page: FetchResult) -> tuple[str, str, str]:
                 "value": excerpt,
             }
         )
+    for link in _safe_observed_links(fetched_page):
+        facts.append(
+            {
+                "extractor": RADAR_STATIC_EXTRACTOR_VERSION,
+                "key": "page.observed_link",
+                "reason_codes": [],
+                "source_url": fetched_page.final_url,
+                "value": link,
+            }
+        )
     return (
         canonical_json({"facts": facts, "reason_codes": ["no_relationships_observed"]}),
         excerpt,
@@ -375,3 +385,24 @@ def _is_dynamic_shell(text: str) -> bool:
     return len(lowered.split()) <= 25 and any(
         marker in lowered for marker in _DYNAMIC_SHELL_MARKERS
     )
+
+
+def _safe_observed_links(fetched_page: FetchResult) -> tuple[dict[str, str], ...]:
+    links: list[dict[str, str]] = []
+    for raw_url, raw_anchor in fetched_page.observed_links[:50]:
+        parsed = urlsplit(urljoin(fetched_page.final_url, raw_url))
+        if (
+            parsed.scheme.casefold() not in {"http", "https"}
+            or not parsed.hostname
+            or parsed.username
+            or parsed.password
+        ):
+            continue
+        anchor = " ".join(raw_anchor.split())[:200]
+        if not anchor:
+            continue
+        safe_url = urlunsplit(
+            (parsed.scheme.casefold(), parsed.netloc, parsed.path or "/", "", "")
+        )[:1000]
+        links.append({"anchor_text": anchor, "url": safe_url})
+    return tuple(links)

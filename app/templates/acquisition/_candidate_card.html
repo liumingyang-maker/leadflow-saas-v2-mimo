@@ -17,6 +17,10 @@
     </div>
   </header>
 
+  {% if candidate.source_channel == 'competitor_radar' %}
+  <p class="lf-muted">Source: a competitor's official dealer/distributor page. It does not prove this company's country, contactability, buying intent, or own-site identity.</p>
+  {% endif %}
+
   {% if candidate.status == 'needs_evidence' and candidate.eligibility_code in ['country_unknown', 'country_conflicting'] %}
   <section class="lf-form-stack" aria-labelledby="country-evidence-title-{{ candidate.id }}">
     <div>

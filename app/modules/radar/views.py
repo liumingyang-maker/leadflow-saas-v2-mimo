@@ -6,6 +6,7 @@ from dataclasses import dataclass
 from app.modules.radar.models import (
     CompetitorProfile,
     RadarCompetitorSuggestion,
+    RadarRelationship,
     RadarRun,
     RadarSnapshot,
 )
@@ -77,6 +78,23 @@ def snapshot_view(value: RadarSnapshot) -> dict[str, object]:
         "validation_status": value.validation_status,
         "reason_codes": _safe_strings(facts.get("reason_codes", []), maximum=10),
         "observed_at": value.observed_at,
+    }
+
+
+def relationship_view(value: RadarRelationship) -> dict[str, object]:
+    evidence = _json_list(value.evidence_json)
+    first = evidence[0] if evidence and isinstance(evidence[0], dict) else {}
+    return {
+        "id": value.id,
+        "company_name": value.company_name,
+        "canonical_domain": value.canonical_domain,
+        "official_url": value.official_url,
+        "relationship_type": value.relationship_type,
+        "evidence_strength": value.evidence_strength,
+        "status": value.status,
+        "candidate_id": value.candidate_id,
+        "source_url": str(first.get("source_url", ""))[:1000],
+        "excerpt": str(first.get("excerpt", ""))[:1000],
     }
 
 

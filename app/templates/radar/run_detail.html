@@ -42,4 +42,30 @@
   <div class="lf-empty-state"><strong>No completed pages</strong><span>Queued or failed pages will show safe status when available.</span></div>
   {% endif %}
 </section>
+<section class="lf-section">
+  <h2>Observed relationships</h2>
+  {% if relationships %}
+  <div class="lf-card-list">
+    {% for relationship in relationships %}
+    <article class="lf-panel">
+      <strong>{{ relationship.company_name }}</strong>
+      <p>{{ relationship.relationship_type }} · {{ relationship.evidence_strength }} · {{ relationship.status }}</p>
+      <p><a href="{{ relationship.official_url }}" rel="noreferrer">{{ relationship.official_url }}</a></p>
+      {% if relationship.source_url %}<p>Observed on <a href="{{ relationship.source_url }}" rel="noreferrer">competitor official page</a></p>{% endif %}
+      {% if relationship.excerpt %}<p>{{ relationship.excerpt }}</p>{% endif %}
+      {% if relationship.status == 'proposed' and relationship.evidence_strength == 'confirmed' and relationship.relationship_type in ('dealer', 'distributor') %}
+      <form method="post" action="{{ url_for('radar_convert_relationship', relationship_id=relationship.id) }}">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+        <button class="lf-button" type="submit">Create review candidate</button>
+      </form>
+      {% elif relationship.status == 'converted' %}
+      <p class="lf-muted">Created as a review-only candidate. This evidence does not prove country, contactability, buying intent, or own-site identity.</p>
+      {% endif %}
+    </article>
+    {% endfor %}
+  </div>
+  {% else %}
+  <div class="lf-empty-state"><strong>No relationships observed</strong><span>Only cited, same-run evidence is shown here.</span></div>
+  {% endif %}
+</section>
 {% endcall %}

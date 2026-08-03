@@ -129,6 +129,249 @@ def _session(app) -> Session:
     return session
 
 
+_RADAR_CONVERTIBLE_TYPES = {"dealer", "distributor"}
+_RADAR_ACTIVE_MISSION_STATUSES = {"queued", "running", "paused"}
+
+
+def create_candidate_from_radar_relationship(
+    app,
+    *,
+    tenant_id: str,
+    actor_id: str,
+    mission_id: str,
+    relationship_id: str,
+    expected_domain: str,
+) -> AcquisitionCandidate:
+    """Create exactly one review-only Candidate from a confirmed Radar relationship.
+
+    This is deliberately an Acquisition-owned boundary: Radar passes IDs only and
+    never writes Candidate or CandidateEvidence tables itself.
+    """
+
+    tenant_id, actor_id = _require_identity(tenant_id, actor_id)
+    expected = _normalise_domain(expected_domain)
+    if not expected:
+        raise AcquisitionStateError("relationship domain is required")
+    from app.modules.radar.models import (
+        CompetitorProfile,
+        RadarRelationship,
+        RadarRun,
+        RadarSnapshot,
+    )
+
+    with _session(app) as session:
+        mission = MissionRepository(session).get(mission_id, tenant_id=tenant_id)
+        if mission is None:
+            raise AcquisitionNotFoundError("mission was not found")
+        if mission.status not in _RADAR_ACTIVE_MISSION_STATUSES:
+            raise AcquisitionStateError("mission is not active for Radar conversion")
+        relationship = session.scalar(
+            select(RadarRelationship).where(
+                RadarRelationship.id == relationship_id,
+                RadarRelationship.tenant_id == tenant_id,
+            )
+        )
+        if relationship is None:
+            raise AcquisitionNotFoundError("Radar relationship was not found")
+        profile = session.scalar(
+            select(CompetitorProfile).where(
+                CompetitorProfile.id == relationship.profile_id,
+                CompetitorProfile.tenant_id == tenant_id,
+            )
+        )
+        run = session.scalar(
+            select(RadarRun).where(
+                RadarRun.id == relationship.run_id,
+                RadarRun.tenant_id == tenant_id,
+            )
+        )
+        snapshot = session.scalar(
+            select(RadarSnapshot).where(
+                RadarSnapshot.id == relationship.source_snapshot_id,
+                RadarSnapshot.tenant_id == tenant_id,
+            )
+        )
+        _validate_radar_conversion_context(
+            mission=mission,
+            relationship=relationship,
+            profile=profile,
+            run=run,
+            snapshot=snapshot,
+            expected_domain=expected,
+        )
+        assert profile is not None and run is not None and snapshot is not None
+        candidate_repo = CandidateRepository(session)
+        dedupe_key = f"domain:{relationship.canonical_domain}"
+        candidate = candidate_repo.find_by_dedupe_key(
+            mission.id,
+            dedupe_key,
+            tenant_id=tenant_id,
+        )
+        if candidate is None:
+            candidate = AcquisitionCandidate(
+                tenant_id=tenant_id,
+                mission_id=mission.id,
+                status="needs_evidence",
+                company_name=relationship.company_name,
+                domain=relationship.canonical_domain,
+                website=relationship.official_url,
+                source_channel="competitor_radar",
+                source_provider="radar",
+                decision_reason_code="competitor_relationship_only",
+                decision_note=(
+                    "Competitor relationship evidence does not prove target country, "
+                    "contactability, buying intent, or own-site identity."
+                ),
+                dedupe_key=dedupe_key,
+            )
+            try:
+                with session.begin_nested():
+                    candidate_repo.add(candidate, tenant_id=tenant_id)
+                    session.flush()
+            except IntegrityError:
+                candidate = candidate_repo.find_by_dedupe_key(
+                    mission.id,
+                    dedupe_key,
+                    tenant_id=tenant_id,
+                )
+                if candidate is None:
+                    raise AcquisitionError("Radar candidate could not be stored") from None
+        _persist_radar_relationship_evidence(
+            session,
+            candidate=candidate,
+            relationship=relationship,
+            snapshot=snapshot,
+            run=run,
+            tenant_id=tenant_id,
+        )
+        relationship.status = "converted"
+        relationship.candidate_id = candidate.id
+        relationship.decided_by = actor_id
+        relationship.decided_at = datetime.now(UTC)
+        _audit_candidate(session, candidate, actor_id, "candidate.created_from_radar")
+        add_event(
+            session,
+            tenant_id=tenant_id,
+            actor_user_id=actor_id,
+            action="radar.relationship_converted",
+            target_type="radar_relationship",
+            target_id=relationship.id,
+            safe_summary="Created review-only Candidate from confirmed competitor relationship",
+        )
+        session.commit()
+        return candidate
+
+
+def _validate_radar_conversion_context(
+    *,
+    mission: AcquisitionMission,
+    relationship: Any,
+    profile: Any,
+    run: Any,
+    snapshot: Any,
+    expected_domain: str,
+) -> None:
+    if profile is None or run is None or snapshot is None:
+        raise AcquisitionStateError("Radar relationship source is incomplete")
+    if (
+        profile.mission_id != mission.id
+        or relationship.profile_id != profile.id
+        or relationship.run_id != run.id
+        or relationship.source_snapshot_id != snapshot.id
+        or snapshot.profile_id != profile.id
+        or snapshot.run_id != run.id
+    ):
+        raise AcquisitionStateError("Radar relationship does not match the destination mission")
+    if relationship.canonical_domain != expected_domain:
+        raise AcquisitionStateError("Radar relationship domain did not match confirmation")
+    if relationship.relationship_type not in _RADAR_CONVERTIBLE_TYPES:
+        raise AcquisitionStateError(
+            "Only confirmed dealer or distributor relationships can convert"
+        )
+    if relationship.evidence_strength != "confirmed":
+        raise AcquisitionStateError("Radar relationship evidence is not confirmed")
+    if relationship.status == "dismissed" or run.status == "cancelled":
+        raise AcquisitionStateError("Cancelled or dismissed Radar relationships cannot convert")
+    snapshot_domain = _normalise_domain(snapshot.canonical_url)
+    if snapshot.validation_status != "valid" or snapshot_domain != profile.canonical_domain:
+        raise AcquisitionStateError("Radar relationship lacks official-source evidence")
+    evidence = _radar_evidence(relationship.evidence_json)
+    if not evidence or any(item.get("source_url") != snapshot.canonical_url for item in evidence):
+        raise AcquisitionStateError("Radar relationship evidence is incomplete")
+
+
+def _radar_evidence(value: str) -> list[dict[str, str]]:
+    try:
+        raw = json.loads(value)
+    except (TypeError, json.JSONDecodeError):
+        return []
+    if not isinstance(raw, list) or len(raw) > 5:
+        return []
+    evidence: list[dict[str, str]] = []
+    for item in raw:
+        if not isinstance(item, dict):
+            return []
+        source_url = item.get("source_url")
+        outbound_url = item.get("outbound_url")
+        excerpt = item.get("excerpt")
+        fields = (source_url, outbound_url, excerpt)
+        if not all(isinstance(field, str) and field.strip() for field in fields):
+            return []
+        evidence.append(
+            {
+                "source_url": source_url[:1000],
+                "outbound_url": outbound_url[:1000],
+                "excerpt": excerpt[:1000],
+            }
+        )
+    return evidence
+
+
+def _persist_radar_relationship_evidence(
+    session: Session,
+    *,
+    candidate: AcquisitionCandidate,
+    relationship: Any,
+    snapshot: Any,
+    run: Any,
+    tenant_id: str,
+) -> None:
+    evidence_rows = _radar_evidence(relationship.evidence_json)
+    source = evidence_rows[0]
+    content_hash = hashlib.sha256(
+        canonical_json({"relationship_id": relationship.id, "evidence": evidence_rows}).encode()
+    ).hexdigest()
+    repository = EvidenceRepository(session)
+    existing = repository.find_content(
+        candidate.id,
+        snapshot.canonical_url,
+        content_hash,
+        tenant_id=tenant_id,
+    )
+    if existing is not None:
+        return
+    repository.add(
+        CandidateEvidence(
+            candidate_id=candidate.id,
+            job_id=run.root_job_id,
+            provider="radar",
+            source_type="competitor_dealer_network",
+            trust_tier="B",
+            source_url=source["source_url"],
+            canonical_url=snapshot.canonical_url,
+            title="Competitor dealer/distributor relationship",
+            excerpt=source["excerpt"],
+            observed_at=snapshot.observed_at,
+            retrieved_at=datetime.now(UTC),
+            content_hash=content_hash,
+            supports_json=canonical_json(["competitor_relationship_only"]),
+            validation_status="valid",
+        ),
+        tenant_id=tenant_id,
+    )
+    session.flush()
+
+
 def _require_identity(tenant_id: str, actor_id: str) -> tuple[str, str]:
     tenant = (tenant_id or "").strip()
     actor = (actor_id or "").strip()
