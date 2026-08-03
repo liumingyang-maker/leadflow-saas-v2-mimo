@@ -4,7 +4,7 @@ $Python = if ($env:PYTHON) { $env:PYTHON } else { "python" }
 
 & $Python -m ruff check .
 if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-& $Python -m ruff format --check .
+& $Python -m ruff format --check app tests run_worker.py
 if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 & $Python -m pytest
 if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }

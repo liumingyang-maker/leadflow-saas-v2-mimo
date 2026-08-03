@@ -27,7 +27,7 @@ jobs:
         run: python -m ruff check .
 
       - name: Ruff format check
-        run: python -m ruff format --check .
+        run: python -m ruff format --check app tests run_worker.py
 
       - name: Pytest
         run: python -m pytest
