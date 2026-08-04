@@ -157,6 +157,37 @@ def test_execute_job_preserves_cancellation_reported_while_a_handler_runs(monkey
         assert current is not None and current.status == "cancelled"
 
 
+def test_execute_scheduled_retry_reschedules_an_early_scheduler_delivery(monkeypatch) -> None:
+    import app.modules.jobs.worker as worker
+    from app.modules.jobs.models import Job
+
+    app, engine = _app(monkeypatch)
+    with Session(engine) as session:
+        job = Job(
+            tenant_id="t1",
+            job_type="google_search",
+            status="retrying",
+            next_retry_at=datetime.now(UTC) + timedelta(seconds=5),
+        )
+        session.add(job)
+        session.commit()
+        job_id = job.id
+
+    calls = []
+    monkeypatch.setattr(worker, "_make_app", lambda: app)
+    monkeypatch.setattr(
+        worker,
+        "schedule_retry",
+        lambda _app, *, job_id, tenant_id: calls.append((job_id, tenant_id)),
+    )
+
+    assert worker.execute_scheduled_retry(job_id) == {"ok": True, "status": "retry_rescheduled"}
+    assert calls == [(job_id, "t1")]
+    with Session(engine) as session:
+        current = session.get(Job, job_id)
+        assert current is not None and current.status == "retrying"
+
+
 def test_worker_error_does_not_resurrect_a_cancelled_job(monkeypatch) -> None:
     import app.modules.jobs.worker as worker
     from app.modules.jobs.models import Job

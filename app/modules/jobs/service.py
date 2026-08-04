@@ -196,7 +196,7 @@ def schedule_retry(app: Flask, *, job_id: str, tenant_id: str) -> None:
         retry_at = stored.next_retry_at
         if retry_at.tzinfo is None:
             retry_at = retry_at.replace(tzinfo=UTC)
-        delay = max(retry_at - datetime.now(UTC), timedelta())
+        delay = max(retry_at - datetime.now(UTC), timedelta(seconds=1))
         queue_name = stored.queue_name
     try:
         rq_job = _queue(app, queue_name).enqueue_in(
