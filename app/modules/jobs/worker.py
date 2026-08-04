@@ -298,13 +298,27 @@ def execute_scheduled_retry(job_id: str) -> dict[str, Any]:
     """Activate a due persisted retry before executing its fixed Job handler."""
 
     app = _make_app()
+    retry_tenant_id: str | None = None
     with Session(get_engine(app)) as session:
         job = session.get(Job, job_id)
         if job is None:
             return {"ok": False, "error": "job_not_found"}
-        claimed = JobRepository(session).claim_due_retry(job, now=datetime.now(UTC))
-        if claimed is None:
-            return {"ok": False, "error": "retry_not_due_or_inactive"}
+        now = datetime.now(UTC)
+        retry_at = job.next_retry_at
+        if retry_at is not None and retry_at.tzinfo is None:
+            retry_at = retry_at.replace(tzinfo=UTC)
+        if job.status == "retrying" and retry_at is not None and retry_at > now:
+            retry_tenant_id = job.tenant_id
+        else:
+            claimed = JobRepository(session).claim_due_retry(job, now=now)
+            if claimed is None:
+                return {"ok": False, "error": "retry_not_due_or_inactive"}
+    if retry_tenant_id is not None:
+        try:
+            schedule_retry(app, job_id=job_id, tenant_id=retry_tenant_id)
+        except JobServiceError:
+            return {"ok": False, "error": "retry_reschedule_failed"}
+        return {"ok": True, "status": "retry_rescheduled"}
     return execute_job(job_id)
 
 

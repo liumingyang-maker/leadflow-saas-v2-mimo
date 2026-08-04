@@ -90,6 +90,38 @@ def test_schedule_passes_only_job_id_to_rq(monkeypatch) -> None:
     ]
 
 
+def test_retry_schedule_waits_at_least_one_second(monkeypatch) -> None:
+    from app.modules.jobs.models import Job
+    from app.modules.jobs.service import schedule_retry
+
+    app, engine = _app(monkeypatch)
+    calls = []
+
+    class FakeRQJob:
+        id = "rq-retry-1"
+
+    class FakeQueue:
+        def enqueue_in(self, *args, **kwargs):
+            calls.append((args, kwargs))
+            return FakeRQJob()
+
+    monkeypatch.setattr("app.modules.jobs.service._queue", lambda _app, _name: FakeQueue())
+    with Session(engine) as session:
+        job = Job(
+            tenant_id="t1",
+            job_type="google_search",
+            status="retrying",
+            next_retry_at=datetime.now(UTC) + timedelta(milliseconds=100),
+        )
+        session.add(job)
+        session.commit()
+        job_id = job.id
+
+    schedule_retry(app, job_id=job_id, tenant_id="t1")
+
+    assert calls[0][0][0] >= timedelta(seconds=1)
+
+
 def test_enqueue_failure_marks_job_failed(monkeypatch) -> None:
     from app.modules.jobs.service import JobServiceError, create_and_enqueue
 
