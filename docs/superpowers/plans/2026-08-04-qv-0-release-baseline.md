@@ -98,17 +98,7 @@ git diff --check
 git diff --word-diff=porcelain -- app/modules/acquisition/jobs.py app/modules/acquisition/routes.py app/config.py app/modules/jobs/service.py app/modules/jobs/worker.py tests/acquisition/test_jobs.py tests/test_queue_safety.py tests/test_worker_contracts.py
 ```
 
-If Ruff still reports only `tests/acquisition/test_jobs.py:1389:E501`, replace its one `FetchResult.text` literal with this equivalent expression before re-running the commands above:
-
-```python
-text=" ".join(
-    (
-        "Corporación Mabel, Lima, Perú.",
-        "Ventas: ventas@mabel.pe.",
-        "Tel: +51 965 030 502.",
-    )
-),
-```
+If Ruff still reports only `tests/acquisition/test_jobs.py:1389:E501`, preserve the pre-existing `FetchResult.text` literal as three existing sentence fragments joined by a single ASCII space, preserve Unicode code points, then re-run the commands above. Do not reproduce raw fixture content in this plan.
 
 Expected: Ruff gates and focused behavior suites exit 0, and the word diff contains only import position, whitespace, line wrapping and line-ending changes. Stage only the eight named files and commit:
 

@@ -3,12 +3,12 @@
 ## Baseline
 
 - Active branch: `design/solo-ai-acquisition-system`.
-- Local HEAD before this documentation commit: `67b90ad`.
-- Baseline design commit: `3d4d4cd`.
+- Local HEAD before this documentation commit: `67b90ad001a4dde14af09d4fd9cc8e5795fce962`.
+- Baseline design commit: `3d4d4cde3ebbaf82c4851b0167e691c2aec2d599`.
 - Worktree: isolated.
 - Migration current/head: `0021_radar_baseline_acceptance`.
 - Only preserved user change: V2-05 screenshot.
-- Static style repair commit `67b90ad` is mechanical Ruff-only and independently reviewed.
+- Static style repair commit `67b90ad001a4dde14af09d4fd9cc8e5795fce962` is mechanical Ruff-only and independently reviewed.
 
 ## Automated gates
 
@@ -28,4 +28,6 @@
 
 ## Scope audit
 
-- The static style repair at `67b90ad` is mechanical Ruff-only and independently reviewed.
+- QV-0 made no application behavior changes.
+- Historical Phase 2 plan checkboxes are preserved.
+- QV-1 starts only from the published QV-0 commit.
