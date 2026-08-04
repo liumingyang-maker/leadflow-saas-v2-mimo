@@ -148,6 +148,8 @@ def execute_job(job_id: str) -> dict[str, Any]:
                 stored = _get_job_for_update(session, job_id, tenant_id)
                 if stored is None:
                     return {"ok": False, "error": "job_not_found"}
+                if stored.status == "cancelled":
+                    return {"ok": False, "error": "cancelled", **summary}
                 if stored.status != "running":
                     return {"ok": False, "error": f"invalid_status:{stored.status}", **summary}
                 _update_job(
