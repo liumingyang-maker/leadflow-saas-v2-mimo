@@ -12,12 +12,13 @@
 
 ## Automated gates
 
-- `pytest tests/acquisition -q`: exit 0 (69.1s).
-- `pytest tests/radar tests/browser tests/test_migration_paths.py tests/test_worker_contracts.py tests/test_queue_safety.py -q`: exit 0 (28s).
-- Current Ruff check: exit 0.
-- Current Ruff format check: exit 0.
-- `git diff --check`: exit 0.
-- Disposable SQLite migration at `C:\\tmp\\leadflow-qv0-migration-20260804`: upgrade/current exit 0; head `0021_radar_baseline_acceptance`.
+- `python -m pytest tests/acquisition -q` — exit 0, 69.1s, completed 100%.
+- `python -m pytest tests/radar tests/browser tests/test_migration_paths.py tests/test_worker_contracts.py tests/test_queue_safety.py -q` — exit 0, 28s, completed 100%.
+- `python -m ruff check app tests tools run_worker.py` — exit 0.
+- `python -m ruff format --check app tests tools run_worker.py` — exit 0.
+- `python -m pytest tests/acquisition/test_jobs.py tests/test_queue_safety.py tests/test_worker_contracts.py -q` — exit 0, 74 passed.
+- `git diff --check` — exit 0.
+- Isolated SQLite migration command set at `C:\tmp\leadflow-qv0-migration-20260804` (`python -m alembic upgrade head`; `python -m alembic current`; `python -m alembic heads`) — every command exit 0; upgrade completed; current/head `0021_radar_baseline_acceptance`.
 
 ## Controlled runtime
 
