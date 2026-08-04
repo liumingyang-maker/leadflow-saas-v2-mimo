@@ -85,9 +85,7 @@ def test_schedule_passes_only_job_id_to_rq(monkeypatch) -> None:
         delay=timedelta(minutes=15),
     )
 
-    assert calls == [
-        ((timedelta(minutes=15), JOB_HANDLER, job.id), {"result_ttl": 86400})
-    ]
+    assert calls == [((timedelta(minutes=15), JOB_HANDLER, job.id), {"result_ttl": 86400})]
 
 
 def test_retry_schedule_waits_at_least_one_second(monkeypatch) -> None:

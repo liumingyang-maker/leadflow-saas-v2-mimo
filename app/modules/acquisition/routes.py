@@ -26,6 +26,7 @@ from app.modules.acquisition.mission_results import (
     resolve_mission_result,
 )
 from app.modules.acquisition.models import AcquisitionCandidate
+from app.modules.acquisition.policies import canonical_json
 from app.modules.acquisition.repository import (
     AssessmentRepository,
     CandidateRepository,
@@ -33,7 +34,6 @@ from app.modules.acquisition.repository import (
     MissionRepository,
     ProductKnowledgeRepository,
 )
-from app.modules.acquisition.policies import canonical_json
 from app.modules.acquisition.service import (
     AcquisitionActiveJobError,
     AcquisitionError,

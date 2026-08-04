@@ -134,9 +134,7 @@ def resolve_config(config_name: str | None = None) -> type[BaseConfig]:
     config_class.FETCH_MAX_PAGES_PER_SITE = _bounded_int(
         "FETCH_MAX_PAGES_PER_SITE", 5, minimum=1, maximum=10
     )
-    config_class.BROWSER_MAX_PAGES = _bounded_int(
-        "BROWSER_MAX_PAGES", 10, minimum=1, maximum=25
-    )
+    config_class.BROWSER_MAX_PAGES = _bounded_int("BROWSER_MAX_PAGES", 10, minimum=1, maximum=25)
     config_class.BROWSER_MAX_SECONDS = _bounded_int(
         "BROWSER_MAX_SECONDS", 120, minimum=10, maximum=300
     )
@@ -156,9 +154,7 @@ def resolve_config(config_name: str | None = None) -> type[BaseConfig]:
     else:
         config_class.SQLITE_BUSY_TIMEOUT_MS = 5000
     config_class.REDIS_URL = os.environ.get("REDIS_URL", "redis://localhost:6379/0")
-    config_class.BROWSER_REDIS_URL = os.environ.get(
-        "BROWSER_REDIS_URL", "redis://localhost:6380/0"
-    )
+    config_class.BROWSER_REDIS_URL = os.environ.get("BROWSER_REDIS_URL", "redis://localhost:6380/0")
     config_class.MIMO_BASE_URL = os.environ.get("MIMO_BASE_URL", "")
     config_class.MIMO_MODEL = os.environ.get("MIMO_MODEL", "mimo-v2.5")
 

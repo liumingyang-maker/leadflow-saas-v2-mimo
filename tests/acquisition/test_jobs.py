@@ -203,7 +203,10 @@ def test_transient_adapter_error_schedules_a_bounded_retry(acquisition_app, monk
         assert stored.status == "retrying"
         assert stored.next_retry_at is not None
         assert stored.rq_job_id == "scheduled-retry"
-    assert calls and calls[0][0][1:] == ("app.modules.jobs.worker.execute_scheduled_retry", "transient-job")
+    assert calls and calls[0][0][1:] == (
+        "app.modules.jobs.worker.execute_scheduled_retry",
+        "transient-job",
+    )
 
 
 def test_timeout_watchdog_finishes_active_mission_children(
@@ -1383,7 +1386,13 @@ def test_verified_country_domain_and_contact_are_preserved_when_ai_extraction_fa
         status_code=200,
         content_type="text/html",
         title="Corporaci\u00f3n Mabel Per\u00fa",
-        text="Corporaci\u00f3n Mabel, Lima, Per\u00fa. Ventas: ventas@mabel.pe. Tel: +51 965 030 502.",
+        text=" ".join(
+            (
+                "Corporación Mabel, Lima, Perú.",
+                "Ventas: ventas@mabel.pe.",
+                "Tel: +51 965 030 502.",
+            )
+        ),
         content_hash="d" * 64,
         retrieved_at=datetime.now(UTC),
         redirect_chain=(),
@@ -1426,7 +1435,9 @@ def test_invalid_ai_response_schedules_exactly_one_delayed_reanalysis(
     from app.modules.jobs.models import Job
 
     mission_id = seed_acquisition_mission()
-    candidate_id = _seed_candidate_with_search_evidence(acquisition_app, mission_id, suffix="retry-ai")
+    candidate_id = _seed_candidate_with_search_evidence(
+        acquisition_app, mission_id, suffix="retry-ai"
+    )
     snapshot = FetchResult(
         requested_url="https://retry-ai.example/",
         final_url="https://retry-ai.example/",

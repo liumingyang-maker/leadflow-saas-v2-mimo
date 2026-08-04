@@ -24,7 +24,6 @@ from app.modules.acquisition.country_contacts import (
     merge_contact_paths,
 )
 from app.modules.acquisition.entity_triage import classify_discovery_entity
-from app.modules.acquisition.source_identity import classify_source_identity
 from app.modules.acquisition.mission_results import job_outcome_key, resolve_mission_result
 from app.modules.acquisition.models import (
     AcquisitionCandidate,
@@ -44,6 +43,7 @@ from app.modules.acquisition.repository import (
     ProductKnowledgeRepository,
     ProviderStatusRepository,
 )
+from app.modules.acquisition.source_identity import classify_source_identity
 from app.modules.acquisition.states import (
     TERMINAL_JOB_OUTCOME_STATUSES,
     USABLE_CANDIDATE_STATUSES,
