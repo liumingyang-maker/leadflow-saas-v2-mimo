@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import json
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
 
 import pytest
@@ -394,17 +394,22 @@ def test_start_queues_exact_mission_and_changes_status(
         return SimpleNamespace(id="job-1")
 
     monkeypatch.setattr("app.modules.jobs.service.create_and_enqueue", fake_enqueue)
+    monkeypatch.setattr("app.modules.jobs.service.create_and_schedule", fake_enqueue)
 
     response = client.post(f"/acquisition/missions/{mission.id}/start")
 
     assert response.status_code in {302, 303}
-    assert calls == [
-        {
-            "tenant_id": tenant_id,
-            "job_type": "acquisition_plan",
-            "payload": {"mission_id": mission.id},
-        }
-    ]
+    assert calls[0] == {
+        "tenant_id": tenant_id,
+        "job_type": "acquisition_reconcile",
+        "payload": {"mission_id": mission.id, "enforce_timeout": True},
+        "delay": timedelta(seconds=900),
+    }
+    assert calls[1] == {
+        "tenant_id": tenant_id,
+        "job_type": "acquisition_plan",
+        "payload": {"mission_id": mission.id},
+    }
     with Session(get_engine(acquisition_app)) as db_session:
         stored = db_session.get(AcquisitionMission, mission.id)
         assert stored is not None
@@ -598,6 +603,8 @@ def test_candidate_detail_uses_progressive_disclosure(acquisition_app, logged_in
     html = response.get_data(as_text=True)
     first_layer = html.split("证据、评分和未知项")[0]
     assert "Distribuidora visible" in first_layer
+    assert "目标市场：MX" in first_layer
+    assert "公司国家：已确认（MX）" in first_layer
     assert "为什么推荐" in first_layer
     assert "待评估" in first_layer
     assert "A 优先级" not in first_layer

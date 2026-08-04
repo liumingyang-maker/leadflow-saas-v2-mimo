@@ -11,7 +11,8 @@
         <h3>{{ candidate.company_name or candidate.domain or "待确认公司" }}</h3>
         <span class="lf-badge{% if candidate.status != 'rejected' and view.display_priority in ['A', 'B'] %} lf-badge-success{% endif %}">{{ view.priority_label }}</span>
       </div>
-      <p><strong>{{ candidate.opportunity_country_code or "国家待确认" }}</strong> · <span>为什么推荐：{{ view.primary_reason }}</span></p>
+      <p><strong>目标市场：{{ candidate.opportunity_country_code or "待设定" }}</strong> · <strong>公司国家：{{ view.company_country_label }}</strong> · <span>为什么推荐：{{ view.primary_reason }}</span></p>
+      {% if view.country_signal_note %}<p class="lf-muted">{{ view.country_signal_note }}</p>{% endif %}
       {% if view.processing_note %}<p class="lf-muted">{{ view.processing_note }}</p>{% endif %}
       {% if candidate.website %}<a class="lf-safe-link" href="{{ candidate.website }}" target="_blank" rel="noopener noreferrer">访问公司网站</a>{% endif %}
     </div>

@@ -26,7 +26,7 @@ from sqlalchemy.orm import Session
 from app.extensions import get_engine
 from app.modules.jobs.models import Job
 from app.modules.jobs.repository import JobRepository
-from app.modules.jobs.service import JOB_HANDLER
+from app.modules.jobs.service import JOB_HANDLER, JobServiceError, schedule_retry
 from app.modules.leads.models import Activity
 
 # ---------------------------------------------------------------------------
@@ -148,8 +148,8 @@ def execute_job(job_id: str) -> dict[str, Any]:
                 stored = _get_job_for_update(session, job_id, tenant_id)
                 if stored is None:
                     return {"ok": False, "error": "job_not_found"}
-                if stored.status == "cancelled":
-                    return {"ok": False, "error": "cancelled", **summary}
+                if stored.status != "running":
+                    return {"ok": False, "error": f"invalid_status:{stored.status}", **summary}
                 _update_job(
                     session,
                     stored,
@@ -160,6 +160,7 @@ def execute_job(job_id: str) -> dict[str, Any]:
                     heartbeat_at=datetime.now(UTC),
                     finished_at=datetime.now(UTC),
                 )
+            _reconcile_acquisition_after_terminal_job(app, tenant_id, job_type)
             return {"ok": True, **summary}
 
         adapter = _get_adapter(job_type)
@@ -195,10 +196,12 @@ def execute_job(job_id: str) -> dict[str, Any]:
                 finished_at=datetime.now(UTC),
             )
 
+        _reconcile_acquisition_after_terminal_job(app, tenant_id, job_type)
         return {"ok": True, "created": created}
 
     except Exception as exc:
         _handle_worker_error(app, job_id, tenant_id, exc)
+        _reconcile_acquisition_after_terminal_job(app, tenant_id, job_type)
         if job_type == "radar_scan":
             from app.modules.radar.jobs import finalize_radar_worker_failure
 
@@ -289,9 +292,32 @@ def _save_candidates(app: Any, job_id: str, tenant_id: str, job_type: str, candi
     return created
 
 
+def execute_scheduled_retry(job_id: str) -> dict[str, Any]:
+    """Activate a due persisted retry before executing its fixed Job handler."""
+
+    app = _make_app()
+    with Session(get_engine(app)) as session:
+        job = session.get(Job, job_id)
+        if job is None:
+            return {"ok": False, "error": "job_not_found"}
+        claimed = JobRepository(session).claim_due_retry(job, now=datetime.now(UTC))
+        if claimed is None:
+            return {"ok": False, "error": "retry_not_due_or_inactive"}
+    return execute_job(job_id)
+
+
+def _reconcile_acquisition_after_terminal_job(app: Any, tenant_id: str, job_type: str) -> None:
+    if job_type not in {"acquisition_plan", "web_discovery", "website_verify", "candidate_assess"}:
+        return
+    from app.modules.acquisition.jobs import reconcile_missions
+
+    reconcile_missions(app, tenant_id=tenant_id, now=datetime.now(UTC))
+
+
 def _handle_adapter_error(app: Any, job_id: str, tenant_id: str, result: Any) -> None:
     now = datetime.now(UTC)
 
+    should_schedule = False
     with Session(get_engine(app)) as session:
         job = _get_job_for_update(session, job_id, tenant_id)
         if job is None:
@@ -314,6 +340,12 @@ def _handle_adapter_error(app: Any, job_id: str, tenant_id: str, result: Any) ->
             next_retry_at=next_retry,
             finished_at=now if status == "failed" else None,
         )
+        should_schedule = status == "retrying"
+    if should_schedule:
+        try:
+            schedule_retry(app, job_id=job_id, tenant_id=tenant_id)
+        except JobServiceError:
+            pass
 
 
 def _handle_worker_error(app: Any, job_id: str, tenant_id: str, exc: Exception) -> None:
@@ -327,6 +359,7 @@ def _handle_worker_error(app: Any, job_id: str, tenant_id: str, exc: Exception) 
         safe_summary = str(getattr(exc, "safe_summary", type(exc).__name__))[:500]
         retryable = bool(getattr(exc, "retryable", True))
 
+    should_schedule = False
     with Session(get_engine(app)) as session:
         job = _get_job_for_update(session, job_id, tenant_id)
         if job is None:
@@ -349,6 +382,13 @@ def _handle_worker_error(app: Any, job_id: str, tenant_id: str, exc: Exception) 
             next_retry_at=next_retry,
             finished_at=now if status == "failed" else None,
         )
+        should_schedule = status == "retrying"
+
+    if should_schedule:
+        try:
+            schedule_retry(app, job_id=job_id, tenant_id=tenant_id)
+        except JobServiceError:
+            pass
 
     app.logger.error(
         "job.failed",

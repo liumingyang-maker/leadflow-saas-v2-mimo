@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from flask import Flask, abort, make_response, redirect, render_template, request, session, url_for
@@ -32,6 +33,7 @@ from app.modules.acquisition.repository import (
     MissionRepository,
     ProductKnowledgeRepository,
 )
+from app.modules.acquisition.policies import canonical_json
 from app.modules.acquisition.service import (
     AcquisitionActiveJobError,
     AcquisitionError,
@@ -55,6 +57,7 @@ from app.modules.acquisition.workbench import (
 )
 from app.modules.audit.service import add_event
 from app.modules.jobs import service as job_service
+from app.modules.jobs.models import Job
 
 COUNTRY_CHOICES = (
     ("MX", "墨西哥"),
@@ -326,6 +329,7 @@ def register_acquisition_routes(app: Flask) -> None:
     def acquisition_mission_start(mission_id: str):
         tenant_id, actor_id = _identity()
         previous_status = ""
+        max_seconds = 900
         with Session(get_engine(app)) as db_session:
             mission = MissionRepository(db_session).get(mission_id, tenant_id=tenant_id)
             if mission is None:
@@ -339,6 +343,23 @@ def register_acquisition_routes(app: Flask) -> None:
                 )
             previous_status = mission.status
             mission.status = "queued"
+            try:
+                budget = json.loads(mission.budget_json or "{}")
+            except (TypeError, ValueError):
+                budget = {}
+            configured_seconds = budget.get("max_seconds") if isinstance(budget, dict) else None
+            if isinstance(configured_seconds, int) and configured_seconds > 0:
+                max_seconds = configured_seconds
+            try:
+                retrospective = json.loads(mission.retrospective_json or "{}")
+            except (TypeError, ValueError):
+                retrospective = {}
+            if not isinstance(retrospective, dict):
+                retrospective = {}
+            retrospective["execution_deadline_at"] = (
+                datetime.now(UTC) + timedelta(seconds=max_seconds)
+            ).isoformat()
+            mission.retrospective_json = canonical_json(retrospective)
             add_event(
                 db_session,
                 tenant_id=tenant_id,
@@ -350,6 +371,13 @@ def register_acquisition_routes(app: Flask) -> None:
             )
             db_session.commit()
         try:
+            job_service.create_and_schedule(
+                app,
+                tenant_id=tenant_id,
+                job_type="acquisition_reconcile",
+                payload={"mission_id": mission_id, "enforce_timeout": True},
+                delay=timedelta(seconds=max_seconds),
+            )
             job_service.create_and_enqueue(
                 app,
                 tenant_id=tenant_id,
@@ -928,6 +956,34 @@ def _candidate_view(
         processing_note = "官网验证或结构化分析尚未完成；当前为临时评估，请重新验证。"
     elif priority_mode == "fit_quality_provisional_v1":
         processing_note = "尚未观察到采购意向信号；当前优先级仅依据匹配度和证据质量。"
+    verification_jobs = list(
+        db_session.query(Job)
+        .filter(
+            Job.tenant_id == tenant_id,
+            Job.job_type == "website_verify",
+        )
+        .order_by(Job.created_at.desc(), Job.id.desc())
+    )
+    latest_verification = next(
+        (
+            item
+            for item in verification_jobs
+            if _job_payload(item).get("candidate_id") == candidate.id
+        ),
+        None,
+    )
+    if candidate.entity_type == "source_identity_unverified":
+        processing_note = "当前网页与公司域名不一致，已按第三方页面保存，需提供公司官网后再验证。"
+    elif latest_verification is not None and latest_verification.status == "retrying":
+        processing_note = "官网暂时不可访问，系统正在执行本任务内的有限退避重试。"
+    elif (
+        latest_verification is not None
+        and _job_payload(latest_verification).get("analysis_retry") is True
+        and latest_verification.status in {"queued", "running"}
+    ):
+        processing_note = "AI 结构化分析未通过校验，已安排一次延迟重分析。"
+    elif latest_verification is not None and latest_verification.error_code == "invalid_response":
+        processing_note = "AI 结构化分析未通过校验；本次有限重分析已结束，可手动重新验证公开网页。"
     observed_facts = _candidate_observed_facts(candidate.observed_facts_json)
     inferences = _json_value(candidate.inferences_json, [])
     analysis_items: list[object] = [reason]
@@ -941,6 +997,22 @@ def _candidate_view(
     score_rows = _candidate_score_rows(score_breakdown)
     if candidate.status == "rejected":
         score_rows = [row for row in score_rows if row[0] != "综合优先级"]
+    company_country_label = "待确认"
+    if candidate.country_resolution_status == "confirmed":
+        country_code = candidate.hq_country_code or candidate.opportunity_country_code
+        company_country_label = f"已确认（{country_code or '—'}）"
+    elif candidate.country_resolution_status == "conflicting":
+        company_country_label = "证据冲突，待确认"
+    country_signal_note = ""
+    if isinstance(unknowns, list):
+        for item in unknowns:
+            if isinstance(item, str) and item.startswith("likely:"):
+                parts = item.split(":", 2)
+                country_code = parts[1] if len(parts) > 1 else ""
+                country_signal_note = (
+                    f"国家域名信号：可能在 {country_code}；仍需官方地址或注册信息确认。"
+                )
+                break
     return {
         "candidate": candidate,
         "primary_reason": reason,
@@ -959,6 +1031,8 @@ def _candidate_view(
         "processing_note": processing_note,
         "score_breakdown": score_breakdown,
         "score_rows": score_rows,
+        "company_country_label": company_country_label,
+        "country_signal_note": country_signal_note,
     }
 
 
@@ -978,6 +1052,11 @@ def _candidate_observed_facts(value: str) -> list[object]:
     if isinstance(claims, list):
         facts.extend(claims)
     return facts
+
+
+def _job_payload(job: Job) -> dict[str, Any]:
+    value = _json_value(job.payload_json, {})
+    return value if isinstance(value, dict) else {}
 
 
 def _candidate_score_rows(score_breakdown: object) -> list[tuple[str, object]]:

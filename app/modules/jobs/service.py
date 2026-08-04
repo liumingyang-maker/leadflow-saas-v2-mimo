@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 import uuid
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from flask import Flask
@@ -22,6 +22,7 @@ class JobServiceError(ValueError):
 
 
 JOB_HANDLER = "app.modules.jobs.worker.execute_job"
+RETRY_HANDLER = "app.modules.jobs.worker.execute_scheduled_retry"
 _FORBIDDEN_PAYLOAD_KEYS = {"api_key", "password", "secret", "authorization", "cookie"}
 
 
@@ -116,6 +117,110 @@ def create_and_enqueue(
         raise JobServiceError("Failed to queue job") from None
 
     return job
+
+
+def create_and_schedule(
+    app: Flask,
+    *,
+    tenant_id: str,
+    job_type: str,
+    payload: dict[str, Any] | None = None,
+    delay: timedelta,
+    queue_name: str = "default",
+) -> Job:
+    """Persist a one-shot Job and schedule its normal allowlisted handler.
+
+    This is deliberately a bounded, job-owned timer.  It is not a recurring
+    scheduler and therefore cannot create acquisition work on its own.
+    """
+    if delay.total_seconds() <= 0:
+        raise JobServiceError("scheduled job delay must be positive")
+    clean_payload = payload or {}
+    if _contains_forbidden_key(clean_payload):
+        raise JobServiceError("job payload contains forbidden key")
+    try:
+        payload_json = json.dumps(clean_payload, sort_keys=True)
+    except (TypeError, ValueError) as exc:
+        raise JobServiceError("job payload must be JSON serializable") from exc
+
+    now = datetime.now(UTC)
+    job = Job(
+        id=uuid.uuid4().hex,
+        tenant_id=tenant_id,
+        job_type=job_type,
+        status="queued",
+        payload_json=payload_json,
+        queue_name=queue_name,
+        progress_message="Scheduled one-shot safeguard",
+        created_at=now,
+        queued_at=now,
+    )
+    with _session(app) as session:
+        JobRepository(session).create_for_tenant(job, tenant_id=tenant_id)
+        session.commit()
+        saved_id = job.id
+
+    try:
+        rq_job = _queue(app, queue_name).enqueue_in(
+            delay,
+            JOB_HANDLER,
+            saved_id,
+            result_ttl=86400,
+        )
+    except Exception:
+        with _session(app) as session:
+            stored = JobRepository(session).get_for_tenant(saved_id, tenant_id=tenant_id)
+            if stored is not None and stored.status == "queued":
+                stored.status = "failed"
+                stored.error_code = "schedule_failed"
+                stored.error_summary = "Failed to schedule one-shot job"
+                stored.finished_at = datetime.now(UTC)
+                session.commit()
+        raise JobServiceError("Failed to schedule job") from None
+
+    with _session(app) as session:
+        stored = JobRepository(session).get_for_tenant(saved_id, tenant_id=tenant_id)
+        if stored is not None and stored.status == "queued":
+            stored.rq_job_id = rq_job.id or ""
+            session.commit()
+    return job
+
+
+def schedule_retry(app: Flask, *, job_id: str, tenant_id: str) -> None:
+    """Schedule one persisted retry and fail it closed if Redis rejects it."""
+
+    with _session(app) as session:
+        stored = JobRepository(session).get_for_tenant(job_id, tenant_id=tenant_id)
+        if stored is None or stored.status != "retrying" or stored.next_retry_at is None:
+            raise JobServiceError("Job is not awaiting retry")
+        retry_at = stored.next_retry_at
+        if retry_at.tzinfo is None:
+            retry_at = retry_at.replace(tzinfo=UTC)
+        delay = max(retry_at - datetime.now(UTC), timedelta())
+        queue_name = stored.queue_name
+    try:
+        rq_job = _queue(app, queue_name).enqueue_in(
+            delay,
+            RETRY_HANDLER,
+            job_id,
+            result_ttl=86400,
+        )
+    except Exception:
+        with _session(app) as session:
+            stored = JobRepository(session).get_for_tenant(job_id, tenant_id=tenant_id)
+            if stored is not None and stored.status == "retrying":
+                stored.status = "failed"
+                stored.error_code = "retry_schedule_failed"
+                stored.error_summary = "Failed to schedule bounded retry"
+                stored.next_retry_at = None
+                stored.finished_at = datetime.now(UTC)
+                session.commit()
+        raise JobServiceError("Failed to schedule retry") from None
+    with _session(app) as session:
+        stored = JobRepository(session).get_for_tenant(job_id, tenant_id=tenant_id)
+        if stored is not None and stored.status == "retrying":
+            stored.rq_job_id = rq_job.id or ""
+            session.commit()
 
 
 def enqueue_existing_job(app: Flask, *, job_id: str, tenant_id: str) -> None:

@@ -5,7 +5,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from time import perf_counter
 from typing import Any
 from urllib.parse import urlsplit
@@ -19,6 +19,12 @@ from app.integrations.ai.contracts import CountryResearchPlan
 from app.integrations.ai.mimo import ProviderError, build_mimo_provider
 from app.integrations.web.fetcher import FetchError, StaticFetcher
 from app.modules.acquisition.assessment import compute_candidate_assessment
+from app.modules.acquisition.country_contacts import (
+    extract_deterministic_evidence,
+    merge_contact_paths,
+)
+from app.modules.acquisition.entity_triage import classify_discovery_entity
+from app.modules.acquisition.source_identity import classify_source_identity
 from app.modules.acquisition.mission_results import job_outcome_key, resolve_mission_result
 from app.modules.acquisition.models import (
     AcquisitionCandidate,
@@ -50,7 +56,7 @@ from app.modules.acquisition.versions import (
 from app.modules.audit.service import add_event
 from app.modules.jobs.models import Job
 from app.modules.jobs.repository import JobRepository
-from app.modules.jobs.service import create_and_enqueue
+from app.modules.jobs.service import JobServiceError, create_and_enqueue, create_and_schedule
 
 _ACTIVE_JOB_STATUSES = {"queued", "running", "retrying"}
 _TERMINAL_JOB_STATUSES = {"succeeded", "failed", "cancelled"}
@@ -281,6 +287,7 @@ def handle_web_discovery(app, job: Job, payload: dict[str, Any]) -> dict[str, An
     domain_skipped = 0
     created = 0
     deduped = 0
+    entity_triaged = 0
     verify_ids: list[str] = []
     with Session(get_engine(app)) as session:
         candidates = CandidateRepository(session)
@@ -292,13 +299,19 @@ def handle_web_discovery(app, job: Job, payload: dict[str, Any]) -> dict[str, An
                 domain_skipped += 1
                 continue
             valid_hits += 1
+            entity_type = classify_discovery_entity(
+                url=url,
+                title=hit.title,
+                excerpt=hit.excerpt,
+            )
             dedupe_key = f"domain:{domain}"
             candidate = candidates.find_by_dedupe_key(mission_id, dedupe_key, tenant_id=tenant_id)
             if candidate is None:
                 candidate = candidates.add(
                     AcquisitionCandidate(
                         mission_id=mission_id,
-                        status="discovered",
+                        status="discovered" if entity_type == "company" else "needs_evidence",
+                        entity_type=entity_type,
                         company_name=hit.title[:300],
                         domain=domain,
                         website=url[:1000],
@@ -306,12 +319,22 @@ def handle_web_discovery(app, job: Job, payload: dict[str, Any]) -> dict[str, An
                         country_resolution_status="unknown",
                         source_channel="mimo_web",
                         source_provider="mimo",
+                        eligibility_code=(
+                            "" if entity_type == "company" else "entity_triage_noncompany"
+                        ),
+                        unknowns_json=(
+                            "[]"
+                            if entity_type == "company"
+                            else canonical_json([f"entity_triage:{entity_type}"])
+                        ),
                         dedupe_key=dedupe_key,
                     ),
                     tenant_id=tenant_id,
                 )
                 session.flush()
                 created += 1
+                if entity_type != "company":
+                    entity_triaged += 1
             else:
                 deduped += 1
 
@@ -335,7 +358,11 @@ def handle_web_discovery(app, job: Job, payload: dict[str, Any]) -> dict[str, An
                     ),
                     tenant_id=tenant_id,
                 )
-            if len(verify_ids) < max_verify and candidate.status == "discovered":
+            if (
+                len(verify_ids) < max_verify
+                and candidate.status == "discovered"
+                and candidate.entity_type == "company"
+            ):
                 candidate.status = "verifying"
                 verify_ids.append(candidate.id)
             if index % 10 == 0:
@@ -362,13 +389,21 @@ def handle_web_discovery(app, job: Job, payload: dict[str, Any]) -> dict[str, An
         "query_count": len(country_plan.queries),
         "created": created,
         "deduped": deduped,
+        "entity_triaged": entity_triaged,
         "stage": "discovered",
     }
 
 
 def handle_website_verify(app, job: Job, payload: dict[str, Any]) -> dict[str, Any]:
-    validate_handler_payload(payload, allowed={"candidate_id"}, required={"candidate_id"})
+    validate_handler_payload(
+        payload,
+        allowed={"candidate_id", "analysis_retry"},
+        required={"candidate_id"},
+    )
     candidate_id = _required_id(payload, "candidate_id")
+    analysis_retry = payload.get("analysis_retry", False)
+    if not isinstance(analysis_retry, bool):
+        raise ValueError("analysis_retry must be a boolean")
     tenant_id = job.tenant_id
 
     with Session(get_engine(app)) as session:
@@ -428,16 +463,53 @@ def handle_website_verify(app, job: Job, payload: dict[str, Any]) -> dict[str, A
             retryable=False,
         )
 
+    source_identity = classify_source_identity(candidate.company_name, snapshot)
     _save_snapshot_evidence(
         app,
         job,
         candidate_id,
         snapshot,
-        trust_tier="A",
-        validation_status="valid",
+        trust_tier=source_identity.trust_tier,
+        validation_status=source_identity.validation_status,
         excerpt=snapshot.text[:4000],
-        source_type="official_website",
+        source_type=source_identity.source_type,
     )
+    if not source_identity.is_confirmed:
+        with Session(get_engine(app)) as session:
+            candidate = CandidateRepository(session).get(candidate_id, tenant_id=tenant_id)
+            if candidate is not None:
+                candidate.entity_type = "source_identity_unverified"
+                session.commit()
+        _enqueue_candidate_assessment_if_inactive(
+            app,
+            tenant_id=tenant_id,
+            candidate_id=candidate_id,
+        )
+        return {
+            "candidate_id": candidate_id,
+            "evidence_count": 1,
+            "stage": "source_identity_unverified",
+        }
+    deterministic = extract_deterministic_evidence(
+        snapshot,
+        target_country_code=candidate.opportunity_country_code,
+    )
+    with Session(get_engine(app)) as session:
+        stored = CandidateRepository(session).get(candidate_id, tenant_id=tenant_id)
+        if stored is not None:
+            stored.contact_json = canonical_json(
+                merge_contact_paths(_json_object(stored.contact_json), deterministic.contact_paths)
+            )
+            if deterministic.country_confirmed:
+                stored.hq_country_code = deterministic.country_code
+                stored.opportunity_country_code = deterministic.country_code
+                stored.country_resolution_status = "confirmed"
+            elif deterministic.country_note:
+                unknowns = _json_list(stored.unknowns_json)
+                if deterministic.country_note not in unknowns:
+                    unknowns.append(deterministic.country_note)
+                stored.unknowns_json = canonical_json(unknowns)
+            session.commit()
     _heartbeat(app, job, 55, "Extracting company facts")
     started = perf_counter()
     try:
@@ -445,11 +517,22 @@ def handle_website_verify(app, job: Job, payload: dict[str, Any]) -> dict[str, A
     except ProviderError as exc:
         _record_cost(app, tenant_id, mission_id, "mimo", started, requests=1)
         _provider_failure(app, tenant_id, exc.code)
-        _enqueue_candidate_assessment_if_inactive(
-            app,
-            tenant_id=tenant_id,
-            candidate_id=candidate_id,
+        delayed_reanalysis_scheduled = (
+            exc.code == "invalid_response"
+            and not analysis_retry
+            and _schedule_delayed_reanalysis_if_allowed(
+                app,
+                tenant_id=tenant_id,
+                mission_id=mission_id,
+                candidate_id=candidate_id,
+            )
         )
+        if not delayed_reanalysis_scheduled:
+            _enqueue_candidate_assessment_if_inactive(
+                app,
+                tenant_id=tenant_id,
+                candidate_id=candidate_id,
+            )
         raise AcquisitionJobError(exc.code, exc.safe_summary, retryable=exc.retryable) from None
     _record_cost(app, tenant_id, mission_id, "mimo", started, requests=1)
     _provider_success(app, tenant_id)
@@ -460,14 +543,20 @@ def handle_website_verify(app, job: Job, payload: dict[str, Any]) -> dict[str, A
             raise AcquisitionJobError(
                 "candidate_not_found", "Candidate was not found", retryable=False
             )
+        existing_contacts = _json_object(candidate.contact_json)
+        previous_country_confirmed = candidate.country_resolution_status == "confirmed"
         candidate.company_name = facts.company_name
         candidate.domain = facts.canonical_domain.lower()
         candidate.website = snapshot.final_url
-        candidate.hq_country_code = facts.hq_country_code
-        candidate.opportunity_country_code = facts.opportunity_country_code
-        if facts.opportunity_country_code:
+        candidate.hq_country_code = facts.hq_country_code or candidate.hq_country_code
+        candidate.opportunity_country_code = (
+            facts.opportunity_country_code or candidate.opportunity_country_code
+        )
+        if facts.opportunity_country_code or previous_country_confirmed:
             candidate.country_resolution_status = "confirmed"
-        candidate.contact_json = canonical_json({"paths": facts.contact_paths})
+        candidate.contact_json = canonical_json(
+            merge_contact_paths(existing_contacts, facts.contact_paths)
+        )
         candidate.observed_facts_json = canonical_json(
             {
                 "buyer_type": facts.buyer_type,
@@ -590,9 +679,77 @@ def handle_candidate_assess(app, job: Job, payload: dict[str, Any]) -> dict[str,
 def handle_acquisition_reconcile(app, job: Job, payload: dict[str, object]) -> dict[str, object]:
     """Run reconciliation only for the tenant that owns the persisted Job."""
 
-    validate_handler_payload(payload, allowed=set(), required=set())
-    changed = reconcile_missions(app, tenant_id=job.tenant_id, now=datetime.now(UTC))
-    return {"stage": "reconciled", "changed": changed}
+    validate_handler_payload(
+        payload,
+        allowed={"mission_id", "enforce_timeout"},
+        required=set(),
+    )
+    mission_id = payload.get("mission_id")
+    enforce_timeout = payload.get("enforce_timeout")
+    if mission_id is not None:
+        _required_id(payload, "mission_id")
+        if enforce_timeout is not True:
+            raise ValueError("mission reconciliation watchdog must enforce its timeout")
+    elif enforce_timeout is not None:
+        raise ValueError("timeout enforcement requires mission_id")
+
+    now = datetime.now(UTC)
+    timed_out = (
+        enforce_mission_timeout(app, tenant_id=job.tenant_id, mission_id=str(mission_id), now=now)
+        if mission_id is not None
+        else 0
+    )
+    changed = reconcile_missions(app, tenant_id=job.tenant_id, now=now)
+    return {"stage": "reconciled", "changed": changed, "timed_out": timed_out}
+
+
+def _schedule_delayed_reanalysis_if_allowed(
+    app,
+    *,
+    tenant_id: str,
+    mission_id: str,
+    candidate_id: str,
+) -> bool:
+    """Give one malformed AI response a bounded second chance within a Mission."""
+
+    with Session(get_engine(app)) as session:
+        mission = MissionRepository(session).get(mission_id, tenant_id=tenant_id)
+        if mission is None or mission.status == "cancelled":
+            return False
+        deadline_value = _json_object(mission.retrospective_json).get("execution_deadline_at")
+        if isinstance(deadline_value, str):
+            try:
+                deadline = datetime.fromisoformat(deadline_value.replace("Z", "+00:00"))
+            except ValueError:
+                return False
+            if deadline.tzinfo is None:
+                deadline = deadline.replace(tzinfo=UTC)
+            if deadline - datetime.now(UTC) <= timedelta(seconds=45):
+                return False
+        prior_jobs = session.scalars(
+            select(Job).where(
+                Job.tenant_id == tenant_id,
+                Job.job_type == "website_verify",
+            )
+        )
+        for prior_job in prior_jobs:
+            prior_payload = _json_object(prior_job.payload_json)
+            if (
+                prior_payload.get("candidate_id") == candidate_id
+                and prior_payload.get("analysis_retry") is True
+            ):
+                return False
+    try:
+        create_and_schedule(
+            app,
+            tenant_id=tenant_id,
+            job_type="website_verify",
+            payload={"candidate_id": candidate_id, "analysis_retry": True},
+            delay=timedelta(seconds=45),
+        )
+    except JobServiceError:
+        return False
+    return True
 
 
 ACQUISITION_HANDLERS = {
@@ -636,6 +793,71 @@ def enqueue_mission_reconciliations(app) -> int:
         )
         queued += 1
     return queued
+
+
+def enforce_mission_timeout(
+    app,
+    *,
+    tenant_id: str,
+    mission_id: str,
+    now: datetime,
+) -> int:
+    """Fail only the active children of a manually started overdue Mission.
+
+    The deadline is written when the user starts the Mission and this function
+    runs from its one-shot watchdog.  It never scans for or starts new work.
+    """
+
+    with Session(get_engine(app)) as session:
+        mission = MissionRepository(session).get(mission_id, tenant_id=tenant_id)
+        if mission is None or mission.status not in {"queued", "running"}:
+            return 0
+        retrospective = _json_object(mission.retrospective_json)
+        deadline_value = retrospective.get("execution_deadline_at")
+        if not isinstance(deadline_value, str):
+            return 0
+        try:
+            deadline = datetime.fromisoformat(deadline_value.replace("Z", "+00:00"))
+        except ValueError:
+            return 0
+        if deadline.tzinfo is None:
+            deadline = deadline.replace(tzinfo=UTC)
+        if now < deadline:
+            return 0
+
+        candidates = list(
+            session.scalars(
+                select(AcquisitionCandidate).where(
+                    AcquisitionCandidate.tenant_id == tenant_id,
+                    AcquisitionCandidate.mission_id == mission_id,
+                )
+            )
+        )
+        candidate_missions = {candidate.id: candidate.mission_id for candidate in candidates}
+        jobs = list(
+            session.scalars(
+                select(Job).where(
+                    Job.tenant_id == tenant_id,
+                    Job.job_type.in_(_ACQUISITION_JOB_TYPES),
+                )
+            )
+        )
+        timed_out = 0
+        for child in jobs:
+            if child.status not in _ACTIVE_JOB_STATUSES or not _job_belongs_to_mission(
+                child, mission_id, candidate_missions
+            ):
+                continue
+            child.status = "failed"
+            child.error_code = "mission_timeout"
+            child.error_summary = "Mission execution time budget expired"
+            child.progress_message = "Stopped because mission time budget expired"
+            child.next_retry_at = None
+            child.finished_at = now
+            timed_out += 1
+        if timed_out:
+            session.commit()
+        return timed_out
 
 
 def reconcile_missions(
@@ -1007,6 +1229,14 @@ def _json_object(value: str) -> dict[str, Any]:
     except (TypeError, json.JSONDecodeError):
         return {}
     return parsed if isinstance(parsed, dict) else {}
+
+
+def _json_list(value: str) -> list[Any]:
+    try:
+        parsed = json.loads(value or "[]")
+    except (TypeError, ValueError):
+        return []
+    return list(parsed) if isinstance(parsed, list) else []
 
 
 def _main() -> int:

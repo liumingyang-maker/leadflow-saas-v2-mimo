@@ -158,6 +158,107 @@ def test_reconciler_finishes_mission_when_children_terminal(
         assert session.get(AcquisitionMission, mission_id).status == "completed"
 
 
+def test_transient_adapter_error_schedules_a_bounded_retry(acquisition_app, monkeypatch):
+    from app.extensions import get_engine
+    from app.modules.jobs.models import Job
+    from app.modules.jobs.worker import _handle_adapter_error
+
+    calls = []
+
+    class FakeRQJob:
+        id = "scheduled-retry"
+
+    class FakeQueue:
+        def enqueue_in(self, *args, **kwargs):
+            calls.append((args, kwargs))
+            return FakeRQJob()
+
+    monkeypatch.setattr("app.modules.jobs.service._queue", lambda _app, _name: FakeQueue())
+    with Session(get_engine(acquisition_app)) as session:
+        job = Job(
+            id="transient-job",
+            tenant_id="t1",
+            job_type="google_search",
+            status="running",
+            attempt=1,
+            max_attempts=3,
+        )
+        session.add(job)
+        session.commit()
+
+    _handle_adapter_error(
+        acquisition_app,
+        "transient-job",
+        "t1",
+        SimpleNamespace(
+            is_transient=True,
+            error_code="source_unreachable",
+            error_summary="Source could not be reached",
+        ),
+    )
+
+    with Session(get_engine(acquisition_app)) as session:
+        stored = session.get(Job, "transient-job")
+        assert stored is not None
+        assert stored.status == "retrying"
+        assert stored.next_retry_at is not None
+        assert stored.rq_job_id == "scheduled-retry"
+    assert calls and calls[0][0][1:] == ("app.modules.jobs.worker.execute_scheduled_retry", "transient-job")
+
+
+def test_timeout_watchdog_finishes_active_mission_children(
+    acquisition_app, seed_acquisition_mission
+):
+    from app.extensions import get_engine
+    from app.modules.acquisition.jobs import handle_acquisition_reconcile
+    from app.modules.acquisition.models import AcquisitionCandidate, AcquisitionMission
+    from app.modules.jobs.models import Job
+
+    mission_id = seed_acquisition_mission()
+    now = datetime.now(UTC)
+    with Session(get_engine(acquisition_app)) as session:
+        mission = session.get(AcquisitionMission, mission_id)
+        assert mission is not None
+        mission.status = "running"
+        mission.retrospective_json = json.dumps(
+            {"execution_deadline_at": (now - timedelta(seconds=1)).isoformat()}
+        )
+        candidate = AcquisitionCandidate(
+            id="timeout-candidate",
+            tenant_id="t1",
+            mission_id=mission_id,
+            status="verifying",
+            dedupe_key="domain:timeout.example",
+        )
+        session.add(candidate)
+        session.add(
+            Job(
+                id="timeout-verify",
+                tenant_id="t1",
+                job_type="website_verify",
+                status="retrying",
+                payload_json=json.dumps({"candidate_id": candidate.id}),
+            )
+        )
+        session.commit()
+
+    result = handle_acquisition_reconcile(
+        acquisition_app,
+        Job(id="timeout-watchdog", tenant_id="t1", job_type="acquisition_reconcile"),
+        {"mission_id": mission_id, "enforce_timeout": True},
+    )
+
+    assert result["timed_out"] == 1
+    with Session(get_engine(acquisition_app)) as session:
+        timed_out_job = session.get(Job, "timeout-verify")
+        mission = session.get(AcquisitionMission, mission_id)
+        assert timed_out_job is not None
+        assert timed_out_job.status == "failed"
+        assert timed_out_job.error_code == "mission_timeout"
+        assert mission is not None
+        assert mission.status == "failed"
+
+
 def test_reconciler_marks_partial_success_and_dedupes_notification(
     acquisition_app, seed_acquisition_mission
 ):
@@ -469,7 +570,7 @@ def test_reconciliation_job_handler_uses_owning_tenant(acquisition_app, monkeypa
     )
 
     assert calls == ["t1"]
-    assert result == {"stage": "reconciled", "changed": 3}
+    assert result == {"stage": "reconciled", "changed": 3, "timed_out": 0}
 
 
 def test_reconciler_distinguishes_no_results_from_execution_failure(
@@ -1161,6 +1262,12 @@ def test_extraction_failure_retains_official_evidence_and_queues_assessment(
         lambda _app, **kwargs: queued.append(kwargs),
     )
 
+    scheduled: list[dict] = []
+    monkeypatch.setattr(
+        "app.modules.acquisition.jobs.create_and_schedule",
+        lambda _app, **kwargs: scheduled.append(kwargs),
+    )
+
     with pytest.raises(AcquisitionJobError) as caught:
         handle_website_verify(
             acquisition_app,
@@ -1169,7 +1276,8 @@ def test_extraction_failure_retains_official_evidence_and_queues_assessment(
         )
 
     assert caught.value.code == "invalid_response"
-    assert [item["job_type"] for item in queued] == ["candidate_assess"]
+    assert queued == []
+    assert scheduled[0]["payload"] == {"candidate_id": candidate_id, "analysis_retry": True}
     with Session(get_engine(acquisition_app)) as session:
         official = session.scalar(
             select(CandidateEvidence).where(
@@ -1180,6 +1288,201 @@ def test_extraction_failure_retains_official_evidence_and_queues_assessment(
         assert official is not None
         assert official.validation_status == "valid"
         assert official.trust_tier == "A"
+
+
+def test_third_party_page_is_not_persisted_as_official_company_evidence(
+    acquisition_app, seed_acquisition_mission, monkeypatch
+):
+    from app.extensions import get_engine
+    from app.integrations.web.fetcher import FetchResult
+    from app.modules.acquisition.jobs import handle_website_verify
+    from app.modules.acquisition.models import AcquisitionCandidate, CandidateEvidence
+    from app.modules.jobs.models import Job
+
+    mission_id = seed_acquisition_mission()
+    candidate_id = _seed_candidate_with_search_evidence(acquisition_app, mission_id, suffix="honda")
+    with Session(get_engine(acquisition_app)) as session:
+        candidate = session.get(AcquisitionCandidate, candidate_id)
+        assert candidate is not None
+        candidate.company_name = "Honda del Per\u00fa S.A."
+        candidate.domain = "tester.pe"
+        candidate.website = "https://www.tester.pe/honda-del-peru-production/"
+        session.commit()
+    snapshot = FetchResult(
+        requested_url="https://www.tester.pe/honda-del-peru-production/",
+        final_url="https://www.tester.pe/honda-del-peru-production/",
+        status_code=200,
+        content_type="text/html",
+        title="Honda del Per\u00fa reached production milestone \u2013 Tester",
+        text="Industry news article about Honda del Per\u00fa.",
+        content_hash="c" * 64,
+        retrieved_at=datetime.now(UTC),
+        redirect_chain=(),
+    )
+    monkeypatch.setattr(
+        "app.modules.acquisition.jobs.StaticFetcher",
+        SimpleNamespace(from_app=lambda _app: SimpleNamespace(fetch=lambda _url: snapshot)),
+    )
+    monkeypatch.setattr(
+        "app.modules.acquisition.jobs.build_mimo_provider",
+        lambda *_args, **_kwargs: pytest.fail("third-party page must not enter extraction"),
+    )
+    queued: list[dict] = []
+    monkeypatch.setattr(
+        "app.modules.acquisition.jobs.create_and_enqueue",
+        lambda _app, **kwargs: queued.append(kwargs),
+    )
+
+    result = handle_website_verify(
+        acquisition_app,
+        Job(id="verify-third-party", tenant_id="t1", job_type="website_verify"),
+        {"candidate_id": candidate_id},
+    )
+
+    assert result["stage"] == "source_identity_unverified"
+    assert [item["job_type"] for item in queued] == ["candidate_assess"]
+    with Session(get_engine(acquisition_app)) as session:
+        evidence = session.scalar(
+            select(CandidateEvidence).where(
+                CandidateEvidence.candidate_id == candidate_id,
+                CandidateEvidence.canonical_url == snapshot.final_url,
+            )
+        )
+        candidate = session.get(AcquisitionCandidate, candidate_id)
+        assert evidence is not None
+        assert evidence.source_type == "third_party_page"
+        assert evidence.trust_tier == "C"
+        assert evidence.validation_status == "unverified"
+        assert candidate is not None
+        assert candidate.entity_type == "source_identity_unverified"
+
+
+def test_verified_country_domain_and_contact_are_preserved_when_ai_extraction_fails(
+    acquisition_app, seed_acquisition_mission, monkeypatch
+):
+    from app.extensions import get_engine
+    from app.integrations.ai.mimo import ProviderResponseError
+    from app.integrations.web.fetcher import FetchResult
+    from app.modules.acquisition.jobs import AcquisitionJobError, handle_website_verify
+    from app.modules.acquisition.models import AcquisitionCandidate
+    from app.modules.jobs.models import Job
+
+    mission_id = seed_acquisition_mission()
+    candidate_id = _seed_candidate_with_search_evidence(acquisition_app, mission_id, suffix="mabel")
+    with Session(get_engine(acquisition_app)) as session:
+        candidate = session.get(AcquisitionCandidate, candidate_id)
+        assert candidate is not None
+        candidate.company_name = "Corporaci\u00f3n Mabel"
+        candidate.domain = "corporacionmabel.pe"
+        candidate.website = "https://corporacionmabel.pe/"
+        candidate.opportunity_country_code = "PE"
+        session.commit()
+    snapshot = FetchResult(
+        requested_url="https://corporacionmabel.pe/",
+        final_url="https://corporacionmabel.pe/",
+        status_code=200,
+        content_type="text/html",
+        title="Corporaci\u00f3n Mabel Per\u00fa",
+        text="Corporaci\u00f3n Mabel, Lima, Per\u00fa. Ventas: ventas@mabel.pe. Tel: +51 965 030 502.",
+        content_hash="d" * 64,
+        retrieved_at=datetime.now(UTC),
+        redirect_chain=(),
+    )
+    monkeypatch.setattr(
+        "app.modules.acquisition.jobs.StaticFetcher",
+        SimpleNamespace(from_app=lambda _app: SimpleNamespace(fetch=lambda _url: snapshot)),
+    )
+    monkeypatch.setattr(
+        "app.modules.acquisition.jobs.build_mimo_provider",
+        lambda _app, tenant_id: SimpleNamespace(
+            extract=lambda _snapshot: (_ for _ in ()).throw(ProviderResponseError())
+        ),
+    )
+    monkeypatch.setattr("app.modules.acquisition.jobs.create_and_enqueue", lambda *_a, **_k: None)
+
+    with pytest.raises(AcquisitionJobError, match="invalid_response"):
+        handle_website_verify(
+            acquisition_app,
+            Job(id="verify-mabel", tenant_id="t1", job_type="website_verify"),
+            {"candidate_id": candidate_id},
+        )
+
+    with Session(get_engine(acquisition_app)) as session:
+        candidate = session.get(AcquisitionCandidate, candidate_id)
+        assert candidate is not None
+        assert candidate.country_resolution_status == "confirmed"
+        assert candidate.hq_country_code == "PE"
+        contacts = json.loads(candidate.contact_json)
+        assert "mailto:ventas@mabel.pe" in contacts["paths"]
+        assert contacts["email"] == "ventas@mabel.pe"
+
+
+def test_invalid_ai_response_schedules_exactly_one_delayed_reanalysis(
+    acquisition_app, seed_acquisition_mission, monkeypatch
+):
+    from app.integrations.ai.mimo import ProviderResponseError
+    from app.integrations.web.fetcher import FetchResult
+    from app.modules.acquisition.jobs import AcquisitionJobError, handle_website_verify
+    from app.modules.jobs.models import Job
+
+    mission_id = seed_acquisition_mission()
+    candidate_id = _seed_candidate_with_search_evidence(acquisition_app, mission_id, suffix="retry-ai")
+    snapshot = FetchResult(
+        requested_url="https://retry-ai.example/",
+        final_url="https://retry-ai.example/",
+        status_code=200,
+        content_type="text/html",
+        title="Candidate retry-ai",
+        text="Motorcycle parts supplier in Mexico.",
+        content_hash="e" * 64,
+        retrieved_at=datetime.now(UTC),
+        redirect_chain=(),
+    )
+    monkeypatch.setattr(
+        "app.modules.acquisition.jobs.StaticFetcher",
+        SimpleNamespace(from_app=lambda _app: SimpleNamespace(fetch=lambda _url: snapshot)),
+    )
+    monkeypatch.setattr(
+        "app.modules.acquisition.jobs.build_mimo_provider",
+        lambda _app, tenant_id: SimpleNamespace(
+            extract=lambda _snapshot: (_ for _ in ()).throw(ProviderResponseError())
+        ),
+    )
+    scheduled: list[dict] = []
+    queued: list[dict] = []
+    monkeypatch.setattr(
+        "app.modules.acquisition.jobs.create_and_schedule",
+        lambda _app, **kwargs: scheduled.append(kwargs),
+    )
+    monkeypatch.setattr(
+        "app.modules.acquisition.jobs.create_and_enqueue",
+        lambda _app, **kwargs: queued.append(kwargs),
+    )
+
+    with pytest.raises(AcquisitionJobError, match="invalid_response"):
+        handle_website_verify(
+            acquisition_app,
+            Job(id="verify-ai-first", tenant_id="t1", job_type="website_verify"),
+            {"candidate_id": candidate_id},
+        )
+    assert scheduled == [
+        {
+            "tenant_id": "t1",
+            "job_type": "website_verify",
+            "payload": {"candidate_id": candidate_id, "analysis_retry": True},
+            "delay": timedelta(seconds=45),
+        }
+    ]
+    assert queued == []
+
+    with pytest.raises(AcquisitionJobError, match="invalid_response"):
+        handle_website_verify(
+            acquisition_app,
+            Job(id="verify-ai-second", tenant_id="t1", job_type="website_verify"),
+            {"candidate_id": candidate_id, "analysis_retry": True},
+        )
+    assert len(scheduled) == 1
+    assert [item["job_type"] for item in queued] == ["candidate_assess"]
 
 
 def test_search_evidence_only_assessment_is_persisted_as_needs_evidence(
@@ -1274,6 +1577,55 @@ def test_web_discovery_returns_safe_zero_hit_metrics(
     assert result["query_count"] == 1
     assert "query" not in result
     assert "excerpt" not in result
+
+
+def test_web_discovery_keeps_a_media_article_out_of_verification_budget(
+    acquisition_app, seed_acquisition_mission, monkeypatch
+):
+    from app.extensions import get_engine
+    from app.integrations.ai.contracts import SearchHit
+    from app.modules.acquisition.jobs import handle_web_discovery
+    from app.modules.acquisition.models import AcquisitionCandidate
+    from app.modules.jobs.models import Job
+
+    mission_id = seed_acquisition_mission()
+    _configure_web_discovery_mission(acquisition_app, mission_id)
+
+    class FakeProvider:
+        def discover_companies(self, *, country_plan):
+            return [
+                SearchHit(
+                    url="https://industry-news.example/noticias/honda-production",
+                    title="Honda production news",
+                    excerpt="Industry news article",
+                    query="motorcycle engine distributor",
+                )
+            ]
+
+    queued: list[dict] = []
+    monkeypatch.setattr(
+        "app.modules.acquisition.jobs.build_mimo_provider",
+        lambda _app, tenant_id: FakeProvider(),
+    )
+    monkeypatch.setattr(
+        "app.modules.acquisition.jobs.create_and_enqueue",
+        lambda _app, **kwargs: queued.append(kwargs),
+    )
+
+    result = handle_web_discovery(
+        acquisition_app,
+        Job(id="discovery-media", tenant_id="t1", job_type="web_discovery"),
+        {"mission_id": mission_id, "country_code": "MX"},
+    )
+
+    assert result["entity_triaged"] == 1
+    assert queued == []
+    with Session(get_engine(acquisition_app)) as session:
+        candidate = session.scalar(select(AcquisitionCandidate))
+        assert candidate is not None
+        assert candidate.entity_type == "media_or_article"
+        assert candidate.status == "needs_evidence"
+        assert candidate.eligibility_code == "entity_triage_noncompany"
 
 
 def test_web_discovery_counts_invalid_domains_without_persisting_hit_content(

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 from collections.abc import Sequence
 from dataclasses import dataclass
 
@@ -79,10 +80,10 @@ def compute_candidate_assessment(
     ):
         gate_country = "mismatch"
 
-    combined = " ".join(
-        [candidate.company_name, buyer_type, *product_terms, json.dumps(claims)]
-    ).lower()
-    excluded = any(str(term).lower() in combined for term in target.get("exclude_terms", []))
+    excluded = _matches_excluded_business(
+        target.get("exclude_terms", []),
+        [candidate.company_name, buyer_type, *product_terms],
+    )
     gate = evaluate_gate(
         EligibilityFacts(
             country_status=gate_country,
@@ -149,6 +150,21 @@ def _json_object(value: str) -> dict[str, object]:
     except (TypeError, ValueError):
         return {}
     return parsed if isinstance(parsed, dict) else {}
+
+
+def _matches_excluded_business(exclude_terms: object, values: list[str]) -> bool:
+    """Apply exclusions to classifications, not narrative evidence claims."""
+
+    if not isinstance(exclude_terms, list):
+        return False
+    for raw_term in exclude_terms:
+        term = " ".join(str(raw_term).split())
+        if not term:
+            continue
+        pattern = re.compile(rf"(?<!\w){re.escape(term)}(?!\w)", flags=re.IGNORECASE)
+        if any(pattern.search(value or "") for value in values):
+            return True
+    return False
 
 
 def _explain_assessment(gate: GateResult, *, extraction_complete: bool) -> str:

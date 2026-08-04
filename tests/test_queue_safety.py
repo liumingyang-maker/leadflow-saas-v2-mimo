@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 import os
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 
 import pytest
 from sqlalchemy import select
@@ -60,6 +60,34 @@ def test_create_enqueue_passes_only_job_id_to_rq(monkeypatch) -> None:
     )
 
     assert calls == [((JOB_HANDLER, job.id), {"result_ttl": 86400})]
+
+
+def test_schedule_passes_only_job_id_to_rq(monkeypatch) -> None:
+    from app.modules.jobs.service import JOB_HANDLER, create_and_schedule
+
+    app, _engine = _app(monkeypatch)
+    calls = []
+
+    class FakeRQJob:
+        id = "rq-scheduled-1"
+
+    class FakeQueue:
+        def enqueue_in(self, *args, **kwargs):
+            calls.append((args, kwargs))
+            return FakeRQJob()
+
+    monkeypatch.setattr("app.modules.jobs.service._queue", lambda _app, _name: FakeQueue())
+    job = create_and_schedule(
+        app,
+        tenant_id="t1",
+        job_type="acquisition_reconcile",
+        payload={"mission_id": "m1", "enforce_timeout": True},
+        delay=timedelta(minutes=15),
+    )
+
+    assert calls == [
+        ((timedelta(minutes=15), JOB_HANDLER, job.id), {"result_ttl": 86400})
+    ]
 
 
 def test_enqueue_failure_marks_job_failed(monkeypatch) -> None:

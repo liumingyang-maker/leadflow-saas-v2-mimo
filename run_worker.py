@@ -54,4 +54,4 @@ if __name__ == "__main__":
 
     worker_class = _worker_class_for(os.name)
     worker = worker_class(queue_names, connection=redis_conn, serializer=JSONSerializer)
-    worker.work()
+    worker.work(with_scheduler=True)

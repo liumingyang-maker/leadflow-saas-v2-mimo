@@ -179,3 +179,73 @@ def test_confirmed_buyer_mismatch_remains_hard_rejection():
     assert "wrong_buyer_type" in result.gate.reason_codes
     assert "目标买家类型" in result.explanation
     assert "thought" not in result.explanation.lower()
+
+
+def test_claim_mention_of_an_excluded_term_does_not_reject_the_company():
+    from app.modules.acquisition.assessment import compute_candidate_assessment
+
+    mission = _mission()
+    mission.target_profile_json = json.dumps(
+        {
+            "country_codes": ["MX"],
+            "buyer_types": ["manufacturer"],
+            "exclude_terms": ["supplier"],
+        }
+    )
+    candidate = _candidate(
+        country_resolution_status="confirmed",
+        opportunity_country_code="MX",
+        contact_json=json.dumps({"paths": ["mailto:buyer@moto.example"]}),
+        observed_facts_json=json.dumps(
+            {
+                "buyer_type": "manufacturer",
+                "product_terms": ["motorcycle engines"],
+                "claims": [{"text": "Works with dealers and suppliers."}],
+            }
+        ),
+    )
+
+    result = compute_candidate_assessment(
+        candidate,
+        mission,
+        [_evidence(trust_tier="A", validation_status="valid")],
+        mimo_model_id="mimo-v2.5-pro",
+    )
+
+    assert result.gate.disposition == "eligible"
+    assert "excluded_business" not in result.gate.reason_codes
+
+
+def test_explicit_excluded_product_term_remains_a_hard_rejection():
+    from app.modules.acquisition.assessment import compute_candidate_assessment
+
+    mission = _mission()
+    mission.target_profile_json = json.dumps(
+        {
+            "country_codes": ["MX"],
+            "buyer_types": ["manufacturer"],
+            "exclude_terms": ["supplier"],
+        }
+    )
+    candidate = _candidate(
+        country_resolution_status="confirmed",
+        opportunity_country_code="MX",
+        contact_json=json.dumps({"paths": ["mailto:buyer@moto.example"]}),
+        observed_facts_json=json.dumps(
+            {
+                "buyer_type": "manufacturer",
+                "product_terms": ["supplier"],
+                "claims": [],
+            }
+        ),
+    )
+
+    result = compute_candidate_assessment(
+        candidate,
+        mission,
+        [_evidence(trust_tier="A", validation_status="valid")],
+        mimo_model_id="mimo-v2.5-pro",
+    )
+
+    assert result.gate.disposition == "rejected"
+    assert "excluded_business" in result.gate.reason_codes
