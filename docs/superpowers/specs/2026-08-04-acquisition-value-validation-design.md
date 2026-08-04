@@ -2,7 +2,7 @@
 
 **日期：** 2026-08-04
 
-**状态：** 待用户书面确认
+**状态：** 已批准；QV-0 已验证，QV-1 待执行
 
 **计划代号：** QV（Quality Validation）
 **适用范围：** Acquisition Mission、Candidate/Evidence、手动 Radar 转候选、人工审核与 CRM 晋升边界
