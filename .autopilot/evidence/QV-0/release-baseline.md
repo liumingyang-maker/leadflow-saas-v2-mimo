@@ -31,3 +31,10 @@
 - QV-0 made no application behavior changes.
 - Historical Phase 2 plan checkboxes are preserved.
 - QV-1 starts only from the published QV-0 commit.
+
+## Publication
+
+- Branch: `design/solo-ai-acquisition-system`.
+- Local SHA: `c9b674a547e85e725260c591379c7ee127267e79`.
+- Remote SHA: `c9b674a547e85e725260c591379c7ee127267e79`.
+- Published at (UTC): `2026-08-04T04:30:59Z`.

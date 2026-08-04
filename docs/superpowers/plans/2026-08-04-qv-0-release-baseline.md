@@ -203,7 +203,7 @@ Expected: exactly the three QV-0 files are staged; the user-owned V2-05 screensh
 - Modify: `.autopilot/evidence/QV-0/release-baseline.md`
 - Modify: `docs/superpowers/plans/2026-08-04-qv-0-release-baseline.md`
 
-- [ ] **Step 1: Check publication preconditions**
+- [x] **Step 1: Check publication preconditions**
 
 Run:
 
@@ -215,7 +215,7 @@ git log -1 --oneline
 
 Expected: only the V2-05 screenshot remains modified and the branch contains the QV-0 evidence commit.
 
-- [ ] **Step 2: Push the exact verified branch and set upstream**
+- [x] **Step 2: Push the exact verified branch and set upstream**
 
 Run:
 
@@ -227,7 +227,7 @@ git ls-remote --heads origin design/solo-ai-acquisition-system
 
 Expected: remote SHA equals local HEAD. Do not force-push, merge to `main`, create a PR, deploy production or push the V2-05 screenshot.
 
-- [ ] **Step 3: Record publication and commit the final evidence**
+- [x] **Step 3: Record publication and commit the final evidence**
 
 Add a `Publication` section with branch name, local SHA, remote SHA and UTC time. Tick Task 5, then run:
 
