@@ -97,6 +97,7 @@ BUSINESS_RESULT_REASON_LABELS = {
     "ai_analysis_failed": "部分候选分析失败",
     "execution_failed": "部分执行步骤失败",
     "legacy_failed_with_results": "旧任务虽标记失败，但已保留可用结果",
+    "search_no_valid_hits": "搜索已完成，但没有返回可用的企业候选。",
     "completed_without_candidates": "搜索已完成，但没有发现候选客户",
     "all_candidates_excluded": "发现的候选均已排除",
 }

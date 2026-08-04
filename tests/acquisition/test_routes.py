@@ -243,6 +243,48 @@ def test_mission_list_is_tenant_scoped_and_separates_active_execution_state(
     assert "Private other mission" not in html
 
 
+def test_completed_zero_valid_hit_mission_shows_specific_reason(
+    acquisition_app, logged_in_client
+) -> None:
+    from app.extensions import get_engine
+    from app.modules.acquisition.models import AcquisitionMission
+    from app.modules.jobs.models import Job
+
+    client, tenant_id = logged_in_client
+    mission = _seed_mission(
+        acquisition_app,
+        tenant_id=tenant_id,
+        actor_id=_actor_id(client),
+    )
+    with Session(get_engine(acquisition_app)) as db_session:
+        stored_mission = db_session.get(AcquisitionMission, mission.id)
+        assert stored_mission is not None
+        stored_mission.status = "completed"
+        db_session.add(
+            Job(
+                id="route-zero-valid-hits",
+                tenant_id=tenant_id,
+                job_type="web_discovery",
+                status="succeeded",
+                payload_json=json.dumps({"mission_id": mission.id, "country_code": "MX"}),
+                result_summary_json=json.dumps(
+                    {
+                        "hits_received": 0,
+                        "valid_hits": 0,
+                        "domain_skipped": 0,
+                        "query_count": 1,
+                    }
+                ),
+            )
+        )
+        db_session.commit()
+
+    response = client.get(f"/acquisition/missions/{mission.id}")
+
+    assert response.status_code == 200
+    assert "搜索已完成，但没有返回可用的企业候选。" in response.get_data(as_text=True)
+
+
 def test_mission_form_exposes_three_required_business_fields(logged_in_client) -> None:
     client, _tenant_id = logged_in_client
 

@@ -276,6 +276,9 @@ def handle_web_discovery(app, job: Job, payload: dict[str, Any]) -> dict[str, An
     _record_cost(app, tenant_id, mission_id, "mimo", started, requests=1)
     _provider_success(app, tenant_id)
 
+    hits_received = len(hits)
+    valid_hits = 0
+    domain_skipped = 0
     created = 0
     deduped = 0
     verify_ids: list[str] = []
@@ -286,7 +289,9 @@ def handle_web_discovery(app, job: Job, payload: dict[str, Any]) -> dict[str, An
             url = str(hit.url)
             domain = _canonical_domain(url)
             if not domain:
+                domain_skipped += 1
                 continue
+            valid_hits += 1
             dedupe_key = f"domain:{domain}"
             candidate = candidates.find_by_dedupe_key(mission_id, dedupe_key, tenant_id=tenant_id)
             if candidate is None:
@@ -351,6 +356,10 @@ def handle_web_discovery(app, job: Job, payload: dict[str, Any]) -> dict[str, An
     return {
         "mission_id": mission_id,
         "country_code": country_code,
+        "hits_received": hits_received,
+        "valid_hits": valid_hits,
+        "domain_skipped": domain_skipped,
+        "query_count": len(country_plan.queries),
         "created": created,
         "deduped": deduped,
         "stage": "discovered",

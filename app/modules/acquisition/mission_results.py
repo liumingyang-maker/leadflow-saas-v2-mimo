@@ -242,9 +242,18 @@ def _ordered_job_facts(relevant: Sequence[tuple[Job, str]]) -> tuple[JobResultFa
             status=job.status,
             error_code=job.error_code,
             outcome_order=order,
+            search_no_valid_hits=_is_safe_zero_valid_hit_discovery(job),
         )
         for order, (job, identity) in enumerate(ordered, start=1)
     )
+
+
+def _is_safe_zero_valid_hit_discovery(job: Job) -> bool:
+    if job.job_type != "web_discovery" or job.status != "succeeded":
+        return False
+    summary = _payload_object(job.result_summary_json)
+    valid_hits = summary.get("valid_hits")
+    return isinstance(valid_hits, int) and not isinstance(valid_hits, bool) and valid_hits == 0
 
 
 def _mission_job_identity(

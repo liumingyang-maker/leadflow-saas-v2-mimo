@@ -40,6 +40,7 @@ class JobResultFact:
     status: str
     error_code: str = ""
     outcome_order: int = 0
+    search_no_valid_hits: bool = False
 
 
 @dataclass(frozen=True)
@@ -138,9 +139,12 @@ class BusinessResultResolver:
         if facts.execution_status == "failed" and has_material and not failed_jobs:
             reason_codes.add("legacy_failed_with_results")
         if code == "no_results":
-            reason_codes.add(
-                "all_candidates_excluded" if counts.excluded else "completed_without_candidates"
-            )
+            if counts.excluded:
+                reason_codes.add("all_candidates_excluded")
+            elif any(job.search_no_valid_hits for job in latest_jobs.values()):
+                reason_codes.add("search_no_valid_hits")
+            else:
+                reason_codes.add("completed_without_candidates")
 
         label, tone, action_code, action_label = _RESULT_PRESENTATION[code]
         summary_parts = [

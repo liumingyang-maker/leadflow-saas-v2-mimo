@@ -382,6 +382,50 @@ def test_mission_job_projection_normalizes_country_and_ignores_unrelated_rows(
     assert "must not leak" not in result.summary
 
 
+def test_mission_result_projects_safe_zero_valid_hit_reason(
+    acquisition_app, seed_acquisition_mission
+) -> None:
+    import json
+
+    from sqlalchemy.orm import Session
+
+    from app.extensions import get_engine
+    from app.modules.acquisition.mission_results import resolve_mission_result
+    from app.modules.acquisition.models import AcquisitionMission
+    from app.modules.jobs.models import Job
+
+    mission_id = seed_acquisition_mission(tenant_id="t1", suffix="zero-valid-hits")
+    with Session(get_engine(acquisition_app)) as session:
+        mission = session.get(AcquisitionMission, mission_id)
+        assert mission is not None
+        mission.status = "completed"
+        job = Job(
+            id="projection-zero-valid-hits",
+            tenant_id="t1",
+            job_type="web_discovery",
+            status="succeeded",
+            payload_json=json.dumps({"mission_id": mission.id, "country_code": "MX"}),
+            result_summary_json=json.dumps(
+                {
+                    "hits_received": 0,
+                    "valid_hits": 0,
+                    "domain_skipped": 0,
+                    "query_count": 1,
+                }
+            ),
+        )
+
+        result = resolve_mission_result(
+            session,
+            mission,
+            tenant_id="t1",
+            candidates=(),
+            jobs=(job,),
+        )
+
+    assert result.reason_codes == ("search_no_valid_hits",)
+
+
 def test_recent_mission_summaries_keep_active_execution_state(
     acquisition_app, seed_acquisition_mission
 ) -> None:

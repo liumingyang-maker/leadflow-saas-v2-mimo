@@ -1217,6 +1217,100 @@ def test_search_evidence_only_assessment_is_persisted_as_needs_evidence(
         assert assessment.model_id == "evidence-only-v1"
 
 
+def _configure_web_discovery_mission(acquisition_app, mission_id: str) -> None:
+    from app.extensions import get_engine
+    from app.modules.acquisition.models import AcquisitionMission
+
+    with Session(get_engine(acquisition_app)) as session:
+        mission = session.get(AcquisitionMission, mission_id)
+        assert mission is not None
+        mission.budget_json = json.dumps({"max_candidates": 5, "max_verify": 2})
+        mission.plan_json = json.dumps(
+            {
+                "plan_version": "mission-plan-v1",
+                "country_runs": [
+                    {
+                        "country_code": "MX",
+                        "languages": ["es"],
+                        "queries": ["motorcycle engine distributor"],
+                    }
+                ],
+            }
+        )
+        session.commit()
+
+
+def test_web_discovery_returns_safe_zero_hit_metrics(
+    acquisition_app, seed_acquisition_mission, monkeypatch
+):
+    from app.modules.acquisition.jobs import handle_web_discovery
+    from app.modules.jobs.models import Job
+
+    mission_id = seed_acquisition_mission()
+    _configure_web_discovery_mission(acquisition_app, mission_id)
+
+    class FakeProvider:
+        def discover_companies(self, *, country_plan):
+            return []
+
+    monkeypatch.setattr(
+        "app.modules.acquisition.jobs.build_mimo_provider",
+        lambda _app, tenant_id: FakeProvider(),
+    )
+    monkeypatch.setattr(
+        "app.modules.acquisition.jobs.create_and_enqueue",
+        lambda _app, **kwargs: None,
+    )
+
+    result = handle_web_discovery(
+        acquisition_app,
+        Job(id="discovery-zero", tenant_id="t1", job_type="web_discovery"),
+        {"mission_id": mission_id, "country_code": "MX"},
+    )
+
+    assert result["hits_received"] == 0
+    assert result["valid_hits"] == 0
+    assert result["domain_skipped"] == 0
+    assert result["query_count"] == 1
+    assert "query" not in result
+    assert "excerpt" not in result
+
+
+def test_web_discovery_counts_invalid_domains_without_persisting_hit_content(
+    acquisition_app, seed_acquisition_mission, monkeypatch
+):
+    from app.modules.acquisition.jobs import handle_web_discovery
+    from app.modules.jobs.models import Job
+
+    mission_id = seed_acquisition_mission()
+    _configure_web_discovery_mission(acquisition_app, mission_id)
+
+    class FakeProvider:
+        def discover_companies(self, *, country_plan):
+            return [SimpleNamespace(url="mailto:ignored@example.com")]
+
+    monkeypatch.setattr(
+        "app.modules.acquisition.jobs.build_mimo_provider",
+        lambda _app, tenant_id: FakeProvider(),
+    )
+    monkeypatch.setattr(
+        "app.modules.acquisition.jobs.create_and_enqueue",
+        lambda _app, **kwargs: None,
+    )
+
+    result = handle_web_discovery(
+        acquisition_app,
+        Job(id="discovery-invalid", tenant_id="t1", job_type="web_discovery"),
+        {"mission_id": mission_id, "country_code": "MX"},
+    )
+
+    assert result["hits_received"] == 1
+    assert result["valid_hits"] == 0
+    assert result["domain_skipped"] == 1
+    assert "query" not in result
+    assert "excerpt" not in result
+
+
 def test_discovery_verify_and_assess_handlers_preserve_evidence_boundary(
     acquisition_app, seed_acquisition_mission, monkeypatch
 ):
