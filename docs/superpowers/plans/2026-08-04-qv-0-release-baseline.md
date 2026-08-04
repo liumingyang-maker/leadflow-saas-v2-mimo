@@ -229,7 +229,7 @@ Expected: remote SHA equals local HEAD. Do not force-push, merge to `main`, crea
 
 - [x] **Step 3: Record publication and commit the final evidence**
 
-Add a `Publication` section with branch name, local SHA, remote SHA and UTC time. Tick Task 5, then run:
+Add a `Publication` section with branch name, the first verified code-baseline local and remote SHA, and UTC time. The evidence file cannot contain its own successor commit hash: verify the final evidence commit's remote equality externally with `git ls-remote --heads origin design/solo-ai-acquisition-system`. Tick Task 5, then run:
 
 ```powershell
 git add -- docs/superpowers/plans/2026-08-04-qv-0-release-baseline.md .autopilot/evidence/QV-0/release-baseline.md

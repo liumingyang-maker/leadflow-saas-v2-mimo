@@ -35,6 +35,7 @@
 ## Publication
 
 - Branch: `design/solo-ai-acquisition-system`.
-- Local SHA: `c9b674a547e85e725260c591379c7ee127267e79`.
-- Remote SHA: `c9b674a547e85e725260c591379c7ee127267e79`.
+- Verified code-baseline local SHA: `c9b674a547e85e725260c591379c7ee127267e79`.
+- Verified code-baseline remote SHA: `c9b674a547e85e725260c591379c7ee127267e79`.
 - Published at (UTC): `2026-08-04T04:30:59Z`.
+- This evidence file cannot record its own successor commit SHA; verify the current remote ref independently with `git ls-remote --heads origin design/solo-ai-acquisition-system`.
